@@ -17,7 +17,7 @@ class OutputHandler:
         """Save orders to both CSV and SQLite database."""
         # Save to CSV
         try:
-            with open(OUTPUT_SETTINGS['csv_filename'], 'w', newline='') as csvfile:
+            with open(OUTPUT_SETTINGS['csv_filename'], 'w', newline='', encoding='utf-8') as csvfile:
                 fieldnames = [
                     'order_number', 'order_date', 'total_price', 'status',
                     'email_address', 'products', 'tracking_numbers'
@@ -56,7 +56,7 @@ class OutputHandler:
         """Save Xbox codes to both CSV and SQLite database."""
         # Save to CSV
         try:
-            with open(OUTPUT_SETTINGS['xbox_filename'], 'w', newline='') as csvfile:
+            with open(OUTPUT_SETTINGS['xbox_filename'], 'w', newline='', encoding='utf-8') as csvfile:
                 fieldnames = ['code', 'date', 'order_number']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
