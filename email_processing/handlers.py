@@ -43,8 +43,7 @@ class OrderEmailHandler(BaseEmailHandler):
         """Process order confirmation emails."""
         print(f"\nProcessing confirmation emails in folder: {folder}")
 
-        criteria = f"{SEARCH_CRITERIA['confirmation']['from']} {SEARCH_CRITERIA['confirmation']['subject']}"
-        success, messages = self.connector.search_emails(folder, criteria)
+        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['confirmation'])
 
         if not success:
             return []
@@ -81,7 +80,7 @@ class OrderEmailHandler(BaseEmailHandler):
 
         success, messages = self.connector.search_emails(
             folder,
-            SEARCH_CRITERIA['cancellation']['subject']
+            SEARCH_CRITERIA['cancellation']
         )
 
         if not success:
@@ -111,7 +110,7 @@ class OrderEmailHandler(BaseEmailHandler):
 
         success, messages = self.connector.search_emails(
             folder,
-            SEARCH_CRITERIA['shipped']['subject']
+            SEARCH_CRITERIA['shipped']
         )
 
         if not success:
@@ -147,14 +146,7 @@ class XboxEmailHandler(BaseEmailHandler):
         """Process Xbox Game Pass code emails."""
         print(f"\nProcessing Xbox Game Pass emails in folder: {folder}")
 
-        # Format the search criteria correctly for both standard IMAP and iCloud
-        from_criteria = SEARCH_CRITERIA['xbox']['from']
-        subject_criteria = SEARCH_CRITERIA['xbox']['subject']
-
-        # Create the combined search criteria
-        search_criteria = f'{from_criteria} {subject_criteria}'
-
-        success, messages = self.connector.search_emails(folder, search_criteria)
+        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['xbox'])
 
         if not success:
             print("Failed to search for Xbox Game Pass emails")

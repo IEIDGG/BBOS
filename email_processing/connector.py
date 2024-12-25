@@ -4,6 +4,8 @@ Email connection handler for the Best Buy Order Tracker application.
 
 import imaplib
 import ssl
+import re
+from datetime import datetime
 from typing import Optional, Tuple
 from config.settings import EMAIL_SERVERS
 
@@ -40,20 +42,68 @@ class EmailConnector:
             print(f"Error connecting to email server: {str(e)}")
             raise
 
-    def search_emails(self, folder: str, search_criteria: str) -> Tuple[bool, list]:
-        """
-        Search for emails in specified folder using given criteria.
+    def _format_date_for_imap(self, date_str: str) -> str:
+        """Convert date string to IMAP-compatible format."""
+        if not date_str:
+            return ""
 
-        Args:
-            folder: Email folder to search in
-            search_criteria: IMAP search criteria
+        try:
+            clean_date = date_str.replace('after:', '')
+            date_obj = datetime.strptime(clean_date, '%Y/%m/%d')
+            return date_obj.strftime('%d-%b-%Y')
+        except ValueError as e:
+            print(f"Error formatting date: {str(e)}")
+            return ""
 
-        Returns:
-            Tuple of (success boolean, list of message IDs)
-        """
+    def _format_search_criteria(self, criteria_parts: dict) -> str:
+        """Format search criteria for IMAP."""
+        formatted_parts = []
+
+        # Handle date
+        if 'date' in criteria_parts:
+            imap_date = self._format_date_for_imap(criteria_parts['date'])
+            if imap_date:
+                formatted_parts.append(f'SINCE {imap_date}')
+
+        # Handle from address
+        if 'from' in criteria_parts:
+            from_criteria = criteria_parts['from']
+            if '(OR' in from_criteria:
+                # Extract email addresses from the OR condition
+                addresses = re.findall(r'"([^"]+)"', from_criteria)
+                if addresses:
+                    formatted_parts.append(f'OR (FROM "{addresses[0]}") (FROM "{addresses[1]}")')
+            else:
+                # Single from address
+                address = re.search(r'"([^"]+)"', from_criteria)
+                if address:
+                    formatted_parts.append(f'FROM "{address.group(1)}"')
+
+        # Handle subject
+        if 'subject' in criteria_parts:
+            subject_criteria = criteria_parts['subject']
+            if 'OR' in subject_criteria:
+                # Handle OR in subject
+                subjects = re.findall(r'"([^"]+)"', subject_criteria)
+                if subjects:
+                    subjects_formatted = ' '.join(f'(SUBJECT "{subject}")' for subject in subjects)
+                    formatted_parts.append(f'OR {subjects_formatted}')
+            else:
+                # Single subject
+                subject = re.search(r'"([^"]+)"', subject_criteria)
+                if subject:
+                    formatted_parts.append(f'SUBJECT "{subject.group(1)}"')
+
+        # Join all parts
+        return ' '.join(formatted_parts)
+
+    def search_emails(self, folder: str, search_criteria: dict) -> Tuple[bool, list]:
+        """Search for emails in specified folder using given criteria."""
         try:
             self.connection.select(folder)
-            _, message_numbers = self.connection.search(None, search_criteria)
+            formatted_criteria = self._format_search_criteria(search_criteria)
+            print(f"Using IMAP search criteria: {formatted_criteria}")
+            _, message_numbers = self.connection.search(None, formatted_criteria)
             return True, message_numbers[0].split()
         except Exception as e:
             print(f"Error searching emails in {folder}: {str(e)}")
