@@ -22,20 +22,25 @@ EMAIL_SERVERS = {
 }
 
 # Email search criteria
+universal_date = "2024/12/01"
 SEARCH_CRITERIA = {
     'confirmation': {
         'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
-        'subject': 'SUBJECT "Thanks for your order"'
+        'subject': 'SUBJECT "Thanks for your order"',
+        'date': f'after:{universal_date}'
     },
     'cancellation': {
-        'subject': 'OR SUBJECT "Your Best Buy order has been canceled" SUBJECT "Your order has been canceled"'
+        'subject': 'OR SUBJECT "Your Best Buy order has been canceled" SUBJECT "Your order has been canceled"',
+        'date': f'after:{universal_date}'
     },
     'shipped': {
-        'subject': '(OR (SUBJECT "Your order will be shipped soon!") (SUBJECT "We have your tracking number."))'
+        'subject': '(OR (SUBJECT "Your order will be shipped soon!") (SUBJECT "We have your tracking number."))',
+        'date': f'after:{universal_date}'
     },
     'xbox': {
         'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
-        'subject': 'SUBJECT "Enjoy 1 month free of Game Pass Ultimate with your Best Buy purchase."'
+        'subject': 'SUBJECT "Enjoy 1 month free of Game Pass Ultimate with your Best Buy purchase."',
+        'date': 'after:2024/01/01'
     }
 }
 
