@@ -39,7 +39,7 @@ SEARCH_CRITERIA = {
     },
     'xbox': {
         'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
-        'subject': 'SUBJECT "Enjoy 1 month free of Game Pass Ultimate with your Best Buy purchase."',
+        'subject': '(OR (SUBJECT "Enjoy 1 month free of Game Pass Ultimate with your Best Buy purchase.") (SUBJECT "Your recent purchase came with a free gift."))',
         'date': 'after:2024/01/01'
     }
 }
