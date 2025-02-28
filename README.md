@@ -16,17 +16,6 @@ cd BBOS
 pip install -r requirements.txt
 ```
 
-## Configuration
-1. Copy `config/settings.example.py` to `config/settings.py`
-2. Configure email settings in `config/settings.py`:
-```python
-EMAIL_CONFIG = {
-    'server': 'imap.your-email-provider.com',
-    'user': 'your@email.com',
-    'password': 'your-app-password'
-}
-```
-
 ## Profile Management
 ```bash
 # Create new profile
