@@ -1,0 +1,6 @@
+.idea
+*.pyc
+bestbuy_orders.csv
+bestbuy_orders.sqlite3
+profiles.json
+xbox_codes.csv
