@@ -1,7 +1,4 @@
-"""
-Main entry point for Best Buy Order Tracker with profile management.
-"""
-
+# it's in the directory
 import argparse
 from typing import Optional, Dict
 from core.profile_manager import ProfileManager
@@ -10,13 +7,22 @@ from email_processing.handlers import OrderEmailHandler, XboxEmailHandler
 from output.file_handlers import OutputHandler
 
 
-def parse_arguments() -> argparse.Namespace:
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Best Buy Order and Xbox Code Tracker')
-    parser.add_argument('--manage-profiles', action='store_true',
-                      help='Manage profiles')
-    parser.add_argument('--mode', choices=['orders', 'xbox', 'all'],
-                      default='all', help='Processing mode')
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Best Buy Order Tracker with profile management"
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="orders",
+        choices=["orders", "xbox", "all"],
+        help="Mode to run. 'orders' processes order emails; 'xbox' processes Xbox emails; 'all' does both.",
+    )
+    parser.add_argument(
+        "--manage-profiles",
+        action="store_true",
+        help="Manage profiles instead of processing emails",
+    )
     return parser.parse_args()
 
 
@@ -48,9 +54,15 @@ def ensure_profile_exists(profile_manager: ProfileManager) -> Optional[Dict]:
     return profile
 
 
-def main():
-    """Main application entry point."""
+def main(manage_profiles_override: bool = None):
+    """Main application entry point.
+
+    If manage_profiles_override is provided (True/False), it overrides the command-line flag.
+    """
     args = parse_arguments()
+    if manage_profiles_override is not None:
+        args.manage_profiles = manage_profiles_override
+
     profile_manager = ProfileManager()
 
     # Handle profile management
