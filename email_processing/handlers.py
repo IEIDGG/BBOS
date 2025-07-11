@@ -1,7 +1,3 @@
-"""
-Email handlers for processing different types of Best Buy emails.
-"""
-
 from typing import List, Dict, Tuple
 from datetime import datetime
 import email
@@ -21,7 +17,6 @@ class BaseEmailHandler:
         }
 
     def _update_stats(self, success: bool) -> None:
-        """Update processing statistics."""
         self.statistics['processed'] += 1
         if success:
             self.statistics['successful'] += 1
@@ -40,7 +35,6 @@ class OrderEmailHandler(BaseEmailHandler):
         })
 
     def process_confirmation_emails(self, folder: str) -> List[Dict]:
-        """Process order confirmation emails."""
         print(f"\nProcessing confirmation emails in folder: {folder}")
 
         success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['confirmation'])
@@ -75,7 +69,6 @@ class OrderEmailHandler(BaseEmailHandler):
         return orders
 
     def process_cancellation_emails(self, folder: str, orders: List[Dict]) -> None:
-        """Process order cancellation emails."""
         print(f"\nProcessing cancellation emails in folder: {folder}")
 
         success, messages = self.connector.search_emails(
@@ -105,7 +98,6 @@ class OrderEmailHandler(BaseEmailHandler):
             self._update_stats(bool(result.get('order_number')))
 
     def process_shipped_emails(self, folder: str, orders: List[Dict]) -> None:
-        """Process shipped order emails."""
         print(f"\nProcessing shipped emails in folder: {folder}")
 
         success, messages = self.connector.search_emails(
@@ -137,13 +129,11 @@ class OrderEmailHandler(BaseEmailHandler):
             self._update_stats(bool(result.get('order_number')))
 
     def get_statistics(self) -> Dict:
-        """Get processing statistics."""
         return self.statistics
 
 
 class XboxEmailHandler(BaseEmailHandler):
     def process_xbox_emails(self, folder: str) -> List[Dict]:
-        """Process Xbox Game Pass code emails."""
         print(f"\nProcessing Xbox Game Pass emails in folder: {folder}")
 
         success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['xbox'])

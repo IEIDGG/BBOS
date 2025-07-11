@@ -1,23 +1,23 @@
-"""
-Database operations for the Best Buy Order Tracker application.
-"""
-
 import sqlite3
 import os
 from typing import List, Dict, Tuple, Optional
-from config.settings import DB_SETTINGS
+from config.settings import DB_SETTINGS, AMAZON_DB_SETTINGS
 
 
 class DatabaseManager:
-    def __init__(self):
-        """Initialize database connection and create tables if they don't exist."""
-        self.db_file = DB_SETTINGS['filename']
+    def __init__(self, db_config=None):
+        """
+        Args:
+            db_config: Database configuration dict. Defaults to DB_SETTINGS (Best Buy).
+                      Pass AMAZON_DB_SETTINGS for Amazon database.
+        """
+        self.db_config = db_config or DB_SETTINGS
+        self.db_file = self.db_config['filename']
         self.connection = None
         self.create_connection()
         self.create_tables()
 
     def create_connection(self) -> None:
-        """Create a database connection."""
         try:
             self.connection = sqlite3.connect(self.db_file)
         except Exception as e:
@@ -25,29 +25,25 @@ class DatabaseManager:
             raise
 
     def create_tables(self) -> None:
-        """Create all required database tables."""
         if not self.connection:
             return
 
         cursor = self.connection.cursor()
-        for table_sql in DB_SETTINGS['tables'].values():
+        for table_sql in self.db_config['tables'].values():
             cursor.executescript(table_sql)
         self.connection.commit()
 
     def insert_order(self, order: Dict) -> None:
-        """Insert or update order information."""
         if not self.connection:
             return
 
         cursor = self.connection.cursor()
 
         try:
-            # Check if order exists
             cursor.execute('SELECT * FROM orders WHERE order_number = ?', (order['number'],))
             existing_order = cursor.fetchone()
 
             if existing_order:
-                # Update existing order
                 cursor.execute('''
                     UPDATE orders 
                     SET order_date = ?, total_price = ?, status = ?, email_address = ?
@@ -55,7 +51,6 @@ class DatabaseManager:
                 ''', (order['date'], order['total_price'], order['status'],
                      order['email_address'], order['number']))
             else:
-                # Insert new order
                 cursor.execute('''
                     INSERT INTO orders (order_number, order_date, total_price, status, email_address)
                     VALUES (?, ?, ?, ?, ?)
@@ -64,18 +59,15 @@ class DatabaseManager:
 
             order_id = order['number']
 
-            # Clear existing products and tracking numbers
             cursor.execute('DELETE FROM products WHERE order_id = ?', (order_id,))
             cursor.execute('DELETE FROM tracking_numbers WHERE order_id = ?', (order_id,))
 
-            # Insert products
             for product in order['products']:
                 cursor.execute('''
                     INSERT INTO products (order_id, title, price, quantity)
                     VALUES (?, ?, ?, ?)
                 ''', (order_id, product['title'], product['price'], product['quantity']))
 
-            # Insert tracking numbers
             for tracking_number in order['tracking']:
                 cursor.execute('''
                     INSERT INTO tracking_numbers (order_id, tracking_number)
@@ -89,23 +81,25 @@ class DatabaseManager:
             self.connection.rollback()
 
     def insert_xbox_code(self, code_data: Dict) -> None:
-        """Insert Xbox code information."""
         if not self.connection:
+            return
+
+        if 'xbox_codes' not in self.db_config['tables']:
+            print("Xbox codes table not available in this database configuration")
             return
 
         cursor = self.connection.cursor()
         try:
             cursor.execute('''
-                INSERT OR IGNORE INTO xbox_codes (code, email_date, order_number)
-                VALUES (?, ?, ?)
-            ''', (code_data['code'], code_data['date'], code_data.get('order_number')))
+                INSERT OR IGNORE INTO xbox_codes (code, email_date)
+                VALUES (?, ?)
+            ''', (code_data['code'], code_data['date']))
             self.connection.commit()
         except Exception as e:
             print(f"Error inserting Xbox code: {str(e)}")
             self.connection.rollback()
 
     def create_successful_orders_view(self) -> None:
-        """Create or update the successful orders view."""
         if not self.connection:
             return
 
@@ -139,7 +133,6 @@ class DatabaseManager:
             self.connection.rollback()
 
     def get_order_summary(self) -> Tuple[int, int, int, int]:
-        """Get summary statistics for orders."""
         if not self.connection:
             return (0, 0, 0, 0)
 
@@ -159,6 +152,5 @@ class DatabaseManager:
             return (0, 0, 0, 0)
 
     def close(self) -> None:
-        """Close the database connection."""
         if self.connection:
             self.connection.close()

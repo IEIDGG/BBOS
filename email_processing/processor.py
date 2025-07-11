@@ -1,12 +1,8 @@
-"""
-Email content processor for parsing different types of Best Buy emails.
-"""
-
 import email
 from datetime import datetime
 from bs4 import BeautifulSoup
 from typing import Dict, Any, Optional, Tuple
-from .parsers.order_parser import OrderParser
+from .parsers.bb_parser import OrderParser
 from .parsers.xbox_parser import XboxParser
 
 
@@ -16,23 +12,18 @@ class EmailProcessor:
         self.xbox_parser = XboxParser()
 
     def _parse_email_metadata(self, email_data: tuple) -> Tuple[str, str, Optional[str]]:
-        """Extract basic email metadata."""
-        # Handle the email message data properly
         if isinstance(email_data, tuple):
             email_body = email_data[1]
         else:
             email_body = email_data
 
-        # Create email message object
         if isinstance(email_body, bytes):
             email_message = email.message_from_bytes(email_body)
         else:
             email_message = email.message_from_string(str(email_body))
 
-        # Get recipient email
         email_address = email_message['To']
 
-        # Parse date
         date_tuple = email.utils.parsedate_tz(email_message['Date'])
         if date_tuple:
             email_date = datetime.fromtimestamp(
@@ -41,7 +32,6 @@ class EmailProcessor:
         else:
             email_date = "Unknown"
 
-        # Get HTML content
         html_content = None
         for part in email_message.walk():
             if part.get_content_type() == "text/html":
@@ -62,7 +52,6 @@ class EmailProcessor:
         return email_address, email_date, html_content
 
     def process_confirmation_email(self, email_data: tuple) -> Dict[str, Any]:
-        """Process order confirmation email."""
         try:
             email_address, email_date, html_content = self._parse_email_metadata(email_data)
             if not html_content:
@@ -89,7 +78,6 @@ class EmailProcessor:
             return {}
 
     def process_cancellation_email(self, email_data: tuple) -> Dict[str, Any]:
-        """Process order cancellation email."""
         try:
             email_address, email_date, html_content = self._parse_email_metadata(email_data)
             if not html_content:
@@ -107,7 +95,6 @@ class EmailProcessor:
             return {}
 
     def process_shipped_email(self, email_data: tuple) -> Dict[str, Any]:
-        """Process shipped order email."""
         try:
             email_address, email_date, html_content = self._parse_email_metadata(email_data)
             if not html_content:
@@ -130,7 +117,6 @@ class EmailProcessor:
             return {}
 
     def process_xbox_email(self, email_data: tuple) -> Dict[str, Any]:
-        """Process Xbox Game Pass code email."""
         try:
             email_address, email_date, html_content = self._parse_email_metadata(email_data)
             if not html_content:

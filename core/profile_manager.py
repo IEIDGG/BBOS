@@ -1,7 +1,3 @@
-"""
-Profile manager for handling user credentials and email service preferences.
-"""
-
 import json
 import os
 from typing import Dict, List, Optional, Any
@@ -11,22 +7,16 @@ from pathlib import Path
 
 
 class ProfileManager:
-    def __init__(self, profiles_file: str = 'profiles.json'):
-        """Initialize profile manager with profile storage location."""
+    def __init__(self, profiles_file: str = 'config/profiles.json'):
         self.profiles_file = Path(profiles_file)
         self.email_services = {
             '1': {'name': 'gmail', 'requires_email': True, 'display': 'Gmail'},
             '2': {'name': 'proton', 'requires_email': True, 'display': 'Proton Mail'},
             '3': {'name': 'icloud', 'requires_email': False, 'display': 'iCloud'}
         }
-        # Initialize or load existing profiles
         self.profiles = self._load_profiles()
 
     def _load_profiles(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Load profiles from JSON file or create new profiles dictionary.
-        Returns a dictionary with 'profiles' key containing profile data.
-        """
         default_profiles = {"profiles": {}}
 
         if not self.profiles_file.exists():
@@ -43,12 +33,7 @@ class ProfileManager:
             return default_profiles
 
     def _save_profiles(self) -> bool:
-        """
-        Save current profiles to JSON file.
-        Returns True if successful, False otherwise.
-        """
         try:
-            # Ensure directory exists
             self.profiles_file.parent.mkdir(parents=True, exist_ok=True)
 
             with open(self.profiles_file, 'w') as f:
@@ -59,15 +44,10 @@ class ProfileManager:
             return False
 
     def _validate_email(self, email: str) -> bool:
-        """Validate email format."""
         pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
         return bool(re.match(pattern, email))
 
     def _get_email_service(self) -> Optional[Dict[str, Any]]:
-        """
-        Interactively get email service selection from user.
-        Returns service configuration dict or None if cancelled.
-        """
         while True:
             print("\nSelect email service:")
             for key, service in self.email_services.items():
@@ -85,11 +65,6 @@ class ProfileManager:
             print("Invalid choice. Please try again.")
 
     def _get_credentials(self, service: Dict[str, Any]) -> Optional[Dict[str, str]]:
-        """
-        Get credentials from user based on service type.
-        Returns dict with username/email and password or None if cancelled.
-        """
-        # Get username/email
         while True:
             if service['requires_email']:
                 prompt = f"Enter {service['display']} email address: "
@@ -105,7 +80,6 @@ class ProfileManager:
                     continue
             break
 
-        # Get password
         while True:
             try:
                 password = getpass("Enter password: ")
@@ -127,10 +101,6 @@ class ProfileManager:
         }
 
     def _get_profile_name(self) -> Optional[str]:
-        """
-        Get unique profile name from user.
-        Returns profile name or None if cancelled.
-        """
         while True:
             name = input("\nEnter profile name (or 'q' to cancel): ").strip()
 
@@ -148,30 +118,22 @@ class ProfileManager:
             return name
 
     def add_profile(self) -> bool:
-        """
-        Add a new profile interactively.
-        Returns True if profile was added successfully, False otherwise.
-        """
         print("\nAdding New Profile")
         print("=" * 20)
 
-        # Get service type
         service = self._get_email_service()
         if not service:
             return False
 
-        # Get credentials
         creds = self._get_credentials(service)
         if not creds:
             return False
 
-        # Get profile name
         profile_name = self._get_profile_name()
         if not profile_name:
             return False
 
         try:
-            # Create new profile
             new_profile = {
                 "email": creds["username"],
                 "username": creds["username"],
@@ -179,12 +141,9 @@ class ProfileManager:
                 "service": service["name"]
             }
 
-            # Add to profiles dictionary
             self.profiles["profiles"][profile_name] = new_profile
 
-            # Save to file
             if not self._save_profiles():
-                # If save fails, remove from memory
                 del self.profiles["profiles"][profile_name]
                 return False
 
@@ -193,20 +152,14 @@ class ProfileManager:
 
         except Exception as e:
             print(f"Error creating profile: {e}")
-            # Clean up if profile was partially added
             if profile_name in self.profiles["profiles"]:
                 del self.profiles["profiles"][profile_name]
             return False
 
     def list_profiles(self) -> List[str]:
-        """Get list of profile names."""
         return list(self.profiles["profiles"].keys())
 
     def select_profile(self) -> Optional[Dict[str, Any]]:
-        """
-        Select a profile interactively.
-        Returns complete profile data dict or None if cancelled.
-        """
         profiles = self.list_profiles()
 
         if not profiles:
@@ -248,19 +201,13 @@ class ProfileManager:
             print("Invalid choice. Please try again.")
 
     def delete_profile(self, profile_name: str) -> bool:
-        """
-        Delete a profile.
-        Returns True if profile was deleted successfully, False otherwise.
-        """
         if profile_name not in self.profiles["profiles"]:
             print(f"Profile '{profile_name}' not found.")
             return False
 
         try:
-            # Remove from memory
             del self.profiles["profiles"][profile_name]
 
-            # Save changes
             if not self._save_profiles():
                 print("Error saving changes after deletion.")
                 return False
@@ -273,7 +220,6 @@ class ProfileManager:
             return False
 
     def manage_profiles(self) -> None:
-        """Manage profiles interactively."""
         while True:
             print("\nProfile Management")
             print("=" * 20)
@@ -331,3 +277,8 @@ class ProfileManager:
 
             else:
                 print("Invalid choice. Please try again.")
+
+
+if __name__ == "__main__":
+    manager = ProfileManager()
+    manager.manage_profiles()

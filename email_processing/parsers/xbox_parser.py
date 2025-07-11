@@ -1,43 +1,41 @@
-"""
-Parser for Xbox Game Pass code emails from Best Buy.
-"""
-
+import json
+import os
 import re
 from bs4 import BeautifulSoup
 from typing import Optional, Dict
 
 
 class XboxParser:
+    _config = None
+    
+    @classmethod
+    def _load_config(cls):
+        if cls._config is None:
+            config_path = os.path.join(os.path.dirname(__file__), 'html_selectors.json')
+            with open(config_path, 'r') as f:
+                cls._config = json.load(f)
+        return cls._config
+
     @staticmethod
     def extract_xbox_code(html_content: str) -> Optional[Dict[str, str]]:
-        """
-        Extract Xbox Game Pass code from email HTML content.
-
-        Returns:
-            Dictionary containing the code and associated order number if found,
-            None otherwise
-        """
+        config = XboxParser._load_config()
+        xbox_config = config['xbox_parsing']
         soup = BeautifulSoup(html_content, 'html.parser')
 
-        # Find the code section
-        code_element = soup.find('strong', string=re.compile(r'Code:'))
+        code_element = soup.find(
+            xbox_config['code_extraction']['element']['tag'],
+            string=re.compile(xbox_config['code_extraction']['element']['text_regex'])
+        )
         if not code_element:
             return None
 
-        # Extract the code using regex
-        code_match = re.search(r'Code:\s*([A-Z0-9-]+)', code_element.text)
+        code_match = re.search(
+            xbox_config['code_extraction']['code_regex'],
+            code_element.text
+        )
         if not code_match:
             return None
 
-        # Try to find associated order number
-        order_number = None
-        order_text = soup.find(string=re.compile(r'Order\s*#'))
-        if order_text:
-            order_match = re.search(r'Order\s*#\s*(BBY01-\d+)', order_text)
-            if order_match:
-                order_number = order_match.group(1)
-
         return {
             'code': code_match.group(1),
-            'order_number': order_number
         }
