@@ -1,31 +1,40 @@
 # BBOS - Best Buy Order Scraper
 
-Advanced order management system for Best Buy order processing and analysis
+Advanced email processing system for Best Buy order management and promotional code extraction
 
 ## Features
-- Profile-based configuration management
-- Email integration for order tracking
-- Modular processing pipeline
-- SQLite database backend
-- Output generation in multiple formats
+- **Email Processing**: Automated parsing of Best Buy order confirmation and promotional emails
+- **Multiple Parsers**: Dedicated parsers for different email types (orders, Xbox codes, etc.)
+- **Profile Management**: Profile-based configuration for different use cases
+- **Database Integration**: SQLite backend for data storage and retrieval
+- **Code Extraction**: Specialized extraction of promotional codes (Xbox Game Pass, etc.)
+- **Flexible Output**: Multiple export formats and file handling options
 
 ## Installation
 ```bash
-git clone https://github.com/your-repo/BBOS.git
+git clone https://github.com/IEIDGG/BBOS.git
 cd BBOS
 pip install -r requirements.txt
 ```
 
-## Profile Management
+## Usage
+
+### Main Application
+```bash
+# Run the main processing pipeline
+python main.py
+```
+
+### Profile Management
 ```bash
 # Create new profile
-python profile_main.py --create-profile --name "Warehouse1"
+python main.py --create-profile --name "Warehouse1"
 
 # List profiles
-python profile_main.py --list-profiles
+python main.py --list-profiles
 
 # Update profile
-python profile_main.py --update-profile --name "Warehouse1"
+python main.py --update-profile --name "Warehouse1"
 ```
 
 ## Project Structure
@@ -39,19 +48,45 @@ python profile_main.py --update-profile --name "Warehouse1"
 │   └── utils.py         - Common utilities
 ├── email_processing/    - Email integration modules
 │   ├── connector.py     - IMAP email client
-│   ├── parsers/         - Order parsing implementations
-│   └── processor.py     - Main processing pipeline
+│   ├── handlers.py      - Email processing handlers
+│   ├── processor.py     - Main processing pipeline
+│   └── parsers/         - Email parsing implementations
+│       ├── bb_parser.py - Best Buy order parser
+│       ├── xbox_parser.py - Xbox promotional code parser
+│       └── html_selectors.json - Parser configuration
 ├── output/              - Output generation
 │   └── file_handlers.py - File export implementations
-├── requirements.txt     - Python dependencies
-└── profile_main.py      - CLI entry point
+├── main.py              - Main CLI entry point
+└── requirements.txt     - Python dependencies
 ```
+
+## Email Parsers
+
+### Best Buy Order Parser
+- Extracts order details from Best Buy confirmation emails
+- Parses product information, quantities, and pricing
+- Handles multiple order formats and layouts
+
+### Xbox Code Parser
+- Specialized extraction of Xbox Game Pass promotional codes
+- Intelligent filtering to distinguish Xbox codes from other promotional offers
+- Supports multiple Xbox/Game Pass email formats
+
+## Configuration
+
+The system uses `html_selectors.json` for parser configuration, allowing flexible adaptation to different email formats without code changes.
 
 ## Dependencies
 - Python 3.9+
-- See requirements.txt for full package list
+- beautifulsoup4 - HTML parsing
+- sqlite3 - Database operations
+- Other dependencies listed in requirements.txt
 
-## Usage
-```bash
-# Run main processing pipeline
-python profile_main.py --run --profile "Warehouse1"
+## Contributing
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+## License
+See LICENSE file for details
