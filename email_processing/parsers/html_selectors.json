@@ -1,0 +1,104 @@
+{
+  "product_parsing": {
+    "product_sections": {
+      "tag": "td",
+      "attributes": {
+        "style_contains": "width:60%;max-width:359px;"
+      }
+    },
+    "title": {
+      "tag": "a",
+      "attributes": {
+        "style": "text-decoration: none;"
+      }
+    },
+    "quantity": {
+      "tag": "td",
+      "search_string": "Qty:",
+      "method": "find_next_sibling"
+    },
+    "price": {
+      "tag": "span",
+      "text_contains": "$",
+      "attributes": {
+        "style_contains": "font-weight: 700;font-size: 14px;line-height: 18px;"
+      }
+    },
+    "total": {
+      "tag": "td",
+      "attributes": {
+        "align": "right",
+        "style_contains": "padding-top:12px; padding-left:0;padding-right:0; padding-bottom:0; color:#000000;"
+      }
+    }
+  },
+  "order_number": {
+    "confirmation": {
+      "tag": "span",
+      "text_contains": "BBY01-"
+    },
+    "shipped_cancelled": {
+      "tag": "span",
+      "attributes": {
+        "style": "font: bold 23px Arial; color: #1d252c;"
+      },
+      "text_replace": {
+        "from": "Order #",
+        "to": ""
+      }
+    },
+    "alternative": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "padding-bottom:12px"
+        },
+        "text_contains": "Order number:"
+      },
+      "target": {
+        "tag": "span",
+        "attributes": {
+          "style_contains_all": ["font-weight: 700", "font-size: 14px"]
+        }
+      }
+    }
+  },
+  "tracking_numbers": {
+    "format_1": {
+      "container": {
+        "tag": "span",
+        "attributes": {
+          "style": "font: bold 14px Arial"
+        },
+        "text_contains": "Tracking #:"
+      },
+      "target": {
+        "tag": "a"
+      }
+    },
+    "format_2": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "padding-bottom:12px"
+        },
+        "text_contains": "Tracking Number:"
+      },
+      "target": {
+        "tag": "span",
+        "attributes": {
+          "style_contains_all": ["font-weight: 700", "font-size: 14px"]
+        }
+      }
+    }
+  },
+  "xbox_parsing": {
+    "code_extraction": {
+      "element": {
+        "tag": "strong",
+        "text_regex": "Code:"
+      },
+      "code_regex": "Code:\\s*([A-Z0-9-]+)"
+    }
+  }
+} 
