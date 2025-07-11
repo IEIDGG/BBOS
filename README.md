@@ -28,13 +28,7 @@ python main.py
 ### Profile Management
 ```bash
 # Create new profile
-python main.py --create-profile --name "Warehouse1"
-
-# List profiles
-python main.py --list-profiles
-
-# Update profile
-python main.py --update-profile --name "Warehouse1"
+python core/profile_manager.py
 ```
 
 ## Project Structure
