@@ -171,7 +171,7 @@ AMAZON_DB_SETTINGS = {
 }
 
 OUTPUT_SETTINGS = {
-    'enable_output': False,
+    'enable_output': True,
     'csv_filename': 'bestbuy_orders.csv',
     'xbox_filename': 'xbox_codes.csv'
 }
