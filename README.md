@@ -18,7 +18,7 @@ pip install -r requirements.txt
 ```
 
 ## Usage
-
+**First run profile management, then run main**
 ### Main Application
 ```bash
 # Run the main processing pipeline
