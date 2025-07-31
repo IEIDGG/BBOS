@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-universal_date = "2025/01/01"
+universal_date = "2025/07/01"
 SEARCH_CRITERIA = {
     'confirmation': {
         'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
@@ -24,7 +24,7 @@ SEARCH_CRITERIA = {
         'date': f'after:{universal_date}'
     },
     'cancellation': {
-        'subject': 'OR SUBJECT "Your Best Buy order has been canceled" SUBJECT "Your order has been canceled"',
+        'subject': 'OR SUBJECT "Your Best Buy order has been canceled" SUBJECT "Your order has been cancelled."',
         'date': f'after:{universal_date}'
     },
     'shipped': {
@@ -32,7 +32,7 @@ SEARCH_CRITERIA = {
         'date': f'after:{universal_date}'
     },
     'xbox': {
-        'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
+        'from': '',
         'subject': '(OR (SUBJECT "Enjoy 1 month free of Game Pass Ultimate with your Best Buy purchase.") (SUBJECT "Enjoy your recent shopping perks.") (SUBJECT "Your recent purchase came with a free gift."))',
         'date': f'after:{universal_date}'
     }

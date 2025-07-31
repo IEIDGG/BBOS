@@ -9,7 +9,7 @@
     "title": {
       "tag": "a",
       "attributes": {
-        "style": "text-decoration: none;"
+        "style_contains": "text-decoration: none"
       }
     },
     "quantity": {
@@ -61,6 +61,21 @@
           "style_contains_all": ["font-weight: 700", "font-size: 14px"]
         }
       }
+    },
+    "cancelled": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "style": "padding-bottom:12px;"
+        },
+        "text_contains": "Order number:"
+      },
+      "target": {
+        "tag": "span",
+        "attributes": {
+          "style_contains_all": ["font-weight: 700", "font-size: 14px", "line-height: 18px"]
+        }
+      }
     }
   },
   "tracking_numbers": {
@@ -93,12 +108,21 @@
     }
   },
   "xbox_parsing": {
+    "title": {
+      "tag": "span",
+      "attributes": {
+        "style_contains_all": ["font-weight: 700", "font-size: 14px", "line-height: 18px", "font-family: Arial"]
+      }
+    },
     "code_extraction": {
-      "element": {
+      "container": {
         "tag": "strong",
-        "text_regex": "Code:"
+        "text_contains": "Here is your code:"
       },
-      "code_regex": "Code:\\s*([A-Z0-9-]+)"
+      "target": {
+        "method": "find_next_sibling",
+        "tag": "strong"
+      }
     }
   }
 } 

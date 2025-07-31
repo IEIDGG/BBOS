@@ -61,7 +61,13 @@ class EmailConnector:
             if '(OR' in from_criteria:
                 addresses = re.findall(r'"([^"]+)"', from_criteria)
                 if addresses:
-                    formatted_parts.append(f'OR (FROM "{addresses[0]}") (FROM "{addresses[1]}")')
+                    if len(addresses) > 1:
+                        or_chain = f'FROM "{addresses[0]}"'
+                        for address in addresses[1:]:
+                            or_chain = f'OR {or_chain} FROM "{address}"'
+                        formatted_parts.append(f'({or_chain})')
+                    else:
+                        formatted_parts.append(f'FROM "{addresses[0]}"')
             else:
                 address = re.search(r'"([^"]+)"', from_criteria)
                 if address:
@@ -72,8 +78,13 @@ class EmailConnector:
             if 'OR' in subject_criteria:
                 subjects = re.findall(r'"([^"]+)"', subject_criteria)
                 if subjects:
-                    subjects_formatted = ' '.join(f'(SUBJECT "{subject}")' for subject in subjects)
-                    formatted_parts.append(f'OR {subjects_formatted}')
+                    if len(subjects) > 1:
+                        or_chain = f'SUBJECT "{subjects[0]}"'
+                        for subject in subjects[1:]:
+                            or_chain = f'OR {or_chain} SUBJECT "{subject}"'
+                        formatted_parts.append(f'({or_chain})')
+                    else:
+                        formatted_parts.append(f'SUBJECT "{subjects[0]}"')
             else:
                 subject = re.search(r'"([^"]+)"', subject_criteria)
                 if subject:

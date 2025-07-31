@@ -74,10 +74,7 @@ class OrderParser:
         product_sections = OrderParser._find_elements(soup, product_config['product_sections'])
 
         for section in product_sections:
-            title_tag = section.find(
-                product_config['title']['tag'],
-                **{k: v for k, v in product_config['title']['attributes'].items()}
-            )
+            title_tag = OrderParser._find_element(section, product_config['title'])
             if not title_tag:
                 continue
 
@@ -111,6 +108,20 @@ class OrderParser:
         if email_type == 'confirmation':
             order_span = OrderParser._find_element(soup, order_config['confirmation'])
             return order_span.text.strip() if order_span else None
+
+        if email_type == 'cancellation':
+            cancelled_config = order_config['cancelled']
+            order_tds = OrderParser._find_elements(soup, cancelled_config['container'])
+            for td in order_tds:
+                if cancelled_config['container']['text_contains'] in td.text:
+                    order_span = td.find(
+                        cancelled_config['target']['tag'],
+                        style=lambda value: value and all(
+                            part in value for part in cancelled_config['target']['attributes']['style_contains_all']
+                        )
+                    )
+                    if order_span:
+                        return order_span.text.strip()
 
         order_span = OrderParser._find_element(soup, order_config['shipped_cancelled'])
         if order_span:
