@@ -9,8 +9,10 @@
     "title": {
       "tag": "a",
       "attributes": {
-        "style_contains": "text-decoration: none"
-      }
+        "style_contains": "text-decoration: none",
+        "href_contains": "click.emailinfo2.bestbuy.com"
+      },
+      "text_min_length": 10
     },
     "quantity": {
       "tag": "td",

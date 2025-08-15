@@ -120,7 +120,13 @@ class OrderEmailHandler(BaseEmailHandler):
                 for order in orders:
                     if order['number'] == result['order_number']:
                         order['status'] = "Shipped"
-                        order['tracking'] = result['tracking_numbers']
+                        existing_tracking = order.get('tracking', [])
+                        new_tracking = result['tracking_numbers']
+                        
+                        combined_tracking = list(set(existing_tracking + new_tracking))
+                        order['tracking'] = combined_tracking
+                        
+                        
                         self.statistics['shipped'] += 1
                         self.statistics['tracking_numbers'] += len(result['tracking_numbers'])
                         print(f"Processed shipped: Order {result['order_number']}")

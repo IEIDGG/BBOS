@@ -39,6 +39,7 @@ class XboxParser:
         
         title_element = self._find_element_by_selector(soup, self.selectors['title'])
         title = title_element.get_text().strip() if title_element else None
+        print(title)
         
         code_container = self._find_element_by_selector(soup, self.selectors['code_extraction']['container'])
         if not code_container:

@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-universal_date = "2025/07/01"
+universal_date = "2025/08/01"
 SEARCH_CRITERIA = {
     'confirmation': {
         'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',

@@ -24,9 +24,11 @@ class OrderParser:
         if 'attributes' in config:
             for attr, value in config['attributes'].items():
                 if attr == 'style_contains':
-                    kwargs['style'] = lambda v: v and value in v
+                    kwargs['style'] = lambda v, val=value: v and val in v
                 elif attr == 'style_contains_all':
-                    kwargs['style'] = lambda v: v and all(part in v for part in value)
+                    kwargs['style'] = lambda v, val=value: v and all(part in v for part in val)
+                elif attr == 'href_contains':
+                    kwargs['href'] = lambda v, val=value: v and val in v
                 else:
                     kwargs[attr] = value
         
@@ -35,6 +37,10 @@ class OrderParser:
         if 'text_contains' in config:
             text_filter = config['text_contains']
             elements = [elem for elem in elements if text_filter in elem.text]
+        
+        if 'text_min_length' in config:
+            min_length = config['text_min_length']
+            elements = [elem for elem in elements if len(elem.get_text().strip()) >= min_length]
         
         return elements
     
@@ -47,19 +53,26 @@ class OrderParser:
         if 'attributes' in config:
             for attr, value in config['attributes'].items():
                 if attr == 'style_contains':
-                    kwargs['style'] = lambda v: v and value in v
+                    kwargs['style'] = lambda v, val=value: v and val in v
                 elif attr == 'style_contains_all':
-                    kwargs['style'] = lambda v: v and all(part in v for part in value)
+                    kwargs['style'] = lambda v, val=value: v and all(part in v for part in val)
+                elif attr == 'href_contains':
+                    kwargs['href'] = lambda v, val=value: v and val in v
                 else:
                     kwargs[attr] = value
         
-        if 'text_contains' in config:
-            text_filter = config['text_contains']
+        if 'text_contains' in config or 'text_min_length' in config:
             elements = soup.find_all(tag, **kwargs)
-            for elem in elements:
-                if text_filter in elem.text:
-                    return elem
-            return None
+            
+            if 'text_contains' in config:
+                text_filter = config['text_contains']
+                elements = [elem for elem in elements if text_filter in elem.text]
+            
+            if 'text_min_length' in config:
+                min_length = config['text_min_length']
+                elements = [elem for elem in elements if len(elem.get_text().strip()) >= min_length]
+            
+            return elements[0] if elements else None
         
         return soup.find(tag, **kwargs)
 
@@ -77,23 +90,40 @@ class OrderParser:
             title_tag = OrderParser._find_element(section, product_config['title'])
             if not title_tag:
                 continue
+            
+            title = title_tag.text.strip()
+            
+            if 'Xbox' in title or 'Game Pass' in title or 'fubo' in title or 'Apple TV' in title or 'Norton' in title:
+                continue
 
             qty_tag = section.find_next('td', string='Qty:')
             qty = qty_tag.find_next_sibling('td').text.strip() if qty_tag else "N/A"
 
+            dollar_spans = section.find_all('span', string=lambda text: text and '$' in text)
+            for span in dollar_spans:
+                print(f"  - Text: '{span.text}'")
+                
             price_tag = section.find(
                 product_config['price']['tag'],
                 string=lambda text: text and '$' in text,
                 style=lambda value: value and product_config['price']['attributes']['style_contains'] in value
             )
+            
+            if not price_tag and dollar_spans:
+                for span in dollar_spans:
+                    if '$' in span.text and not span.text.strip() in ['$0.00', '$']:
+                        price_tag = span
+                        break
+                
             price = price_tag.text.strip() if price_tag else "N/A"
 
             if price != "N/A":
                 products.append({
-                    'title': title_tag.text.strip(),
+                    'title': title,
                     'quantity': qty,
                     'price': price
                 })
+                break
 
         total_td = OrderParser._find_element(soup, product_config['total'])
         total_price = total_td.text.strip() if total_td else "N/A"
