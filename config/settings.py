@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-universal_date = "2025/08/01"
+universal_date = "2025/10/01"
 SEARCH_CRITERIA = {
     'confirmation': {
         'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
@@ -24,7 +24,7 @@ SEARCH_CRITERIA = {
         'date': f'after:{universal_date}'
     },
     'cancellation': {
-        'subject': '(OR (SUBJECT "Your Best Buy order has been canceled") (SUBJECT "Your order has been cancelled.") (SUBJECT "We received your cancellation request."))',
+        'subject': '(OR (SUBJECT "Your Best Buy order has been canceled") (SUBJECT "An item has been cancelled from your order.") (SUBJECT "Your order has been cancelled.") (SUBJECT "We received your cancellation request."))',
         'date': f'after:{universal_date}'
     },
     'shipped': {
@@ -105,6 +105,13 @@ DB_SETTINGS = {
                 FOREIGN KEY (order_id) REFERENCES orders (order_number)
             )
         ''',
+        'xbox_codes': '''
+            CREATE TABLE IF NOT EXISTS xbox_codes (
+                id INTEGER PRIMARY KEY,
+                code TEXT UNIQUE,
+                email_date TEXT
+            )
+        ''',
         'successful_orders': '''
             CREATE TABLE IF NOT EXISTS successful_orders (
                 order_number TEXT PRIMARY KEY,
@@ -113,14 +120,8 @@ DB_SETTINGS = {
                 status TEXT,
                 title TEXT,
                 quantity TEXT,
-                tracking_number TEXT
-            )
-        ''',
-        'xbox_codes': '''
-            CREATE TABLE IF NOT EXISTS xbox_codes (
-                id INTEGER PRIMARY KEY,
-                code TEXT UNIQUE,
-                email_date TEXT
+                tracking_number TEXT,
+                state TEXT
             )
         '''
     }
@@ -164,7 +165,8 @@ AMAZON_DB_SETTINGS = {
                 status TEXT,
                 title TEXT,
                 quantity TEXT,
-                tracking_number TEXT
+                tracking_number TEXT,
+                state TEXT
             )
         '''
     }
@@ -173,7 +175,7 @@ AMAZON_DB_SETTINGS = {
 OUTPUT_SETTINGS = {
     'enable_output': False,
     'csv_filename': 'bestbuy_orders.csv',
-    'xbox_filename': 'xbox_codes.csv'
+    'xbox_filename': 'bestbuy_xbox_codes.csv'
 }
 
 # TODO: Add Amazon-specific output settings

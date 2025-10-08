@@ -97,7 +97,7 @@ class OrderEmailHandler(BaseEmailHandler):
 
             self._update_stats(bool(result.get('order_number')))
 
-    def process_shipped_emails(self, folder: str, orders: List[Dict]) -> None:
+    def process_shipped_emails(self, folder: str, orders: List[Dict], db_manager=None) -> None:
         print(f"\nProcessing shipped emails in folder: {folder}")
 
         success, messages = self.connector.search_emails(
@@ -126,6 +126,11 @@ class OrderEmailHandler(BaseEmailHandler):
                         combined_tracking = list(set(existing_tracking + new_tracking))
                         order['tracking'] = combined_tracking
                         
+                        if 'address_info' in result and db_manager:
+                            state_code = result['address_info']
+                            order['state'] = state_code
+                            db_manager.update_order_address(result['order_number'], state_code)
+                            print(f"  State: {state_code}")
                         
                         self.statistics['shipped'] += 1
                         self.statistics['tracking_numbers'] += len(result['tracking_numbers'])

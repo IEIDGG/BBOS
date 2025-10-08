@@ -105,9 +105,8 @@ class DatabaseManager:
 
         cursor = self.connection.cursor()
         try:
-            cursor.execute('DROP TABLE IF EXISTS successful_orders')
             cursor.execute('''
-                CREATE TABLE successful_orders AS
+                CREATE TABLE IF NOT EXISTS successful_orders_temp AS
                 SELECT 
                     o.order_number,
                     o.order_date,
@@ -115,22 +114,84 @@ class DatabaseManager:
                     o.status,
                     GROUP_CONCAT(p.title, '; ') as title,
                     GROUP_CONCAT(p.quantity, '; ') as quantity,
-                    GROUP_CONCAT(t.tracking_number, '; ') as tracking_number
+                    GROUP_CONCAT(t.tracking_number, '; ') as tracking_number,
+                    COALESCE(so.state, '') as state
                 FROM 
                     orders o
                 LEFT JOIN 
                     products p ON o.order_number = p.order_id
                 LEFT JOIN 
                     tracking_numbers t ON o.order_number = t.order_id
+                LEFT JOIN 
+                    successful_orders so ON o.order_number = so.order_number
                 WHERE 
                     o.status != 'Cancelled'
                 GROUP BY 
                     o.order_number
             ''')
+            
+            cursor.execute('DROP TABLE IF EXISTS successful_orders')
+            cursor.execute('ALTER TABLE successful_orders_temp RENAME TO successful_orders')
+            
             self.connection.commit()
         except Exception as e:
             print(f"Error creating successful orders view: {str(e)}")
             self.connection.rollback()
+
+    def update_order_address(self, order_number: str, state_code: str) -> None:
+        if not self.connection:
+            print(f"ERROR: No database connection for updating address of order {order_number}")
+            return
+
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("SELECT order_number FROM successful_orders WHERE order_number = ?", (order_number,))
+            existing_order = cursor.fetchone()
+            if not existing_order:
+                return
+            
+            cursor.execute("PRAGMA table_info(successful_orders)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'state' not in columns:
+                cursor.execute("ALTER TABLE successful_orders ADD COLUMN state TEXT")
+                self.connection.commit()
+            
+            cursor.execute('''
+                UPDATE successful_orders 
+                SET state = ?
+                WHERE order_number = ?
+            ''', (state_code, order_number))
+            
+            self.connection.commit()
+            
+        except Exception as e:
+            print(f"Error updating order state for {order_number}: {str(e)}")
+            self.connection.rollback()
+
+    def get_all_orders(self) -> List[Dict]:
+        if not self.connection:
+            return []
+
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute('SELECT order_number, order_date, total_price, status, email_address FROM orders')
+            rows = cursor.fetchall()
+            
+            orders = []
+            for row in rows:
+                orders.append({
+                    'number': row[0],
+                    'order_number': row[0],
+                    'date': row[1],
+                    'total_price': row[2],
+                    'status': row[3],
+                    'email_address': row[4]
+                })
+            return orders
+        except Exception as e:
+            print(f"Error getting all orders: {str(e)}")
+            return []
 
     def get_order_summary(self) -> Tuple[int, int, int, int]:
         if not self.connection:

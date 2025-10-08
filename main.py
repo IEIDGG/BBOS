@@ -2,13 +2,18 @@
 
 import sys
 import os
-from typing import Optional, Dict, Any
+import time
+import threading
+from datetime import datetime
+from typing import Optional, Dict, Any, Set, List
 
 from core.profile_manager import ProfileManager
 from core.utils import get_db_settings
 from email_processing.connector import EmailConnector
 from email_processing.handlers import OrderEmailHandler, XboxEmailHandler
+from config.settings import SEARCH_CRITERIA
 from output.file_handlers import OutputHandler
+from continuous_monitor import ContinuousMonitor
 
 
 class BBOSApplication:
@@ -18,6 +23,7 @@ class BBOSApplication:
         self.email_connector = None
         self.current_profile = None
         self.selected_service = None
+        self.continuous_monitor = None
 
     def display_banner(self):
         print("\n" + "="*60)
@@ -32,10 +38,11 @@ class BBOSApplication:
         print("1. Best Buy")
         print("2. Amazon")
         print("3. Both Services")
+        print("4. Continuous Monitor (30s refresh)")
         print("q. Cancel")
         
         while True:
-            choice = input("\nSelect service (1-3) or 'q' to cancel: ").strip().lower()
+            choice = input("\nSelect service (1-4) or 'q' to cancel: ").strip().lower()
             
             if choice == 'q':
                 return None
@@ -45,8 +52,10 @@ class BBOSApplication:
                 return 'amazon'
             elif choice == '3':
                 return 'both'
+            elif choice == '4':
+                return 'monitor'
             else:
-                print("Please enter a valid choice (1-3) or 'q' to cancel")
+                print("Please enter a valid choice (1-4) or 'q' to cancel")
 
     def get_profile(self) -> Optional[Dict[str, Any]]:
         try:
@@ -128,9 +137,10 @@ class BBOSApplication:
             
             if orders:
                 order_handler.process_cancellation_emails(folder, orders)
-                order_handler.process_shipped_emails(folder, orders)
+                order_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager)
                 
                 self.output_handler.save_orders(orders)
+                self.output_handler.finalize_database()
                 self.output_handler.display_order_summary(order_handler.get_statistics())
             else:
                 print("No Best Buy orders found to process")
@@ -267,6 +277,10 @@ class BBOSApplication:
             print(f"Error initializing output handler: {str(e)}")
             self.output_handler = OutputHandler()
 
+    def run_continuous_monitoring(self, folder: str) -> None:
+        self.continuous_monitor = ContinuousMonitor(self.email_connector, self.output_handler)
+        self.continuous_monitor.run_continuous_monitoring(folder)
+
     def run(self):
         try:
             self.display_banner()
@@ -276,9 +290,12 @@ class BBOSApplication:
                 print("No service selected. Exiting...")
                 return
             
-            print(f"\nService selected: {self.selected_service.title()}")
-            
-            self.initialize_output_handler(self.selected_service)
+            if self.selected_service == 'monitor':
+                print("\nContinuous Monitoring Mode Selected")
+                self.initialize_output_handler('bestbuy')
+            else:
+                print(f"\nService selected: {self.selected_service.title()}")
+                self.initialize_output_handler(self.selected_service)
             
             profile = self.get_profile()
             if not profile:
@@ -294,7 +311,10 @@ class BBOSApplication:
                 print("No folder selected. Exiting...")
                 return
             
-            self.run_processing(folder)
+            if self.selected_service == 'monitor':
+                self.run_continuous_monitoring(folder)
+            else:
+                self.run_processing(folder)
             
         except KeyboardInterrupt:
             print("\n\nOperation cancelled by user")
@@ -304,6 +324,8 @@ class BBOSApplication:
             self.cleanup()
 
     def cleanup(self):
+        if self.continuous_monitor:
+            self.continuous_monitor.stop_monitoring()
         if self.email_connector:
             self.email_connector.disconnect()
         if self.output_handler:

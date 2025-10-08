@@ -42,7 +42,6 @@ class OutputHandler:
         try:
             for order in orders:
                 self.db_manager.insert_order(order)
-            self.db_manager.create_successful_orders_view()
             print("Orders saved to SQLite database successfully")
         except Exception as e:
             print(f"Error saving orders to database: {str(e)}")
@@ -68,6 +67,13 @@ class OutputHandler:
             print("Xbox codes saved to SQLite database successfully")
         except Exception as e:
             print(f"Error saving Xbox codes to database: {str(e)}")
+
+    def finalize_database(self) -> None:
+        try:
+            self.db_manager.create_successful_orders_view()
+            print("Database finalized successfully")
+        except Exception as e:
+            print(f"Error finalizing database: {str(e)}")
 
     def display_order_summary(self, stats: Dict) -> None:
         print("\nOrder Processing Summary")

@@ -106,11 +106,13 @@ class EmailProcessor:
                 return {}
 
             tracking_numbers = self.order_parser.extract_tracking_numbers(soup)
+            address_info = self.order_parser.extract_shipping_address(soup)
 
             return {
                 'date': email_date,
                 'order_number': order_number,
-                'tracking_numbers': tracking_numbers
+                'tracking_numbers': tracking_numbers,
+                'address_info': address_info
             }
         except Exception as e:
             print(f"Error processing shipped email: {str(e)}")

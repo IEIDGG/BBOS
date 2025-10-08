@@ -126,5 +126,18 @@
         "tag": "strong"
       }
     }
+  },
+  "shipping_address": {
+    "container": {
+      "tag": "td",
+      "attributes": {},
+      "text_contains": "Your order is shipping to:"
+    },
+    "address_span": {
+      "tag": "span",
+      "attributes": {
+        "style_contains_all": ["font-size: 20px", "font-weight: 700"]
+      }
+    }
   }
 } 

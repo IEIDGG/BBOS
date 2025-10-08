@@ -205,3 +205,42 @@ class OrderParser:
                     tracking_numbers.append(tracking_span.text.strip())
 
         return tracking_numbers
+
+    @staticmethod
+    def extract_shipping_address(soup: BeautifulSoup) -> str:
+        shipping_tds = soup.find_all('td')
+        shipping_tds = [td for td in shipping_tds if 'Your order is shipping to:' in td.get_text()]
+        
+        for td in shipping_tds:
+            spans = td.find_all('span')
+            
+            for span in spans:
+                span_text = span.get_text().strip()
+                span_style = span.get('style', '')
+                
+                is_address = (
+                    len(span_text.split()) > 3 and 
+                    (',' in span_text or '<br>' in str(span)) and
+                    any(char.isdigit() for char in span_text) and
+                    not span_text.lower().startswith(('status', 'ready', 'product', 'shipped', 'delivered'))
+                )
+                
+                has_style = (
+                    'font-size: 20px' in span_style and 'font-weight: 700' in span_style
+                ) or (
+                    'font-weight: 700' in span_style and 'font-size' in span_style
+                )
+                
+                if is_address and has_style:
+                    address_text = span.get_text().replace('<br>', '\n').replace('<br/>', '\n')
+                    lines = [line.strip() for line in address_text.split('\n') if line.strip()]
+                    
+                    last_line = lines[-1] if lines else ''
+                    if ', ' in last_line:
+                        parts = last_line.split(', ')
+                        if len(parts) >= 2:
+                            state_zip = parts[1].strip().split()
+                            if state_zip:
+                                return state_zip[0]
+        
+        return ''
