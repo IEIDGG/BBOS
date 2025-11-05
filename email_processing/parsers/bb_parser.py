@@ -204,14 +204,27 @@ class OrderParser:
                 if tracking_span:
                     tracking_numbers.append(tracking_span.text.strip())
 
+        format3_config = tracking_config['format_3']
+        tracking_tds = OrderParser._find_elements(soup, format3_config['container'])
+        for td in tracking_tds:
+            if format3_config['container']['text_contains'] in td.text:
+                tracking_span = td.find(
+                    format3_config['target']['tag'],
+                    style=lambda value: value and all(
+                        part in value for part in format3_config['target']['attributes']['style_contains_all']
+                    )
+                )
+                if tracking_span:
+                    tracking_numbers.append(tracking_span.text.strip())
+
         return tracking_numbers
 
     @staticmethod
     def extract_shipping_address(soup: BeautifulSoup) -> str:
         shipping_tds = soup.find_all('td')
-        shipping_tds = [td for td in shipping_tds if 'Your order is shipping to:' in td.get_text()]
+        old_format_tds = [td for td in shipping_tds if 'Your order is shipping to:' in td.get_text()]
         
-        for td in shipping_tds:
+        for td in old_format_tds:
             spans = td.find_all('span')
             
             for span in spans:
@@ -242,5 +255,22 @@ class OrderParser:
                             state_zip = parts[1].strip().split()
                             if state_zip:
                                 return state_zip[0]
+        
+        new_format_tds = [td for td in shipping_tds if 'Shipping to:' in td.get_text() and 'Your order is shipping to:' not in td.get_text()]
+        
+        for td in new_format_tds:
+            parent = td.find_parent('tr')
+            if parent:
+                next_row = parent.find_next_sibling('tr')
+                if next_row:
+                    address_span = next_row.find('span', style=lambda v: v and 'font-size: 16px' in v)
+                    if address_span:
+                        address_text = address_span.get_text().strip()
+                        if ', ' in address_text and any(char.isdigit() for char in address_text):
+                            parts = address_text.split(', ')
+                            if len(parts) >= 2:
+                                state_zip = parts[1].strip().split()
+                                if state_zip:
+                                    return state_zip[0]
         
         return ''

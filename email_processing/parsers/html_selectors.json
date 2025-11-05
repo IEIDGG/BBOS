@@ -107,6 +107,21 @@
           "style_contains_all": ["font-weight: 700", "font-size: 14px"]
         }
       }
+    },
+    "format_3": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "padding-bottom:12px"
+        },
+        "text_contains": "Tracking number:"
+      },
+      "target": {
+        "tag": "span",
+        "attributes": {
+          "style_contains_all": ["font-weight: 700", "font-size: 14px"]
+        }
+      }
     }
   },
   "xbox_parsing": {

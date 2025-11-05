@@ -100,7 +100,9 @@ class EmailConnector:
             formatted_criteria = self._format_search_criteria(search_criteria)
             print(f"Using IMAP search criteria: {formatted_criteria}")
             _, message_numbers = self.connection.search(None, formatted_criteria)
-            return True, message_numbers[0].split()
+            if message_numbers[0]:
+                return True, message_numbers[0].split()
+            return True, []
         except Exception as e:
             print(f"Error searching emails in {folder}: {str(e)}")
             return False, []
