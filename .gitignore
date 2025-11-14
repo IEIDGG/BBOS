@@ -3,6 +3,7 @@
 *.sqlite3
 bestbuy_orders.csv
 bestbuy_orders.sqlite3
-profiles.json
 xbox_codes.csv
 my_orders.sqlite3
+config/profiles.json
+config/profiles.json

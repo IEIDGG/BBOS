@@ -16,13 +16,14 @@ class EmailProcessor:
             email_body = email_data[1]
         else:
             email_body = email_data
-
+        
         if isinstance(email_body, bytes):
             email_message = email.message_from_bytes(email_body)
         else:
             email_message = email.message_from_string(str(email_body))
 
         email_address = email_message['To']
+        subject = email_message['Subject']
 
         date_tuple = email.utils.parsedate_tz(email_message['Date'])
         if date_tuple:
@@ -33,7 +34,11 @@ class EmailProcessor:
             email_date = "Unknown"
 
         html_content = None
+        content_types = []
+        
         for part in email_message.walk():
+            content_type = part.get_content_type()
+            content_types.append(content_type)
             if part.get_content_type() == "text/html":
                 payload = part.get_payload(decode=True)
                 if isinstance(payload, bytes):
@@ -48,6 +53,10 @@ class EmailProcessor:
                 elif payload is not None:
                     html_content = str(payload)
                 break
+        
+        print(f"  📧 Subject: {subject[:60]}{'...' if len(subject) > 60 else ''}")
+        print(f"     Date: {email_date} | To: {email_address}")
+        print(f"     Parts: {', '.join(set(content_types))} | HTML: {'✓' if html_content else '✗'}")
 
         return email_address, email_date, html_content
 

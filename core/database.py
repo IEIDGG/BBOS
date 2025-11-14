@@ -40,22 +40,31 @@ class DatabaseManager:
         cursor = self.connection.cursor()
 
         try:
+            cursor.execute("PRAGMA table_info(orders)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'state' not in columns:
+                cursor.execute("ALTER TABLE orders ADD COLUMN state TEXT")
+                self.connection.commit()
+            
             cursor.execute('SELECT * FROM orders WHERE order_number = ?', (order['number'],))
             existing_order = cursor.fetchone()
 
+            state_value = order.get('state', '')
+            
             if existing_order:
                 cursor.execute('''
                     UPDATE orders 
-                    SET order_date = ?, total_price = ?, status = ?, email_address = ?
+                    SET order_date = ?, total_price = ?, status = ?, email_address = ?, state = ?
                     WHERE order_number = ?
                 ''', (order['date'], order['total_price'], order['status'],
-                     order['email_address'], order['number']))
+                     order['email_address'], state_value, order['number']))
             else:
                 cursor.execute('''
-                    INSERT INTO orders (order_number, order_date, total_price, status, email_address)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO orders (order_number, order_date, total_price, status, email_address, state)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 ''', (order['number'], order['date'], order['total_price'],
-                     order['status'], order['email_address']))
+                     order['status'], order['email_address'], state_value))
 
             order_id = order['number']
 
@@ -115,15 +124,13 @@ class DatabaseManager:
                     GROUP_CONCAT(p.title, '; ') as title,
                     GROUP_CONCAT(p.quantity, '; ') as quantity,
                     GROUP_CONCAT(t.tracking_number, '; ') as tracking_number,
-                    COALESCE(so.state, '') as state
+                    COALESCE(o.state, '') as state
                 FROM 
                     orders o
                 LEFT JOIN 
                     products p ON o.order_number = p.order_id
                 LEFT JOIN 
                     tracking_numbers t ON o.order_number = t.order_id
-                LEFT JOIN 
-                    successful_orders so ON o.order_number = so.order_number
                 WHERE 
                     o.status != 'Cancelled'
                 GROUP BY 
@@ -145,20 +152,15 @@ class DatabaseManager:
 
         cursor = self.connection.cursor()
         try:
-            cursor.execute("SELECT order_number FROM successful_orders WHERE order_number = ?", (order_number,))
-            existing_order = cursor.fetchone()
-            if not existing_order:
-                return
-            
-            cursor.execute("PRAGMA table_info(successful_orders)")
+            cursor.execute("PRAGMA table_info(orders)")
             columns = [row[1] for row in cursor.fetchall()]
             
             if 'state' not in columns:
-                cursor.execute("ALTER TABLE successful_orders ADD COLUMN state TEXT")
+                cursor.execute("ALTER TABLE orders ADD COLUMN state TEXT")
                 self.connection.commit()
             
             cursor.execute('''
-                UPDATE successful_orders 
+                UPDATE orders 
                 SET state = ?
                 WHERE order_number = ?
             ''', (state_code, order_number))
@@ -175,7 +177,7 @@ class DatabaseManager:
 
         cursor = self.connection.cursor()
         try:
-            cursor.execute('SELECT order_number, order_date, total_price, status, email_address FROM orders')
+            cursor.execute('SELECT order_number, order_date, total_price, status, email_address, state FROM orders')
             rows = cursor.fetchall()
             
             orders = []
@@ -186,7 +188,8 @@ class DatabaseManager:
                     'date': row[1],
                     'total_price': row[2],
                     'status': row[3],
-                    'email_address': row[4]
+                    'email_address': row[4],
+                    'state': row[5] if len(row) > 5 else ''
                 })
             return orders
         except Exception as e:

@@ -144,6 +144,8 @@ class BBOSApplication:
                 self.output_handler.display_order_summary(order_handler.get_statistics())
             else:
                 print("No Best Buy orders found to process")
+            
+            order_handler.print_fetch_statistics()
                 
         except Exception as e:
             print(f"Error processing Best Buy orders: {str(e)}")
@@ -175,6 +177,12 @@ class BBOSApplication:
                 self.output_handler.display_xbox_summary(len(xbox_codes))
             else:
                 print("No Xbox codes found")
+            
+            stats = self.email_connector.get_fetch_stats()
+            print(f"\n=== Email Fetch Statistics ===")
+            print(f"Total fetches: {stats['fetch_count']}")
+            print(f"Remaining quota: {stats['remaining']}/{stats['max_fetches']}")
+            print(f"Usage: {(stats['fetch_count']/stats['max_fetches']*100):.1f}%")
                 
         except Exception as e:
             print(f"Error processing Xbox codes: {str(e)}")

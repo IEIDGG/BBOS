@@ -3,8 +3,27 @@ import ssl
 import re
 import time
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
+from functools import wraps
 from config.settings import EMAIL_SERVERS
+
+
+def retry_with_backoff(max_retries=3, base_delay=1):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    delay = base_delay * (2 ** attempt)
+                    print(f"Retry {attempt + 1}/{max_retries} after {delay}s due to: {str(e)}")
+                    time.sleep(delay)
+            return None
+        return wrapper
+    return decorator
 
 
 class EmailConnector:
@@ -13,6 +32,10 @@ class EmailConnector:
         self.password = password
         self.service_config = EMAIL_SERVERS.get(service_type, EMAIL_SERVERS['gmail'])
         self.connection: Optional[imaplib.IMAP4] = None
+        self.fetch_count = 0
+        self.max_fetches_per_session = 1000
+        self.batch_size = 50
+        self.fetch_delay = 0.1
 
     def connect(self) -> None:
         try:
@@ -107,14 +130,89 @@ class EmailConnector:
             print(f"Error searching emails in {folder}: {str(e)}")
             return False, []
 
-    def fetch_email(self, message_id: bytes, protocol: str = 'RFC822') -> Tuple[bool, Optional[tuple]]:
+    @retry_with_backoff(max_retries=3, base_delay=1)
+    def fetch_email(self, message_id: bytes, protocol: str = 'BODY.PEEK[]') -> Tuple[bool, Optional[tuple]]:
         try:
-            fetch_protocol = 'BODY[]' if self.service_config['server'] == 'imap.mail.me.com' else protocol
+            if self.fetch_count >= self.max_fetches_per_session:
+                print(f"Warning: Reached max fetches per session ({self.max_fetches_per_session})")
+                return False, None
+            
+            fetch_protocol = 'BODY.PEEK[]' if self.service_config['server'] == 'imap.mail.me.com' else protocol
             _, msg_data = self.connection.fetch(message_id, f'({fetch_protocol})')
+            self.fetch_count += 1
+            time.sleep(self.fetch_delay)
             return True, msg_data[0]
         except Exception as e:
             print(f"Error fetching email {message_id}: {str(e)}")
             return False, None
+
+    @retry_with_backoff(max_retries=3, base_delay=1)
+    def fetch_emails_batch(self, message_ids: List[bytes]) -> List[tuple]:
+        results = []
+        total_batches = (len(message_ids) + self.batch_size - 1) // self.batch_size
+        
+        for i in range(0, len(message_ids), self.batch_size):
+            batch = message_ids[i:i + self.batch_size]
+            batch_num = (i // self.batch_size) + 1
+            
+            if self.fetch_count >= self.max_fetches_per_session:
+                print(f"Warning: Reached max fetches per session ({self.max_fetches_per_session})")
+                break
+            
+            try:
+                id_range = b','.join(batch)
+                print(f"Fetching batch {batch_num}/{total_batches} ({len(batch)} emails)...")
+                _, msg_data = self.connection.fetch(id_range, '(BODY.PEEK[])')
+                
+                for item in msg_data:
+                    if isinstance(item, tuple) and len(item) >= 2:
+                        results.append(item)
+                
+                self.fetch_count += len(batch)
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"Batch fetch error for batch {batch_num}: {e}")
+                for msg_id in batch:
+                    success, email_data = self.fetch_email(msg_id)
+                    if success and email_data:
+                        results.append(email_data)
+        
+        return results
+
+    @retry_with_backoff(max_retries=3, base_delay=1)
+    def fetch_email_headers(self, message_id: bytes) -> Tuple[bool, Optional[dict]]:
+        try:
+            if self.fetch_count >= self.max_fetches_per_session:
+                print(f"Warning: Reached max fetches per session ({self.max_fetches_per_session})")
+                return False, None
+            
+            _, msg_data = self.connection.fetch(message_id, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
+            self.fetch_count += 1
+            time.sleep(self.fetch_delay / 2)
+            
+            if msg_data and msg_data[0]:
+                header_data = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
+                if isinstance(header_data, bytes):
+                    header_text = header_data.decode('utf-8', errors='ignore')
+                    headers = {}
+                    for line in header_text.split('\n'):
+                        if ':' in line:
+                            key, value = line.split(':', 1)
+                            headers[key.strip().lower()] = value.strip()
+                    return True, headers
+            
+            return False, None
+        except Exception as e:
+            print(f"Error fetching email headers {message_id}: {str(e)}")
+            return False, None
+
+    def get_fetch_stats(self) -> dict:
+        return {
+            'fetch_count': self.fetch_count,
+            'max_fetches': self.max_fetches_per_session,
+            'remaining': self.max_fetches_per_session - self.fetch_count
+        }
 
     def get_folders(self) -> list:
         try:
