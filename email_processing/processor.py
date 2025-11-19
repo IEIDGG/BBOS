@@ -67,7 +67,7 @@ class EmailProcessor:
                 print("Warning: No HTML content found in email")
                 return {}
 
-            soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(html_content, 'lxml')
             order_number = self.order_parser.extract_order_number(soup, 'confirmation')
             if not order_number:
                 print("Warning: Could not extract order number")
@@ -92,7 +92,7 @@ class EmailProcessor:
             if not html_content:
                 return {}
 
-            soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(html_content, 'lxml')
             order_number = self.order_parser.extract_order_number(soup, 'cancelled')
 
             return {
@@ -109,7 +109,7 @@ class EmailProcessor:
             if not html_content:
                 return {}
 
-            soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(html_content, 'lxml')
             order_number = self.order_parser.extract_order_number(soup, 'shipped')
             if not order_number:
                 return {}

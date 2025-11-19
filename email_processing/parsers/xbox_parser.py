@@ -35,7 +35,7 @@ class XboxParser:
         return None
     
     def extract_xbox_code(self, html_content: str) -> Optional[Dict[str, str]]:
-        soup = BeautifulSoup(html_content, 'html.parser')
+        soup = BeautifulSoup(html_content, 'lxml')
         
         title_element = self._find_element_by_selector(soup, self.selectors['title'])
         title = title_element.get_text().strip() if title_element else None
@@ -51,9 +51,11 @@ class XboxParser:
             
         code = code_element.get_text().strip()
         
-        if not code or not re.match(r'^[A-Z0-9-]+$', code):
+        print(code)
+
+        if code[-1] != 'Z':
             return None
-            
+
         result = {'code': code}
         if title:
             result['title'] = title

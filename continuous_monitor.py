@@ -197,33 +197,48 @@ class ContinuousMonitor:
     def start_continuous_monitoring(self, folder: str) -> None:
         print("\n" + "="*60)
         print("        CONTINUOUS MONITORING MODE ACTIVATED")
-        print("    Checking for new orders every 30 seconds...")
+        print("    Using IMAP IDLE for real-time notifications...")
         print("         Press Ctrl+C to stop monitoring")
         print("="*60)
         
         self.monitoring_active = True
+        idle_supported = True
         
         try:
             while self.monitoring_active:
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                print(f"\n[{current_time}] Checking for new orders...")
                 
-                new_orders_found = False
-                
-                try:
-                    new_orders_found = self.check_for_new_orders(folder)
-                except Exception as e:
-                    print(f"Error during monitoring check: {str(e)}")
-                
-                if not new_orders_found:
-                    print("No new orders detected.")
-                
-                if self.monitoring_active:
-                    print("Next check in 30 seconds... (Press Ctrl+C to stop)")
-                    for i in range(30):
-                        if not self.monitoring_active:
-                            break
-                        time.sleep(1)
+                if idle_supported:
+                    print(f"\n[{current_time}] Waiting for new emails (IDLE)...")
+                    has_new_mail = self.email_connector.idle_wait(folder, timeout=30)
+                    
+                    if has_new_mail:
+                        print(f"\n[{current_time}] New email detected! Checking for orders...")
+                        try:
+                            self.check_for_new_orders(folder)
+                        except Exception as e:
+                            print(f"Error during monitoring check: {str(e)}")
+                    else:
+                        print("No new emails in the last 30 seconds.")
+                else:
+                    print(f"\n[{current_time}] Checking for new orders...")
+                    
+                    new_orders_found = False
+                    
+                    try:
+                        new_orders_found = self.check_for_new_orders(folder)
+                    except Exception as e:
+                        print(f"Error during monitoring check: {str(e)}")
+                    
+                    if not new_orders_found:
+                        print("No new orders detected.")
+                    
+                    if self.monitoring_active:
+                        print("Next check in 30 seconds... (Press Ctrl+C to stop)")
+                        for i in range(30):
+                            if not self.monitoring_active:
+                                break
+                            time.sleep(1)
                         
         except KeyboardInterrupt:
             print("\n\nMonitoring stopped by user")

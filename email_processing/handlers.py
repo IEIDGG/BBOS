@@ -1,5 +1,6 @@
 from typing import List, Dict, Tuple
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import email
 from .connector import EmailConnector
 from .processor import EmailProcessor
@@ -49,25 +50,35 @@ class OrderEmailHandler(BaseEmailHandler):
             print("Using batch fetching for efficiency...")
             email_data_list = self.connector.fetch_emails_batch(messages)
             
-            for email_data in email_data_list:
-                if not email_data:
-                    continue
-
-                result = self.processor.process_confirmation_email(email_data)
-                if result.get('order_number'):
-                    orders.append({
-                        'date': result['date'],
-                        'number': result['order_number'],
-                        'status': "",
-                        'tracking': [],
-                        'products': result['products'],
-                        'total_price': result['total_price'],
-                        'email_address': result['email_address']
-                    })
-                    self.statistics['confirmations'] += 1
-                    print(f"Processed confirmation: Order {result['order_number']}")
-
-                self._update_stats(bool(result.get('order_number')))
+            print("⚡ Using parallel processing for email parsing...")
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_data = {executor.submit(self.processor.process_confirmation_email, email_data): (email_data, idx) 
+                                  for idx, email_data in enumerate(email_data_list) if email_data}
+                
+                for future in as_completed(future_to_data):
+                    email_data, idx = future_to_data[future]
+                    try:
+                        result = future.result()
+                        if result.get('order_number'):
+                            orders.append({
+                                'date': result['date'],
+                                'number': result['order_number'],
+                                'status': "",
+                                'tracking': [],
+                                'products': result['products'],
+                                'total_price': result['total_price'],
+                                'email_address': result['email_address']
+                            })
+                            self.statistics['confirmations'] += 1
+                            print(f"Processed confirmation: Order {result['order_number']}")
+                            
+                            if idx < len(messages):
+                                self.connector.mark_uid_processed(messages[idx])
+                        
+                        self._update_stats(bool(result.get('order_number')))
+                    except Exception as e:
+                        print(f"Error processing email: {e}")
+                        self._update_stats(False)
         else:
             for msg_id in messages:
                 success, email_data = self.connector.fetch_email(msg_id)
@@ -87,6 +98,7 @@ class OrderEmailHandler(BaseEmailHandler):
                     })
                     self.statistics['confirmations'] += 1
                     print(f"Processed confirmation: Order {result['order_number']}")
+                    self.connector.mark_uid_processed(msg_id)
 
                 self._update_stats(bool(result.get('order_number')))
 
@@ -109,20 +121,30 @@ class OrderEmailHandler(BaseEmailHandler):
             print("Using batch fetching for efficiency...")
             email_data_list = self.connector.fetch_emails_batch(messages)
             
-            for email_data in email_data_list:
-                if not email_data:
-                    continue
-
-                result = self.processor.process_cancellation_email(email_data)
-                if result.get('order_number'):
-                    for order in orders:
-                        if order['number'] == result['order_number']:
-                            order['status'] = "Cancelled"
-                            self.statistics['cancellations'] += 1
-                            print(f"Processed cancellation: Order {result['order_number']}")
-                            break
-
-                self._update_stats(bool(result.get('order_number')))
+            print("⚡ Using parallel processing for email parsing...")
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_data = {executor.submit(self.processor.process_cancellation_email, email_data): (email_data, idx)
+                                  for idx, email_data in enumerate(email_data_list) if email_data}
+                
+                for future in as_completed(future_to_data):
+                    email_data, idx = future_to_data[future]
+                    try:
+                        result = future.result()
+                        if result.get('order_number'):
+                            for order in orders:
+                                if order['number'] == result['order_number']:
+                                    order['status'] = "Cancelled"
+                                    self.statistics['cancellations'] += 1
+                                    print(f"Processed cancellation: Order {result['order_number']}")
+                                    break
+                            
+                            if idx < len(messages):
+                                self.connector.mark_uid_processed(messages[idx])
+                        
+                        self._update_stats(bool(result.get('order_number')))
+                    except Exception as e:
+                        print(f"Error processing email: {e}")
+                        self._update_stats(False)
         else:
             for msg_id in messages:
                 success, email_data = self.connector.fetch_email(msg_id)
@@ -136,6 +158,7 @@ class OrderEmailHandler(BaseEmailHandler):
                             order['status'] = "Cancelled"
                             self.statistics['cancellations'] += 1
                             print(f"Processed cancellation: Order {result['order_number']}")
+                            self.connector.mark_uid_processed(msg_id)
                             break
 
                 self._update_stats(bool(result.get('order_number')))
@@ -157,33 +180,43 @@ class OrderEmailHandler(BaseEmailHandler):
             print("Using batch fetching for efficiency...")
             email_data_list = self.connector.fetch_emails_batch(messages)
             
-            for email_data in email_data_list:
-                if not email_data:
-                    continue
-
-                result = self.processor.process_shipped_email(email_data)
-                if result.get('order_number'):
-                    for order in orders:
-                        if order['number'] == result['order_number']:
-                            order['status'] = "Shipped"
-                            existing_tracking = order.get('tracking', [])
-                            new_tracking = result['tracking_numbers']
+            print("⚡ Using parallel processing for email parsing...")
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_data = {executor.submit(self.processor.process_shipped_email, email_data): (email_data, idx)
+                                  for idx, email_data in enumerate(email_data_list) if email_data}
+                
+                for future in as_completed(future_to_data):
+                    email_data, idx = future_to_data[future]
+                    try:
+                        result = future.result()
+                        if result.get('order_number'):
+                            for order in orders:
+                                if order['number'] == result['order_number']:
+                                    order['status'] = "Shipped"
+                                    existing_tracking = order.get('tracking', [])
+                                    new_tracking = result['tracking_numbers']
+                                    
+                                    combined_tracking = list(set(existing_tracking + new_tracking))
+                                    order['tracking'] = combined_tracking
+                                    
+                                    if 'address_info' in result and db_manager:
+                                        state_code = result['address_info']
+                                        order['state'] = state_code
+                                        db_manager.update_order_address(result['order_number'], state_code)
+                                        print(f"  State: {state_code}")
+                                    
+                                    self.statistics['shipped'] += 1
+                                    self.statistics['tracking_numbers'] += len(result['tracking_numbers'])
+                                    print(f"Processed shipped: Order {result['order_number']}")
+                                    break
                             
-                            combined_tracking = list(set(existing_tracking + new_tracking))
-                            order['tracking'] = combined_tracking
-                            
-                            if 'address_info' in result and db_manager:
-                                state_code = result['address_info']
-                                order['state'] = state_code
-                                db_manager.update_order_address(result['order_number'], state_code)
-                                print(f"  State: {state_code}")
-                            
-                            self.statistics['shipped'] += 1
-                            self.statistics['tracking_numbers'] += len(result['tracking_numbers'])
-                            print(f"Processed shipped: Order {result['order_number']}")
-                            break
-
-                self._update_stats(bool(result.get('order_number')))
+                            if idx < len(messages):
+                                self.connector.mark_uid_processed(messages[idx])
+                        
+                        self._update_stats(bool(result.get('order_number')))
+                    except Exception as e:
+                        print(f"Error processing email: {e}")
+                        self._update_stats(False)
         else:
             for msg_id in messages:
                 success, email_data = self.connector.fetch_email(msg_id)
@@ -210,6 +243,7 @@ class OrderEmailHandler(BaseEmailHandler):
                             self.statistics['shipped'] += 1
                             self.statistics['tracking_numbers'] += len(result['tracking_numbers'])
                             print(f"Processed shipped: Order {result['order_number']}")
+                            self.connector.mark_uid_processed(msg_id)
                             break
 
                 self._update_stats(bool(result.get('order_number')))
@@ -246,16 +280,26 @@ class XboxEmailHandler(BaseEmailHandler):
             print("Using batch fetching for efficiency...")
             email_data_list = self.connector.fetch_emails_batch(messages)
             
-            for email_data in email_data_list:
-                if not email_data:
-                    continue
-
-                result = self.processor.process_xbox_email(email_data)
-                if result.get('code'):
-                    xbox_codes.append(result)
-                    print(f"Processed Xbox code: {result['code']}")
-
-                self._update_stats(bool(result.get('code')))
+            print("⚡ Using parallel processing for email parsing...")
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_data = {executor.submit(self.processor.process_xbox_email, email_data): (email_data, idx)
+                                  for idx, email_data in enumerate(email_data_list) if email_data}
+                
+                for future in as_completed(future_to_data):
+                    email_data, idx = future_to_data[future]
+                    try:
+                        result = future.result()
+                        if result.get('code'):
+                            xbox_codes.append(result)
+                            print(f"Processed Xbox code: {result['code']}")
+                            
+                            if idx < len(messages):
+                                self.connector.mark_uid_processed(messages[idx])
+                        
+                        self._update_stats(bool(result.get('code')))
+                    except Exception as e:
+                        print(f"Error processing email: {e}")
+                        self._update_stats(False)
         else:
             for msg_id in messages:
                 success, email_data = self.connector.fetch_email(msg_id)
@@ -267,6 +311,7 @@ class XboxEmailHandler(BaseEmailHandler):
                 if result.get('code'):
                     xbox_codes.append(result)
                     print(f"Processed Xbox code: {result['code']}")
+                    self.connector.mark_uid_processed(msg_id)
                 else:
                     print(f"No Xbox code found in email ID: {msg_id}")
 

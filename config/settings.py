@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-universal_date = "2025/10/01"
+universal_date = "2025/09/01"
 SEARCH_CRITERIA = {
     'confirmation': {
         'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
@@ -84,7 +84,8 @@ DB_SETTINGS = {
                 order_date TEXT,
                 total_price TEXT,
                 status TEXT,
-                email_address TEXT
+                email_address TEXT,
+                state TEXT
             )
         ''',
         'products': '''
@@ -136,7 +137,8 @@ AMAZON_DB_SETTINGS = {
                 order_date TEXT,
                 total_price TEXT,
                 status TEXT,
-                email_address TEXT
+                email_address TEXT,
+                state TEXT
             )
         ''',
         'products': '''

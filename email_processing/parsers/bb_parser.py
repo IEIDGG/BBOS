@@ -79,7 +79,7 @@ class OrderParser:
     @staticmethod
     def parse_product_details(html_content: str) -> Tuple[List[Dict[str, str]], str]:
         config = OrderParser._load_config()
-        soup = BeautifulSoup(html_content, 'html.parser')
+        soup = BeautifulSoup(html_content, 'lxml')
         products = []
         
         product_config = config['product_parsing']
