@@ -7,3 +7,4 @@ xbox_codes.csv
 my_orders.sqlite3
 config/profiles.json
 .processed_uids_*.json
+api\api_config.json

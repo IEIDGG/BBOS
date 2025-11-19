@@ -348,36 +348,56 @@ class EmailConnector:
         print(f"✓ Filtered to {len(filtered)}/{len(message_ids)} relevant emails")
         return filtered
 
-    def idle_wait(self, folder: str, timeout: int = 30) -> bool:
+    def idle_wait(self, folder: str, timeout: int = 30) -> Optional[bool]:
         try:
+            if not self.connection:
+                return None
+            
             quoted_folder = f'"{folder}"' if ' ' in folder or '/' in folder else folder
-            self.connection.select(quoted_folder)
             
-            tag = self.connection._new_tag()
-            self.connection.send(f'{tag.decode()} IDLE\r\n'.encode())
+            try:
+                typ, data = self.connection.select(quoted_folder)
+                if typ != 'OK':
+                    return None
+            except Exception as e:
+                return None
             
-            response = self.connection.readline()
-            if b'+ idling' not in response.lower() and b'+ waiting' not in response.lower():
-                return False
-            
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                try:
-                    self.connection.socket().settimeout(1)
-                    data = self.connection.readline()
-                    if data and (b'EXISTS' in data or b'RECENT' in data):
-                        self.connection.send(b'DONE\r\n')
+            try:
+                tag = self.connection._new_tag()
+                self.connection.send(f'{tag.decode()} IDLE\r\n'.encode())
+                
+                response = self.connection.readline()
+                if b'+ idling' not in response.lower() and b'+ waiting' not in response.lower():
+                    try:
                         self.connection.readline()
-                        return True
-                except Exception:
-                    continue
-            
-            self.connection.send(b'DONE\r\n')
-            self.connection.readline()
-            return False
+                    except:
+                        pass
+                    return None
+                
+                start_time = time.time()
+                while time.time() - start_time < timeout:
+                    try:
+                        self.connection.socket().settimeout(1)
+                        data = self.connection.readline()
+                        if data and (b'EXISTS' in data or b'RECENT' in data):
+                            self.connection.send(b'DONE\r\n')
+                            self.connection.readline()
+                            return True
+                    except Exception:
+                        continue
+                
+                self.connection.send(b'DONE\r\n')
+                self.connection.readline()
+                return False
+            except Exception:
+                try:
+                    self.connection.send(b'DONE\r\n')
+                    self.connection.readline()
+                except:
+                    pass
+                return None
         except Exception as e:
-            print(f"IDLE not supported or error occurred: {e}")
-            return False
+            return None
 
     def get_fetch_stats(self) -> dict:
         return {

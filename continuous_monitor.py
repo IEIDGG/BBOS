@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, Set, List
 
 from email_processing.handlers import OrderEmailHandler
 from config.settings import SEARCH_CRITERIA
+from api.submitter import OrderAPISubmitter, APIConfig
 
 
 class MonitoringOrderHandler(OrderEmailHandler):
@@ -193,16 +194,19 @@ class ContinuousMonitor:
         self.monitoring_active = False
         self.processed_orders: Set[str] = set()
         self.monitoring_start_date = None
+        self.api_config = APIConfig()
+        self.api_submitter = OrderAPISubmitter(self.api_config)
 
     def start_continuous_monitoring(self, folder: str) -> None:
         print("\n" + "="*60)
         print("        CONTINUOUS MONITORING MODE ACTIVATED")
-        print("    Using IMAP IDLE for real-time notifications...")
+        print("    Attempting IMAP IDLE for real-time notifications...")
         print("         Press Ctrl+C to stop monitoring")
         print("="*60)
         
         self.monitoring_active = True
         idle_supported = True
+        idle_failures = 0
         
         try:
             while self.monitoring_active:
@@ -210,9 +214,20 @@ class ContinuousMonitor:
                 
                 if idle_supported:
                     print(f"\n[{current_time}] Waiting for new emails (IDLE)...")
-                    has_new_mail = self.email_connector.idle_wait(folder, timeout=30)
+                    idle_result = self.email_connector.idle_wait(folder, timeout=30)
                     
-                    if has_new_mail:
+                    if idle_result is None:
+                        idle_failures += 1
+                        if idle_failures >= 3:
+                            print("IDLE not supported or unreliable. Falling back to polling mode.")
+                            idle_supported = False
+                            continue
+                        else:
+                            print("IDLE attempt failed, retrying...")
+                            time.sleep(2)
+                            continue
+                    
+                    if idle_result:
                         print(f"\n[{current_time}] New email detected! Checking for orders...")
                         try:
                             self.check_for_new_orders(folder)
@@ -220,6 +235,7 @@ class ContinuousMonitor:
                             print(f"Error during monitoring check: {str(e)}")
                     else:
                         print("No new emails in the last 30 seconds.")
+                    idle_failures = 0
                 else:
                     print(f"\n[{current_time}] Checking for new orders...")
                     
@@ -281,6 +297,9 @@ class ContinuousMonitor:
                 for order_num, tracking in shipped_updates.items():
                     print(f"  📮 Order #{order_num} - SHIPPED (Tracking: {', '.join(tracking)})")
                 new_orders_found = True
+                
+                if self.api_config.is_enabled():
+                    self._submit_shipped_orders_to_api(shipped_updates, all_orders)
             
             if new_orders:
                 self.output_handler.save_orders(new_orders)
@@ -322,3 +341,48 @@ class ContinuousMonitor:
 
     def stop_monitoring(self):
         self.monitoring_active = False
+    
+    def _submit_shipped_orders_to_api(self, shipped_updates: Dict[str, List[str]], all_orders: List[Dict]) -> None:
+        try:
+            orders_to_submit = []
+            total_tracking_numbers = 0
+            
+            for order_num, tracking_numbers in shipped_updates.items():
+                matching_order = None
+                for order in all_orders:
+                    if order.get('number') == order_num or order.get('order_number') == order_num:
+                        matching_order = order
+                        break
+                
+                if matching_order:
+                    order_data = matching_order.copy()
+                    order_data['tracking'] = tracking_numbers
+                    orders_to_submit.append(order_data)
+                    total_tracking_numbers += len(tracking_numbers)
+            
+            if orders_to_submit:
+                if total_tracking_numbers > 1:
+                    print(f"\n📡 Bulk submitting {total_tracking_numbers} tracking number(s) from {len(orders_to_submit)} order(s) to API...")
+                    result = self.api_submitter.submit_orders_bulk(orders_to_submit)
+                    
+                    if result.get('success'):
+                        print(f"✅ Bulk Submission: {result['message']}")
+                        for group_result in result.get('group_results', []):
+                            buying_group = group_result.get('buying_group')
+                            successful = group_result.get('successful', 0)
+                            failed = group_result.get('failed', 0)
+                            skipped = group_result.get('skipped', 0)
+                            print(f"   • {buying_group}: {successful} successful, {failed} failed, {skipped} skipped")
+                    else:
+                        print(f"⚠️ Bulk Submission: {result['message']}")
+                else:
+                    print(f"\n📡 Submitting {total_tracking_numbers} tracking number to API...")
+                    result = self.api_submitter.submit_orders(orders_to_submit)
+                    
+                    if result.get('success'):
+                        print(f"✅ API Submission: {result['message']}")
+                    else:
+                        print(f"⚠️ API Submission: {result['message']}")
+                
+        except Exception as e:
+            print(f"❌ Error submitting to API: {str(e)}")

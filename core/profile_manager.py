@@ -278,6 +278,21 @@ class ProfileManager:
             else:
                 print("Invalid choice. Please try again.")
 
+    def get_last_folder(self, profile_name: str) -> Optional[str]:
+        if profile_name not in self.profiles["profiles"]:
+            return None
+        return self.profiles["profiles"][profile_name].get("last_folder")
+
+    def save_last_folder(self, profile_name: str, folder_name: str) -> bool:
+        if profile_name not in self.profiles["profiles"]:
+            return False
+        try:
+            self.profiles["profiles"][profile_name]["last_folder"] = folder_name
+            return self._save_profiles()
+        except Exception as e:
+            print(f"Error saving last folder: {e}")
+            return False
+
 
 if __name__ == "__main__":
     manager = ProfileManager()

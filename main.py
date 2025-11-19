@@ -9,11 +9,13 @@ from typing import Optional, Dict, Any, Set, List
 
 from core.profile_manager import ProfileManager
 from core.utils import get_db_settings
+from core.database import DatabaseManager
 from email_processing.connector import EmailConnector
 from email_processing.handlers import OrderEmailHandler, XboxEmailHandler
 from config.settings import SEARCH_CRITERIA
 from output.file_handlers import OutputHandler
 from continuous_monitor import ContinuousMonitor
+from api.submitter import APIConfig, OrderAPISubmitter
 
 
 class BBOSApplication:
@@ -24,6 +26,7 @@ class BBOSApplication:
         self.current_profile = None
         self.selected_service = None
         self.continuous_monitor = None
+        self.api_config = APIConfig()
 
     def display_banner(self):
         print("\n" + "="*60)
@@ -39,10 +42,11 @@ class BBOSApplication:
         print("2. Amazon")
         print("3. Both Services")
         print("4. Continuous Monitor (30s refresh)")
+        print("5. Settings")
         print("q. Cancel")
         
         while True:
-            choice = input("\nSelect service (1-4) or 'q' to cancel: ").strip().lower()
+            choice = input("\nSelect service (1-5) or 'q' to cancel: ").strip().lower()
             
             if choice == 'q':
                 return None
@@ -54,8 +58,10 @@ class BBOSApplication:
                 return 'both'
             elif choice == '4':
                 return 'monitor'
+            elif choice == '5':
+                return 'settings'
             else:
-                print("Please enter a valid choice (1-4) or 'q' to cancel")
+                print("Please enter a valid choice (1-5) or 'q' to cancel")
 
     def get_profile(self) -> Optional[Dict[str, Any]]:
         try:
@@ -100,6 +106,15 @@ class BBOSApplication:
                 default_folder = "INBOX"
                 default_msg = "INBOX"
 
+            last_folder = None
+            if self.current_profile:
+                profile_name = self.current_profile.get('name')
+                if profile_name:
+                    last_folder = self.profile_manager.get_last_folder(profile_name)
+                    if last_folder and last_folder in folders:
+                        default_folder = last_folder
+                        default_msg = last_folder
+
             print("\nAvailable email folders:")
             print("="*30)
             for i, folder in enumerate(folders, 1):
@@ -110,13 +125,21 @@ class BBOSApplication:
                     choice = input(f"\nSelect folder (1-{len(folders)}) or press Enter for {default_msg}: ").strip()
                     
                     if not choice:
-                        return default_folder
-                    
-                    idx = int(choice)
-                    if 1 <= idx <= len(folders):
-                        return folders[idx - 1]
+                        selected_folder = default_folder
                     else:
-                        print(f"Please enter a number between 1 and {len(folders)}")
+                        idx = int(choice)
+                        if 1 <= idx <= len(folders):
+                            selected_folder = folders[idx - 1]
+                        else:
+                            print(f"Please enter a number between 1 and {len(folders)}")
+                            continue
+                    
+                    if self.current_profile:
+                        profile_name = self.current_profile.get('name')
+                        if profile_name:
+                            self.profile_manager.save_last_folder(profile_name, selected_folder)
+                    
+                    return selected_folder
                 except ValueError:
                     print("Please enter a valid number")
         except Exception as e:
@@ -288,6 +311,209 @@ class BBOSApplication:
     def run_continuous_monitoring(self, folder: str) -> None:
         self.continuous_monitor = ContinuousMonitor(self.email_connector, self.output_handler)
         self.continuous_monitor.run_continuous_monitoring(folder)
+    
+    def test_api_submission(self) -> None:
+        print("\n" + "="*60)
+        print("              API TEST SUBMISSION")
+        print("="*60)
+        
+        if not self.api_config.is_enabled():
+            print("\n✗ API submission is currently DISABLED")
+            print("  Please enable API submission first (option 1)")
+            input("\nPress Enter to continue...")
+            return
+        
+        api_url = self.api_config.get_api_url()
+        print(f"\nTesting API submission to: {api_url}")
+        print("\nSelect test type:")
+        print("1. Test Single Order Submission (latest order)")
+        print("2. Test Bulk Order Submission (latest 2 orders)")
+        print("3. Cancel")
+        
+        while True:
+            test_choice = input("\nSelect option (1-3): ").strip()
+            
+            if test_choice == '3':
+                return
+            
+            if test_choice not in ['1', '2']:
+                print("Please enter a valid option (1-3)")
+                continue
+            
+            try:
+                db_manager = DatabaseManager()
+                
+                if test_choice == '1':
+                    print("\nFetching latest order with tracking...")
+                    orders = db_manager.get_latest_orders(limit=1, with_tracking_only=True)
+                    
+                    if not orders:
+                        print("\n✗ No orders with tracking numbers found in database")
+                        input("\nPress Enter to continue...")
+                        return
+                    
+                    order = orders[0]
+                    print(f"\n✓ Found order: {order['number']}")
+                    print(f"  Date: {order['date']}")
+                    print(f"  Status: {order['status']}")
+                    print(f"  Tracking numbers: {len(order['tracking'])}")
+                    print(f"  State: {order.get('state', 'N/A')}")
+                    
+                    print("\nSubmitting to API...")
+                    api_submitter = OrderAPISubmitter(self.api_config)
+                    result = api_submitter.submit_order(order)
+                    
+                    print("\n" + "-"*60)
+                    if result['success']:
+                        print(f"✓ Status: SUCCESS")
+                        print(f"✓ Message: {result['message']}")
+                        print(f"✓ Submitted: {result['submitted']} tracking number(s)")
+                        
+                        if 'results' in result:
+                            print("\nDetailed Results:")
+                            for res in result['results']:
+                                status_icon = "✓" if res['status'] == 'success' else "✗"
+                                print(f"  {status_icon} {res['tracking_number']}: {res['status']} - {res['message']}")
+                    else:
+                        print(f"✗ Status: FAILED")
+                        print(f"✗ Message: {result['message']}")
+                        print(f"✗ Submitted: {result['submitted']} tracking number(s)")
+                        
+                        if 'results' in result:
+                            print("\nDetailed Results:")
+                            for res in result['results']:
+                                print(f"  ✗ {res['tracking_number']}: {res['status']} - {res['message']}")
+                    print("-"*60)
+                
+                elif test_choice == '2':
+                    print("\nFetching latest 2 orders with tracking...")
+                    orders = db_manager.get_latest_orders(limit=2, with_tracking_only=True)
+                    
+                    if not orders:
+                        print("\n✗ No orders with tracking numbers found in database")
+                        input("\nPress Enter to continue...")
+                        return
+                    
+                    if len(orders) < 2:
+                        print(f"\n⚠ Only {len(orders)} order(s) with tracking found. Testing with available order(s)...")
+                    
+                    print(f"\n✓ Found {len(orders)} order(s):")
+                    for order in orders:
+                        print(f"  - Order {order['number']}: {len(order['tracking'])} tracking number(s)")
+                    
+                    print("\nSubmitting to API (bulk)...")
+                    api_submitter = OrderAPISubmitter(self.api_config)
+                    result = api_submitter.submit_orders_bulk(orders)
+                    
+                    print("\n" + "-"*60)
+                    if result['success']:
+                        print(f"✓ Status: SUCCESS")
+                        print(f"✓ Message: {result['message']}")
+                        print(f"✓ Total Submitted: {result['total_submitted']} tracking number(s)")
+                        print(f"✓ Total Failed: {result['total_failed']} tracking number(s)")
+                        print(f"✓ Buying Groups: {result['buying_groups']}")
+                        
+                        if 'group_results' in result:
+                            print("\nGroup Results:")
+                            for group_res in result['group_results']:
+                                print(f"\n  Buying Group: {group_res['buying_group']}")
+                                print(f"    Total: {group_res['total']}")
+                                print(f"    Successful: {group_res['successful']}")
+                                print(f"    Failed: {group_res['failed']}")
+                                print(f"    Skipped: {group_res['skipped']}")
+                                print(f"    Message: {group_res['message']}")
+                    else:
+                        print(f"✗ Status: FAILED")
+                        print(f"✗ Message: {result['message']}")
+                        print(f"✗ Total Submitted: {result['total_submitted']} tracking number(s)")
+                    print("-"*60)
+                
+                db_manager.close()
+                input("\nPress Enter to continue...")
+                return
+                
+            except Exception as e:
+                print(f"\n✗ Error during test: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                input("\nPress Enter to continue...")
+                return
+
+    def show_settings_menu(self) -> bool:
+        while True:
+            print("\n" + "="*60)
+            print("                    SETTINGS MENU")
+            print("="*60)
+            
+            api_status = "ENABLED" if self.api_config.is_enabled() else "DISABLED"
+            api_url = self.api_config.get_api_url()
+            
+            print(f"\n1. Toggle API Submission (Currently: {api_status})")
+            print(f"   API URL: {api_url}")
+            print("2. Configure API Settings")
+            print("3. Check API Health")
+            print("4. Test API Submission")
+            print("5. Back to Main Menu")
+            
+            choice = input("\nSelect option (1-5): ").strip()
+            
+            if choice == '1':
+                current_status = self.api_config.is_enabled()
+                new_status = not current_status
+                self.api_config.set_enabled(new_status)
+                status_text = "ENABLED" if new_status else "DISABLED"
+                print(f"\n✓ API Submission is now {status_text}")
+                if new_status:
+                    print(f"  Orders with tracking numbers will be submitted to: {api_url}")
+                input("\nPress Enter to continue...")
+            
+            elif choice == '2':
+                print("\n" + "="*60)
+                print("              API CONFIGURATION")
+                print("="*60)
+                print("\nTo configure API settings, edit: api/api_config.json")
+                print("\nAvailable settings:")
+                print("  - api_url: FastAPI backend URL")
+                print("  - api_key: Authentication key")
+                print("  - enabled: Enable/disable submission")
+                print("  - zip_to_buying_group: ZIP code mappings (priority)")
+                print("  - state_to_buying_group: State code mappings (fallback)")
+                print("\nSee api/README.md for detailed documentation")
+                input("\nPress Enter to continue...")
+            
+            elif choice == '3':
+                print("\n" + "="*60)
+                print("              API HEALTH CHECK")
+                print("="*60)
+                print(f"\nChecking API at: {api_url}/health")
+                print("Please wait...")
+                
+                api_submitter = OrderAPISubmitter(self.api_config)
+                health_result = api_submitter.check_api_health()
+                
+                print("\n" + "-"*60)
+                if health_result['success']:
+                    print(f"✓ Status: {health_result['status'].upper()}")
+                    print(f"✓ Database: {health_result['database'].upper()}")
+                    print(f"✓ Message: {health_result['message']}")
+                else:
+                    print(f"✗ Status: {health_result['status'].upper()}")
+                    print(f"✗ Database: {health_result['database'].upper()}")
+                    print(f"✗ Message: {health_result['message']}")
+                print("-"*60)
+                
+                input("\nPress Enter to continue...")
+            
+            elif choice == '4':
+                self.test_api_submission()
+            
+            elif choice == '5':
+                return False
+            
+            else:
+                print("Please enter a valid option (1-5)")
+        
+        return False
 
     def run(self):
         try:
@@ -297,6 +523,10 @@ class BBOSApplication:
             if not self.selected_service:
                 print("No service selected. Exiting...")
                 return
+            
+            if self.selected_service == 'settings':
+                self.show_settings_menu()
+                return self.run()
             
             if self.selected_service == 'monitor':
                 print("\nContinuous Monitoring Mode Selected")

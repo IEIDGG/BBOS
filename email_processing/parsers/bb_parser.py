@@ -252,9 +252,9 @@ class OrderParser:
                     if ', ' in last_line:
                         parts = last_line.split(', ')
                         if len(parts) >= 2:
-                            state_zip = parts[1].strip().split()
+                            state_zip = parts[1].strip()
                             if state_zip:
-                                return state_zip[0]
+                                return state_zip
         
         new_format_tds = [td for td in shipping_tds if 'Shipping to:' in td.get_text() and 'Your order is shipping to:' not in td.get_text()]
         
@@ -269,8 +269,8 @@ class OrderParser:
                         if ', ' in address_text and any(char.isdigit() for char in address_text):
                             parts = address_text.split(', ')
                             if len(parts) >= 2:
-                                state_zip = parts[1].strip().split()
+                                state_zip = parts[1].strip()
                                 if state_zip:
-                                    return state_zip[0]
+                                    return state_zip
         
         return ''

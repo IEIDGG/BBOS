@@ -215,6 +215,81 @@ class DatabaseManager:
             print(f"Error getting order summary: {str(e)}")
             return (0, 0, 0, 0)
 
+    def get_latest_orders(self, limit: int = 1, with_tracking_only: bool = True) -> List[Dict]:
+        if not self.connection:
+            return []
+
+        cursor = self.connection.cursor()
+        try:
+            if with_tracking_only:
+                cursor.execute('''
+                    SELECT DISTINCT o.order_number
+                    FROM orders o
+                    INNER JOIN tracking_numbers t ON o.order_number = t.order_id
+                    WHERE o.status != 'Cancelled'
+                    ORDER BY o.order_date DESC, o.order_number DESC
+                    LIMIT ?
+                ''', (limit,))
+            else:
+                cursor.execute('''
+                    SELECT order_number
+                    FROM orders
+                    WHERE status != 'Cancelled'
+                    ORDER BY order_date DESC, order_number DESC
+                    LIMIT ?
+                ''', (limit,))
+            
+            order_numbers = [row[0] for row in cursor.fetchall()]
+            
+            orders = []
+            for order_number in order_numbers:
+                cursor.execute('''
+                    SELECT order_number, order_date, total_price, status, email_address, state
+                    FROM orders
+                    WHERE order_number = ?
+                ''', (order_number,))
+                order_row = cursor.fetchone()
+                
+                if not order_row:
+                    continue
+                
+                cursor.execute('''
+                    SELECT title, price, quantity
+                    FROM products
+                    WHERE order_id = ?
+                ''', (order_number,))
+                products = []
+                for product_row in cursor.fetchall():
+                    products.append({
+                        'title': product_row[0],
+                        'price': product_row[1],
+                        'quantity': product_row[2]
+                    })
+                
+                cursor.execute('''
+                    SELECT tracking_number
+                    FROM tracking_numbers
+                    WHERE order_id = ?
+                ''', (order_number,))
+                tracking_numbers = [row[0] for row in cursor.fetchall()]
+                
+                orders.append({
+                    'number': order_row[0],
+                    'order_number': order_row[0],
+                    'date': order_row[1],
+                    'total_price': order_row[2],
+                    'status': order_row[3],
+                    'email_address': order_row[4],
+                    'state': order_row[5] if len(order_row) > 5 else '',
+                    'products': products,
+                    'tracking': tracking_numbers
+                })
+            
+            return orders
+        except Exception as e:
+            print(f"Error getting latest orders: {str(e)}")
+            return []
+
     def close(self) -> None:
         if self.connection:
             self.connection.close()
