@@ -1,12 +1,12 @@
 import csv
-from typing import List, Dict
+from typing import List, Dict, Optional
 from config.settings import OUTPUT_SETTINGS
 from core.database import DatabaseManager
 
 
 class OutputHandler:
-    def __init__(self):
-        self.db_manager = DatabaseManager()
+    def __init__(self, email: Optional[str] = None, service: str = 'bestbuy'):
+        self.db_manager = DatabaseManager(email=email, service=service)
 
     def save_orders(self, orders: List[Dict]) -> None:
         if OUTPUT_SETTINGS['enable_output']:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Set, List
 
 from email_processing.handlers import OrderEmailHandler
@@ -151,7 +151,7 @@ class MonitoringOrderHandler(OrderEmailHandler):
 
         return cancelled_orders
 
-    def check_shipped_emails(self, folder: str, existing_orders: List[Dict]) -> Dict[str, List[str]]:
+    def check_shipped_emails(self, folder: str, existing_orders: List[Dict]) -> Dict[str, Dict]:
         shipped_orders = {}
         
         dynamic_criteria = self._get_dynamic_search_criteria('shipped')
@@ -176,9 +176,14 @@ class MonitoringOrderHandler(OrderEmailHandler):
                     tracking_numbers = result.get('tracking_numbers', [])
                     if tracking_numbers:
                         if order_num not in shipped_orders:
-                            shipped_orders[order_num] = []
-                        shipped_orders[order_num].extend(tracking_numbers)
-                        shipped_orders[order_num] = list(set(shipped_orders[order_num]))
+                            shipped_orders[order_num] = {
+                                'tracking': [],
+                                'address_info': None
+                            }
+                        shipped_orders[order_num]['tracking'].extend(tracking_numbers)
+                        shipped_orders[order_num]['tracking'] = list(set(shipped_orders[order_num]['tracking']))
+                        if 'address_info' in result and result['address_info']:
+                            shipped_orders[order_num]['address_info'] = result['address_info']
                         self.statistics['shipped'] += 1
                         self.statistics['tracking_numbers'] += len(tracking_numbers)
 
@@ -196,65 +201,42 @@ class ContinuousMonitor:
         self.monitoring_start_date = None
         self.api_config = APIConfig()
         self.api_submitter = OrderAPISubmitter(self.api_config)
+        self._load_submitted_tracking_keys()
 
     def start_continuous_monitoring(self, folder: str) -> None:
         print("\n" + "="*60)
         print("        CONTINUOUS MONITORING MODE ACTIVATED")
-        print("    Attempting IMAP IDLE for real-time notifications...")
         print("         Press Ctrl+C to stop monitoring")
         print("="*60)
         
         self.monitoring_active = True
-        idle_supported = True
-        idle_failures = 0
         
         try:
             while self.monitoring_active:
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"\n[{current_time}] Checking for new orders...")
                 
-                if idle_supported:
-                    print(f"\n[{current_time}] Waiting for new emails (IDLE)...")
-                    idle_result = self.email_connector.idle_wait(folder, timeout=30)
-                    
-                    if idle_result is None:
-                        idle_failures += 1
-                        if idle_failures >= 3:
-                            print("IDLE not supported or unreliable. Falling back to polling mode.")
-                            idle_supported = False
-                            continue
-                        else:
-                            print("IDLE attempt failed, retrying...")
-                            time.sleep(2)
-                            continue
-                    
-                    if idle_result:
-                        print(f"\n[{current_time}] New email detected! Checking for orders...")
-                        try:
-                            self.check_for_new_orders(folder)
-                        except Exception as e:
-                            print(f"Error during monitoring check: {str(e)}")
-                    else:
-                        print("No new emails in the last 30 seconds.")
-                    idle_failures = 0
-                else:
-                    print(f"\n[{current_time}] Checking for new orders...")
-                    
-                    new_orders_found = False
-                    
-                    try:
-                        new_orders_found = self.check_for_new_orders(folder)
-                    except Exception as e:
-                        print(f"Error during monitoring check: {str(e)}")
-                    
-                    if not new_orders_found:
-                        print("No new orders detected.")
-                    
-                    if self.monitoring_active:
-                        print("Next check in 30 seconds... (Press Ctrl+C to stop)")
-                        for i in range(30):
-                            if not self.monitoring_active:
-                                break
-                            time.sleep(1)
+                new_orders_found = False
+                
+                try:
+                    new_orders_found = self.check_for_new_orders(folder)
+                except Exception as e:
+                    print(f"Error during monitoring check: {str(e)}")
+                
+                if not new_orders_found:
+                    print("No new orders detected.")
+                
+                try:
+                    self.submit_recent_trackings()
+                except Exception as e:
+                    print(f"Error submitting recent trackings: {str(e)}")
+                
+                if self.monitoring_active:
+                    print("Next check in 30 seconds... (Press Ctrl+C to stop)")
+                    for i in range(30):
+                        if not self.monitoring_active:
+                            break
+                        time.sleep(1)
                         
         except KeyboardInterrupt:
             print("\n\nMonitoring stopped by user")
@@ -285,24 +267,49 @@ class ContinuousMonitor:
             all_orders = self.get_all_existing_orders()
             
             cancellation_updates = order_handler.check_cancellation_emails(folder, all_orders)
+            cancelled_orders_to_save = []
             if cancellation_updates:
                 print(f"\n❌ FOUND {len(cancellation_updates)} ORDER CANCELLATION(S)!")
                 for order_num in cancellation_updates:
                     print(f"  🚫 Order #{order_num} - CANCELLED")
+                    full_order = self.output_handler.db_manager.get_order_by_number(order_num)
+                    if full_order:
+                        full_order['status'] = "Cancelled"
+                        cancelled_orders_to_save.append(full_order)
                 new_orders_found = True
             
             shipped_updates = order_handler.check_shipped_emails(folder, all_orders)
+            shipped_orders_to_save = []
             if shipped_updates:
                 print(f"\n🚚 FOUND {len(shipped_updates)} ORDER SHIPMENT(S)!")
-                for order_num, tracking in shipped_updates.items():
+                for order_num, shipped_data in shipped_updates.items():
+                    tracking = shipped_data.get('tracking', [])
                     print(f"  📮 Order #{order_num} - SHIPPED (Tracking: {', '.join(tracking)})")
+                    full_order = self.output_handler.db_manager.get_order_by_number(order_num)
+                    if full_order:
+                        full_order['status'] = "Shipped"
+                        existing_tracking = full_order.get('tracking', [])
+                        combined_tracking = list(set(existing_tracking + tracking))
+                        full_order['tracking'] = combined_tracking
+                        address_info = shipped_data.get('address_info')
+                        if address_info:
+                            full_order['state'] = address_info
+                            self.output_handler.db_manager.update_order_address(order_num, address_info)
+                            print(f"  State: {address_info}")
+                        shipped_orders_to_save.append(full_order)
                 new_orders_found = True
-                
-                if self.api_config.is_enabled():
-                    self._submit_shipped_orders_to_api(shipped_updates, all_orders)
             
             if new_orders:
                 self.output_handler.save_orders(new_orders)
+            
+            if cancelled_orders_to_save:
+                self.output_handler.save_orders(cancelled_orders_to_save)
+            
+            if shipped_orders_to_save:
+                self.output_handler.save_orders(shipped_orders_to_save)
+            
+            if new_orders or cancelled_orders_to_save or shipped_orders_to_save:
+                self.output_handler.finalize_database()
                     
         except Exception as e:
             print(f"Error checking for new orders: {str(e)}")
@@ -327,12 +334,21 @@ class ContinuousMonitor:
             orders = order_handler.process_confirmation_emails(folder)
             
             if orders:
+                order_handler.process_cancellation_emails(folder, orders)
+                order_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager)
+                
                 for order in orders:
                     self.processed_orders.add(order.get('number'))
                 print(f"Baseline established: {len(orders)} existing orders found")
+                if self.output_handler:
+                    self.output_handler.save_orders(orders)
+                    self.output_handler.finalize_database()
+            else:
+                print("Baseline established: No existing orders found")
             
             self.monitoring_start_date = datetime.now().strftime("%Y/%m/%d")
             print(f"Future scans will only check emails from: {self.monitoring_start_date}")
+            print("\nStarting continuous monitoring...")
             
             self.start_continuous_monitoring(folder)
             
@@ -342,47 +358,96 @@ class ContinuousMonitor:
     def stop_monitoring(self):
         self.monitoring_active = False
     
-    def _submit_shipped_orders_to_api(self, shipped_updates: Dict[str, List[str]], all_orders: List[Dict]) -> None:
+    def _load_submitted_tracking_keys(self) -> None:
         try:
-            orders_to_submit = []
-            total_tracking_numbers = 0
+            if self.output_handler and self.output_handler.db_manager:
+                self.submitted_tracking_keys = self.output_handler.db_manager.get_submitted_tracking_keys()
+                print(f"📋 Loaded {len(self.submitted_tracking_keys)} previously submitted tracking keys from database")
+            else:
+                self.submitted_tracking_keys = set()
+        except Exception as e:
+            print(f"Warning: Could not load submitted tracking keys: {str(e)}")
+            self.submitted_tracking_keys = set()
+
+    def submit_recent_trackings(self) -> None:
+        if not self.api_config.is_enabled():
+            return
+        
+        if not self.output_handler or not self.output_handler.db_manager:
+            return
+        
+        try:
+            # Check orders from last 2 days
+            lookback_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+            orders_with_tracking = self.output_handler.db_manager.get_orders_with_tracking_since_date(lookback_date)
             
-            for order_num, tracking_numbers in shipped_updates.items():
-                matching_order = None
-                for order in all_orders:
-                    if order.get('number') == order_num or order.get('order_number') == order_num:
-                        matching_order = order
-                        break
+            if not orders_with_tracking:
+                return
+            
+            orders_to_submit = []
+            
+            for order in orders_with_tracking:
+                tracking_numbers = order.get('tracking', [])
+                if not tracking_numbers:
+                    continue
                 
-                if matching_order:
-                    order_data = matching_order.copy()
-                    order_data['tracking'] = tracking_numbers
+                order_number = order.get('number') or order.get('order_number')
+                if not order_number:
+                    continue
+                
+                filtered_tracking = []
+                for tracking_num in tracking_numbers:
+                    unique_key = f"{order_number}_{tracking_num}"
+                    if not self.output_handler.db_manager.is_tracking_key_submitted(unique_key):
+                        filtered_tracking.append(tracking_num)
+                
+                if filtered_tracking:
+                    order_data = order.copy()
+                    order_data['tracking'] = filtered_tracking
                     orders_to_submit.append(order_data)
-                    total_tracking_numbers += len(tracking_numbers)
             
             if orders_to_submit:
-                if total_tracking_numbers > 1:
-                    print(f"\n📡 Bulk submitting {total_tracking_numbers} tracking number(s) from {len(orders_to_submit)} order(s) to API...")
-                    result = self.api_submitter.submit_orders_bulk(orders_to_submit)
+                total_tracking_numbers = sum(len(order.get('tracking', [])) for order in orders_to_submit)
+                print(f"\n📡 Submitting {total_tracking_numbers} tracking number(s) from {len(orders_to_submit)} order(s) since {lookback_date} (Bulk API)...")
+                
+                result = self.api_submitter.submit_orders_bulk(orders_to_submit)
+                
+                if result.get('success'):
+                    submitted_count = result.get('total_submitted', 0)
+                    if submitted_count > 0:
+                        submitted_keys = []
+                        for order in orders_to_submit:
+                            order_number = order.get('number') or order.get('order_number')
+                            for tracking_num in order.get('tracking', []):
+                                unique_key = f"{order_number}_{tracking_num}"
+                                submitted_keys.append({
+                                    'tracking_key': unique_key,
+                                    'order_number': order_number,
+                                    'tracking_number': tracking_num
+                                })
+                        
+                        if submitted_keys:
+                            self.output_handler.db_manager.add_submitted_tracking_keys_batch(submitted_keys)
+                            self.submitted_tracking_keys.update(key['tracking_key'] for key in submitted_keys)
+                            print(f"💾 Saved {len(submitted_keys)} submitted tracking keys to database")
                     
-                    if result.get('success'):
-                        print(f"✅ Bulk Submission: {result['message']}")
-                        for group_result in result.get('group_results', []):
-                            buying_group = group_result.get('buying_group')
-                            successful = group_result.get('successful', 0)
-                            failed = group_result.get('failed', 0)
-                            skipped = group_result.get('skipped', 0)
-                            print(f"   • {buying_group}: {successful} successful, {failed} failed, {skipped} skipped")
-                    else:
-                        print(f"⚠️ Bulk Submission: {result['message']}")
+                    print(f"✅ Bulk Submission: {result['message']}")
+                    print(f"   Total submitted: {submitted_count}")
+                    print(f"   Total failed: {result.get('total_failed', 0)}")
+                    print(f"   Buying groups: {result.get('buying_groups', 0)}")
+                    
+                    for group_result in result.get('group_results', []):
+                        buying_group = group_result.get('buying_group')
+                        successful = group_result.get('successful', 0)
+                        failed = group_result.get('failed', 0)
+                        skipped = group_result.get('skipped', 0)
+                        print(f"   • {buying_group}: {successful} successful, {failed} failed, {skipped} skipped")
                 else:
-                    print(f"\n📡 Submitting {total_tracking_numbers} tracking number to API...")
-                    result = self.api_submitter.submit_orders(orders_to_submit)
-                    
-                    if result.get('success'):
-                        print(f"✅ API Submission: {result['message']}")
-                    else:
-                        print(f"⚠️ API Submission: {result['message']}")
+                    print(f"⚠️ Bulk Submission: {result['message']}")
+            else:
+                print("   No new trackings to submit (all already submitted)")
                 
         except Exception as e:
-            print(f"❌ Error submitting to API: {str(e)}")
+            print(f"❌ Error submitting recent trackings: {str(e)}")
+            import traceback
+            traceback.print_exc()

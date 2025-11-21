@@ -114,3 +114,21 @@ def get_output_filename(service: str = 'bestbuy', file_type: str = 'csv') -> str
         return OUTPUT_SETTINGS['xbox_filename']
     else:
         return f'{service}_orders.{file_type}'
+
+
+def get_email_username(email: str) -> str:
+    if not email or '@' not in email:
+        return 'default'
+    username = email.split('@')[0]
+    return clean_filename(username)
+
+
+def get_db_filename(email: str = None, service: str = 'bestbuy') -> str:
+    if email:
+        username = get_email_username(email)
+        return f'{username}_orders.sqlite3'
+    else:
+        if service.lower() == 'amazon':
+            return 'amazon_orders.sqlite3'
+        else:
+            return 'bestbuy_orders.sqlite3'

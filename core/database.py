@@ -1,18 +1,25 @@
 import sqlite3
 import os
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Set
+from datetime import datetime
 from config.settings import DB_SETTINGS, AMAZON_DB_SETTINGS
+from core.utils import get_db_filename
 
 
 class DatabaseManager:
-    def __init__(self, db_config=None):
+    def __init__(self, db_config=None, email: str = None, service: str = 'bestbuy'):
         """
         Args:
             db_config: Database configuration dict. Defaults to DB_SETTINGS (Best Buy).
                       Pass AMAZON_DB_SETTINGS for Amazon database.
+            email: Email address to use for generating database filename.
+            service: Service type ('bestbuy' or 'amazon') for default filename if email not provided.
         """
         self.db_config = db_config or DB_SETTINGS
-        self.db_file = self.db_config['filename']
+        if email:
+            self.db_file = get_db_filename(email, service)
+        else:
+            self.db_file = self.db_config.get('filename', get_db_filename(None, service))
         self.connection = None
         self.create_connection()
         self.create_tables()
@@ -215,6 +222,57 @@ class DatabaseManager:
             print(f"Error getting order summary: {str(e)}")
             return (0, 0, 0, 0)
 
+    def get_order_by_number(self, order_number: str) -> Optional[Dict]:
+        if not self.connection:
+            return None
+
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute('''
+                SELECT order_number, order_date, total_price, status, email_address, state
+                FROM orders
+                WHERE order_number = ?
+            ''', (order_number,))
+            order_row = cursor.fetchone()
+            
+            if not order_row:
+                return None
+            
+            cursor.execute('''
+                SELECT title, price, quantity
+                FROM products
+                WHERE order_id = ?
+            ''', (order_number,))
+            products = []
+            for product_row in cursor.fetchall():
+                products.append({
+                    'title': product_row[0],
+                    'price': product_row[1],
+                    'quantity': product_row[2]
+                })
+            
+            cursor.execute('''
+                SELECT tracking_number
+                FROM tracking_numbers
+                WHERE order_id = ?
+            ''', (order_number,))
+            tracking_numbers = [row[0] for row in cursor.fetchall()]
+            
+            return {
+                'number': order_row[0],
+                'order_number': order_row[0],
+                'date': order_row[1],
+                'total_price': order_row[2],
+                'status': order_row[3],
+                'email_address': order_row[4],
+                'state': order_row[5] if len(order_row) > 5 else '',
+                'products': products,
+                'tracking': tracking_numbers
+            }
+        except Exception as e:
+            print(f"Error getting order by number: {str(e)}")
+            return None
+
     def get_latest_orders(self, limit: int = 1, with_tracking_only: bool = True) -> List[Dict]:
         if not self.connection:
             return []
@@ -243,52 +301,122 @@ class DatabaseManager:
             
             orders = []
             for order_number in order_numbers:
-                cursor.execute('''
-                    SELECT order_number, order_date, total_price, status, email_address, state
-                    FROM orders
-                    WHERE order_number = ?
-                ''', (order_number,))
-                order_row = cursor.fetchone()
-                
-                if not order_row:
-                    continue
-                
-                cursor.execute('''
-                    SELECT title, price, quantity
-                    FROM products
-                    WHERE order_id = ?
-                ''', (order_number,))
-                products = []
-                for product_row in cursor.fetchall():
-                    products.append({
-                        'title': product_row[0],
-                        'price': product_row[1],
-                        'quantity': product_row[2]
-                    })
-                
-                cursor.execute('''
-                    SELECT tracking_number
-                    FROM tracking_numbers
-                    WHERE order_id = ?
-                ''', (order_number,))
-                tracking_numbers = [row[0] for row in cursor.fetchall()]
-                
-                orders.append({
-                    'number': order_row[0],
-                    'order_number': order_row[0],
-                    'date': order_row[1],
-                    'total_price': order_row[2],
-                    'status': order_row[3],
-                    'email_address': order_row[4],
-                    'state': order_row[5] if len(order_row) > 5 else '',
-                    'products': products,
-                    'tracking': tracking_numbers
-                })
+                order = self.get_order_by_number(order_number)
+                if order:
+                    orders.append(order)
             
             return orders
         except Exception as e:
             print(f"Error getting latest orders: {str(e)}")
             return []
+
+    def get_orders_with_tracking_since_date(self, date: str) -> List[Dict]:
+        if not self.connection:
+            return []
+
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute('''
+                SELECT DISTINCT o.order_number
+                FROM orders o
+                INNER JOIN tracking_numbers t ON o.order_number = t.order_id
+                WHERE o.status != 'Cancelled'
+                AND (DATE(o.order_date) >= DATE(?) OR o.order_date >= ?)
+                ORDER BY o.order_date DESC, o.order_number DESC
+            ''', (date, date))
+            
+            order_numbers = [row[0] for row in cursor.fetchall()]
+            
+            orders = []
+            for order_number in order_numbers:
+                order = self.get_order_by_number(order_number)
+                if order and order.get('tracking'):
+                    orders.append(order)
+            
+            return orders
+        except Exception as e:
+            print(f"Error getting orders with tracking since date: {str(e)}")
+            return []
+
+    def _ensure_submitted_tracking_keys_table(self) -> None:
+        if not self.connection:
+            return
+        
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='submitted_tracking_keys'")
+            if not cursor.fetchone():
+                table_sql = self.db_config['tables'].get('submitted_tracking_keys')
+                if table_sql:
+                    cursor.executescript(table_sql)
+                    self.connection.commit()
+        except Exception as e:
+            print(f"Error ensuring submitted_tracking_keys table exists: {str(e)}")
+
+    def get_submitted_tracking_keys(self) -> Set[str]:
+        if not self.connection:
+            return set()
+
+        self._ensure_submitted_tracking_keys_table()
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute('SELECT tracking_key FROM submitted_tracking_keys')
+            keys = {row[0] for row in cursor.fetchall()}
+            return keys
+        except Exception as e:
+            print(f"Error getting submitted tracking keys: {str(e)}")
+            return set()
+
+    def add_submitted_tracking_key(self, order_number: str, tracking_number: str, tracking_key: str) -> None:
+        if not self.connection:
+            return
+
+        self._ensure_submitted_tracking_keys_table()
+        cursor = self.connection.cursor()
+        try:
+            submitted_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute('''
+                INSERT OR IGNORE INTO submitted_tracking_keys 
+                (tracking_key, order_number, tracking_number, submitted_date)
+                VALUES (?, ?, ?, ?)
+            ''', (tracking_key, order_number, tracking_number, submitted_date))
+            self.connection.commit()
+        except Exception as e:
+            print(f"Error adding submitted tracking key: {str(e)}")
+            self.connection.rollback()
+
+    def add_submitted_tracking_keys_batch(self, keys_data: List[Dict[str, str]]) -> None:
+        if not self.connection:
+            return
+
+        self._ensure_submitted_tracking_keys_table()
+        cursor = self.connection.cursor()
+        try:
+            submitted_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            for key_data in keys_data:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO submitted_tracking_keys 
+                    (tracking_key, order_number, tracking_number, submitted_date)
+                    VALUES (?, ?, ?, ?)
+                ''', (key_data['tracking_key'], key_data['order_number'], 
+                      key_data['tracking_number'], submitted_date))
+            self.connection.commit()
+        except Exception as e:
+            print(f"Error adding submitted tracking keys batch: {str(e)}")
+            self.connection.rollback()
+
+    def is_tracking_key_submitted(self, tracking_key: str) -> bool:
+        if not self.connection:
+            return False
+
+        self._ensure_submitted_tracking_keys_table()
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute('SELECT 1 FROM submitted_tracking_keys WHERE tracking_key = ? LIMIT 1', (tracking_key,))
+            return cursor.fetchone() is not None
+        except Exception as e:
+            print(f"Error checking submitted tracking key: {str(e)}")
+            return False
 
     def close(self) -> None:
         if self.connection:

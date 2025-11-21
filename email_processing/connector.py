@@ -69,6 +69,7 @@ class EmailConnector:
         self.service_config = EMAIL_SERVERS.get(service_type, EMAIL_SERVERS['gmail'])
         self.connection: Optional[imaplib.IMAP4] = None
         self.fetch_count = 0
+        self.current_folder: Optional[str] = None
         
         self.processed_uids_file = Path(f'.processed_uids_{email.replace("@", "_").replace(".", "_")}.json')
         self.processed_uids: Set[str] = self._load_processed_uids()
@@ -110,6 +111,54 @@ class EmailConnector:
     def save_progress(self) -> None:
         self._save_processed_uids()
         print(f"💾 Saved {len(self.processed_uids)} processed UIDs to cache")
+
+    def _refresh_session(self) -> bool:
+        try:
+            print(f"\n🔄 Session limit reached ({self.max_fetches_per_session} fetches). Refreshing connection...")
+            self.save_progress()
+            
+            saved_folder = self.current_folder
+            
+            if self.connection:
+                try:
+                    self.connection.logout()
+                except Exception:
+                    pass
+                finally:
+                    self.connection = None
+            
+            time.sleep(1)
+            
+            self.connect()
+            old_count = self.fetch_count
+            self.fetch_count = 0
+            
+            if saved_folder:
+                try:
+                    folder_variants = []
+                    if ' ' in saved_folder or '/' in saved_folder:
+                        folder_variants = [f'"{saved_folder}"', saved_folder]
+                    else:
+                        folder_variants = [saved_folder]
+                    
+                    for folder_variant in folder_variants:
+                        try:
+                            status, _ = self.connection.select(folder_variant)
+                            if status == 'OK':
+                                print(f"✓ Session refreshed. Reset fetch count from {old_count} to 0. Re-selected folder: {saved_folder}")
+                                return True
+                        except Exception:
+                            continue
+                    print(f"⚠ Session refreshed but could not re-select folder: {saved_folder}")
+                except Exception as e:
+                    print(f"⚠ Session refreshed but error re-selecting folder: {str(e)}")
+            else:
+                print(f"✓ Session refreshed. Reset fetch count from {old_count} to 0")
+            
+            return True
+        except Exception as e:
+            print(f"✗ Error refreshing session: {str(e)}")
+            return False
 
     def connect(self) -> None:
         try:
@@ -191,9 +240,28 @@ class EmailConnector:
         return ' '.join(formatted_parts)
 
     def search_emails(self, folder: str, search_criteria: dict, use_uid_filter: bool = True) -> Tuple[bool, list]:
+        spinner = None
         try:
-            quoted_folder = f'"{folder}"' if ' ' in folder or '/' in folder else folder
-            self.connection.select(quoted_folder)
+            folder_variants = []
+            if ' ' in folder or '/' in folder:
+                folder_variants = [f'"{folder}"', folder]
+            else:
+                folder_variants = [folder]
+            
+            selected = False
+            for folder_variant in folder_variants:
+                try:
+                    status, response = self.connection.select(folder_variant)
+                    if status == 'OK':
+                        selected = True
+                        self.current_folder = folder
+                        break
+                except Exception:
+                    continue
+            
+            if not selected:
+                raise Exception(f"Could not select folder '{folder}' (tried: {', '.join(folder_variants)})")
+            
             formatted_criteria = self._format_search_criteria(search_criteria)
             print(f"Using IMAP search criteria: {formatted_criteria}")
             
@@ -236,27 +304,44 @@ class EmailConnector:
                 return True, []
         except Exception as e:
             try:
-                spinner.stop()
+                if spinner:
+                    spinner.stop()
             except:
                 pass
             print(f"Error searching emails in {folder}: {str(e)}")
             return False, []
 
     @retry_with_backoff(max_retries=3, base_delay=1)
-    def fetch_email(self, message_id: bytes, protocol: str = 'BODY.PEEK[]') -> Tuple[bool, Optional[tuple]]:
+    def fetch_email(self, message_id: bytes, protocol: str = 'BODY.PEEK[]', use_uid: bool = True) -> Tuple[bool, Optional[tuple]]:
         try:
             if self.fetch_count >= self.max_fetches_per_session:
-                print(f"Warning: Reached max fetches per session ({self.max_fetches_per_session})")
-                return False, None
+                if not self._refresh_session():
+                    return False, None
             
             fetch_protocol = 'BODY.PEEK[]' if self.service_config['server'] == 'imap.mail.me.com' else protocol
-            _, msg_data = self.connection.fetch(message_id, f'({fetch_protocol})')
+            
+            if use_uid:
+                _, msg_data = self.connection.uid('fetch', message_id, f'({fetch_protocol})')
+            else:
+                _, msg_data = self.connection.fetch(message_id, f'({fetch_protocol})')
+            
+            if not msg_data or not msg_data[0]:
+                return False, None
+            
             self.fetch_count += 1
             time.sleep(self.fetch_delay)
             return True, msg_data[0]
+        except imaplib.IMAP4.error as e:
+            error_str = str(e).lower()
+            if 'no such message' in error_str or 'invalid message' in error_str:
+                return False, None
+            raise
         except Exception as e:
+            error_str = str(e).lower()
+            if 'no such message' in error_str or 'invalid message' in error_str:
+                return False, None
             print(f"Error fetching email {message_id}: {str(e)}")
-            return False, None
+            raise
 
     @retry_with_backoff(max_retries=3, base_delay=1)
     def fetch_emails_batch(self, message_ids: List[bytes], use_uid: bool = True) -> List[tuple]:
@@ -268,8 +353,8 @@ class EmailConnector:
             batch_num = (i // self.batch_size) + 1
             
             if self.fetch_count >= self.max_fetches_per_session:
-                print(f"Warning: Reached max fetches per session ({self.max_fetches_per_session})")
-                break
+                if not self._refresh_session():
+                    break
             
             try:
                 id_range = b','.join(batch)
@@ -287,12 +372,34 @@ class EmailConnector:
                 self.fetch_count += len(batch)
                 time.sleep(self.batch_delay)
                 
+            except imaplib.IMAP4.error as e:
+                error_str = str(e).lower()
+                if 'no such message' in error_str or 'invalid message' in error_str:
+                    print(f"Some messages in batch {batch_num} no longer exist, fetching individually...")
+                    for msg_id in batch:
+                        success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
+                        if success and email_data:
+                            results.append(email_data)
+                else:
+                    print(f"Batch fetch error for batch {batch_num}: {e}")
+                    for msg_id in batch:
+                        success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
+                        if success and email_data:
+                            results.append(email_data)
             except Exception as e:
-                print(f"Batch fetch error for batch {batch_num}: {e}")
-                for msg_id in batch:
-                    success, email_data = self.fetch_email(msg_id)
-                    if success and email_data:
-                        results.append(email_data)
+                error_str = str(e).lower()
+                if 'no such message' in error_str or 'invalid message' in error_str:
+                    print(f"Some messages in batch {batch_num} no longer exist, fetching individually...")
+                    for msg_id in batch:
+                        success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
+                        if success and email_data:
+                            results.append(email_data)
+                else:
+                    print(f"Batch fetch error for batch {batch_num}: {e}")
+                    for msg_id in batch:
+                        success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
+                        if success and email_data:
+                            results.append(email_data)
         
         return results
 
@@ -300,8 +407,8 @@ class EmailConnector:
     def fetch_email_headers(self, message_id: bytes, use_uid: bool = True) -> Tuple[bool, Optional[dict]]:
         try:
             if self.fetch_count >= self.max_fetches_per_session:
-                print(f"Warning: Reached max fetches per session ({self.max_fetches_per_session})")
-                return False, None
+                if not self._refresh_session():
+                    return False, None
             
             if use_uid:
                 _, msg_data = self.connection.uid('fetch', message_id, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
@@ -359,6 +466,7 @@ class EmailConnector:
                 typ, data = self.connection.select(quoted_folder)
                 if typ != 'OK':
                     return None
+                self.current_folder = folder
             except Exception as e:
                 return None
             

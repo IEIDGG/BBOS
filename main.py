@@ -158,6 +158,24 @@ class BBOSApplication:
             
             orders = order_handler.process_confirmation_emails(folder)
             
+            if not orders:
+                print("No new confirmation emails found")
+                if self.output_handler and self.output_handler.db_manager:
+                    existing_order_numbers = self.output_handler.db_manager.get_all_orders()
+                    if existing_order_numbers:
+                        print(f"Loading {len(existing_order_numbers)} existing orders from database for processing...")
+                        orders = []
+                        for order_data in existing_order_numbers:
+                            full_order = self.output_handler.db_manager.get_order_by_number(order_data['number'])
+                            if full_order:
+                                orders.append(full_order)
+                        if orders:
+                            print(f"Loaded {len(orders)} orders with full details")
+                        else:
+                            print("No orders with full details found")
+                    else:
+                        print("No existing orders found in database")
+            
             if orders:
                 order_handler.process_cancellation_emails(folder, orders)
                 order_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager)
@@ -286,27 +304,30 @@ class BBOSApplication:
 
     def initialize_output_handler(self, service: str) -> None:
         try:
+            email = None
+            if self.current_profile:
+                email = self.current_profile.get('email')
+            
             if service == 'bestbuy':
-                self.output_handler = OutputHandler()
+                self.output_handler = OutputHandler(email=email, service='bestbuy')
             elif service == 'amazon':
-                # TODO: Implement Amazon-specific output handler
                 print("TODO: Amazon output handler needs to be implemented")
                 print("- Use AMAZON_DB_SETTINGS for database configuration")
                 print("- Create Amazon-specific CSV files")
                 print("- Handle Amazon order data structure")
-                # For now, create a basic output handler with default settings
-                self.output_handler = OutputHandler()
+                self.output_handler = OutputHandler(email=email, service='amazon')
             elif service == 'both':
-                # TODO: Implement multi-service output handler
                 print("TODO: Multi-service output handler needs to be implemented")
                 print("- Handle both Best Buy and Amazon databases")
                 print("- Separate CSV files for each service")
                 print("- Combined reporting functionality")
-                # For now, create a basic output handler with default settings
-                self.output_handler = OutputHandler()
+                self.output_handler = OutputHandler(email=email, service='bestbuy')
         except Exception as e:
             print(f"Error initializing output handler: {str(e)}")
-            self.output_handler = OutputHandler()
+            email = None
+            if self.current_profile:
+                email = self.current_profile.get('email')
+            self.output_handler = OutputHandler(email=email, service=service)
 
     def run_continuous_monitoring(self, folder: str) -> None:
         self.continuous_monitor = ContinuousMonitor(self.email_connector, self.output_handler)
@@ -341,7 +362,10 @@ class BBOSApplication:
                 continue
             
             try:
-                db_manager = DatabaseManager()
+                email = None
+                if self.current_profile:
+                    email = self.current_profile.get('email')
+                db_manager = DatabaseManager(email=email, service='bestbuy')
                 
                 if test_choice == '1':
                     print("\nFetching latest order with tracking...")

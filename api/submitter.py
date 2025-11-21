@@ -32,6 +32,9 @@ class CarrierDetector:
         if len(tracking_number) == 18 and tracking_number.startswith('1Z'):
             return "UPS"
         
+        if re.match(r'^D\d{15}$', tracking_number):
+            return "OnTrac"
+        
         return "Undetermined"
 
 
