@@ -12,6 +12,21 @@ from functools import wraps
 from config.settings import EMAIL_SERVERS
 
 
+def remove_emojis(text: str) -> str:
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
+        "]+",
+        flags=re.UNICODE
+    )
+    return emoji_pattern.sub('', text)
+
+
 def retry_with_backoff(max_retries=3, base_delay=1):
     def decorator(func):
         @wraps(func)
@@ -274,7 +289,10 @@ class EmailConnector:
                     _, uid_data = self.connection.uid('search', 'CHARSET', 'UTF-8', criteria_bytes)
                 except imaplib.IMAP4.error as e:
                     print(f"⚠ UTF-8 search failed, retrying with ASCII: {e}")
-                    _, uid_data = self.connection.uid('search', None, formatted_criteria)
+                    ascii_criteria = remove_emojis(formatted_criteria)
+                    if ascii_criteria != formatted_criteria:
+                        print(f"🔧 Removed emojis from search criteria for ASCII compatibility")
+                    _, uid_data = self.connection.uid('search', None, ascii_criteria)
                 
                 spinner.stop()
                 
@@ -307,7 +325,10 @@ class EmailConnector:
                     _, message_numbers = self.connection.search('UTF-8', criteria_bytes)
                 except imaplib.IMAP4.error as e:
                     print(f"⚠ UTF-8 search failed, retrying with ASCII: {e}")
-                    _, message_numbers = self.connection.search(None, formatted_criteria)
+                    ascii_criteria = remove_emojis(formatted_criteria)
+                    if ascii_criteria != formatted_criteria:
+                        print(f"🔧 Removed emojis from search criteria for ASCII compatibility")
+                    _, message_numbers = self.connection.search(None, ascii_criteria)
 
                 spinner.stop()
                 
