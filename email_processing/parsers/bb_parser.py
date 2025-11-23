@@ -185,16 +185,21 @@ class OrderParser:
             format1_config['container']['tag'],
             **format1_config['container']['attributes']
         )
+        print(f"     Format 1 - Found {len(tracking_spans)} potential tracking spans")
         for span in tracking_spans:
             if format1_config['container']['text_contains'] in span.text:
                 tracking_link = span.find(format1_config['target']['tag'])
                 if tracking_link:
-                    tracking_numbers.append(tracking_link.text.strip())
+                    tracking_num = tracking_link.text.strip()
+                    print(f"     ✓ Format 1 - Extracted: {tracking_num}")
+                    tracking_numbers.append(tracking_num)
 
         format2_config = tracking_config['format_2']
         tracking_tds = OrderParser._find_elements(soup, format2_config['container'])
+        print(f"     Format 2 - Found {len(tracking_tds)} potential tracking TDs")
         for td in tracking_tds:
             if format2_config['container']['text_contains'] in td.text:
+                print(f"     Format 2 - Text match found in TD")
                 tracking_span = td.find(
                     format2_config['target']['tag'],
                     style=lambda value: value and all(
@@ -202,12 +207,16 @@ class OrderParser:
                     )
                 )
                 if tracking_span:
-                    tracking_numbers.append(tracking_span.text.strip())
+                    tracking_num = tracking_span.text.strip()
+                    print(f"     ✓ Format 2 - Extracted: {tracking_num}")
+                    tracking_numbers.append(tracking_num)
 
         format3_config = tracking_config['format_3']
         tracking_tds = OrderParser._find_elements(soup, format3_config['container'])
+        print(f"     Format 3 - Found {len(tracking_tds)} potential tracking TDs")
         for td in tracking_tds:
             if format3_config['container']['text_contains'] in td.text:
+                print(f"     Format 3 - Text match found in TD")
                 tracking_span = td.find(
                     format3_config['target']['tag'],
                     style=lambda value: value and all(
@@ -215,7 +224,16 @@ class OrderParser:
                     )
                 )
                 if tracking_span:
-                    tracking_numbers.append(tracking_span.text.strip())
+                    tracking_num = tracking_span.text.strip()
+                    print(f"     ✓ Format 3 - Extracted: {tracking_num}")
+                    tracking_numbers.append(tracking_num)
+
+        if not tracking_numbers:
+            all_tds_with_tracking = soup.find_all('td', string=lambda text: text and 'tracking' in text.lower())
+            if all_tds_with_tracking:
+                print(f"     ⚠ Found {len(all_tds_with_tracking)} TDs containing 'tracking' but couldn't extract numbers")
+                for td in all_tds_with_tracking[:3]:
+                    print(f"       Sample: {td.text.strip()[:100]}")
 
         return tracking_numbers
 
