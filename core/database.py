@@ -8,13 +8,6 @@ from core.utils import get_db_filename
 
 class DatabaseManager:
     def __init__(self, db_config=None, email: str = None, service: str = 'bestbuy'):
-        """
-        Args:
-            db_config: Database configuration dict. Defaults to DB_SETTINGS (Best Buy).
-                      Pass AMAZON_DB_SETTINGS for Amazon database.
-            email: Email address to use for generating database filename.
-            service: Service type ('bestbuy' or 'amazon') for default filename if email not provided.
-        """
         self.db_config = db_config or DB_SETTINGS
         if email:
             self.db_file = get_db_filename(email, service)
@@ -311,20 +304,22 @@ class DatabaseManager:
             print(f"Error getting latest orders: {str(e)}")
             return []
 
-    def get_orders_with_tracking_since_date(self, date: str) -> List[Dict]:
+    def get_orders_with_tracking_since_date(self, start_date: str, end_date: Optional[str] = None) -> List[Dict]:
         if not self.connection:
             return []
 
         cursor = self.connection.cursor()
         try:
+            if end_date is None:
+                end_date = start_date
             cursor.execute('''
                 SELECT DISTINCT o.order_number
                 FROM orders o
                 INNER JOIN tracking_numbers t ON o.order_number = t.order_id
                 WHERE o.status != 'Cancelled'
-                AND (DATE(o.order_date) >= DATE(?) OR o.order_date >= ?)
+                AND DATE(o.order_date) BETWEEN DATE(?) AND DATE(?)
                 ORDER BY o.order_date DESC, o.order_number DESC
-            ''', (date, date))
+            ''', (start_date, end_date))
             
             order_numbers = [row[0] for row in cursor.fetchall()]
             

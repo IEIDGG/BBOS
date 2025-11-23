@@ -377,9 +377,11 @@ class ContinuousMonitor:
             return
         
         try:
-            # Check orders from last 2 days
-            lookback_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
-            orders_with_tracking = self.output_handler.db_manager.get_orders_with_tracking_since_date(lookback_date)
+            now = datetime.now()
+            end_date = now.strftime("%Y-%m-%d")
+            lookback_date = (now - timedelta(days=2)).strftime("%Y-%m-%d")
+            print(f"Checking for orders with tracking between {lookback_date} and {end_date}")
+            orders_with_tracking = self.output_handler.db_manager.get_orders_with_tracking_since_date(lookback_date, end_date)
             
             if not orders_with_tracking:
                 return
@@ -408,7 +410,7 @@ class ContinuousMonitor:
             
             if orders_to_submit:
                 total_tracking_numbers = sum(len(order.get('tracking', [])) for order in orders_to_submit)
-                print(f"\n📡 Submitting {total_tracking_numbers} tracking number(s) from {len(orders_to_submit)} order(s) since {lookback_date} (Bulk API)...")
+                print(f"\n📡 Submitting {total_tracking_numbers} tracking number(s) from {len(orders_to_submit)} order(s) between {lookback_date} and {end_date} (Bulk API)...")
                 
                 result = self.api_submitter.submit_orders_bulk(orders_to_submit)
                 
