@@ -272,7 +272,11 @@ class ContinuousMonitor:
                 print(f"\n❌ FOUND {len(cancellation_updates)} ORDER CANCELLATION(S)!")
                 for order_num in cancellation_updates:
                     print(f"  🚫 Order #{order_num} - CANCELLED")
-                    full_order = self.output_handler.db_manager.get_order_by_number(order_num)
+                    
+                    full_order = None
+                    if self.output_handler and getattr(self.output_handler, 'db_manager', None):
+                        full_order = self.output_handler.db_manager.get_order_by_number(order_num)
+                    
                     if full_order:
                         full_order['status'] = "Cancelled"
                         cancelled_orders_to_save.append(full_order)
@@ -285,7 +289,11 @@ class ContinuousMonitor:
                 for order_num, shipped_data in shipped_updates.items():
                     tracking = shipped_data.get('tracking', [])
                     print(f"  📮 Order #{order_num} - SHIPPED (Tracking: {', '.join(tracking)})")
-                    full_order = self.output_handler.db_manager.get_order_by_number(order_num)
+                    
+                    full_order = None
+                    if self.output_handler and getattr(self.output_handler, 'db_manager', None):
+                        full_order = self.output_handler.db_manager.get_order_by_number(order_num)
+
                     if full_order:
                         full_order['status'] = "Shipped"
                         existing_tracking = full_order.get('tracking', [])
@@ -294,22 +302,24 @@ class ContinuousMonitor:
                         address_info = shipped_data.get('address_info')
                         if address_info:
                             full_order['state'] = address_info
-                            self.output_handler.db_manager.update_order_address(order_num, address_info)
+                            if self.output_handler and getattr(self.output_handler, 'db_manager', None):
+                                self.output_handler.db_manager.update_order_address(order_num, address_info)
                             print(f"  State: {address_info}")
                         shipped_orders_to_save.append(full_order)
                 new_orders_found = True
             
-            if new_orders:
-                self.output_handler.save_orders(new_orders)
-            
-            if cancelled_orders_to_save:
-                self.output_handler.save_orders(cancelled_orders_to_save)
-            
-            if shipped_orders_to_save:
-                self.output_handler.save_orders(shipped_orders_to_save)
-            
-            if new_orders or cancelled_orders_to_save or shipped_orders_to_save:
-                self.output_handler.finalize_database()
+            if self.output_handler:
+                if new_orders:
+                    self.output_handler.save_orders(new_orders)
+                
+                if cancelled_orders_to_save:
+                    self.output_handler.save_orders(cancelled_orders_to_save)
+                
+                if shipped_orders_to_save:
+                    self.output_handler.save_orders(shipped_orders_to_save)
+                
+                if new_orders or cancelled_orders_to_save or shipped_orders_to_save:
+                    self.output_handler.finalize_database()
                     
         except Exception as e:
             print(f"Error checking for new orders: {str(e)}")
@@ -335,7 +345,8 @@ class ContinuousMonitor:
             
             if orders:
                 order_handler.process_cancellation_emails(folder, orders)
-                order_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager)
+                db_manager = self.output_handler.db_manager if self.output_handler and getattr(self.output_handler, 'db_manager', None) else None
+                order_handler.process_shipped_emails(folder, orders, db_manager)
                 
                 for order in orders:
                     self.processed_orders.add(order.get('number'))
