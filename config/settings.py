@@ -16,7 +16,8 @@ EMAIL_SERVERS = {
     }
 }
 
-universal_date = "2025/09/01"
+CURRENT_VERSION = "2.0.0"
+universal_date = "2025/11/01"
 SEARCH_CRITERIA = {
     'confirmation': {
         'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
@@ -28,7 +29,7 @@ SEARCH_CRITERIA = {
         'date': f'after:{universal_date}'
     },
     'shipped': {
-        'subject': '(OR (SUBJECT "Your order will be shipped soon!") (SUBJECT "We have your tracking number."))',
+        'subject': f'(OR (SUBJECT "📦 Your package is out for delivery. 📦") (SUBJECT "Your order will be shipped soon!") (SUBJECT "We have your tracking number.") (SUBJECT "📦 Your package is on its way. 📦"))',
         'date': f'after:{universal_date}'
     },
     'xbox': {
@@ -76,7 +77,6 @@ AMAZON_SEARCH_CRITERIA = {
 }
 
 DB_SETTINGS = {
-    'filename': 'bestbuy_orders.sqlite3',
     'tables': {
         'orders': '''
             CREATE TABLE IF NOT EXISTS orders (
@@ -124,12 +124,20 @@ DB_SETTINGS = {
                 tracking_number TEXT,
                 state TEXT
             )
+        ''',
+        'submitted_tracking_keys': '''
+            CREATE TABLE IF NOT EXISTS submitted_tracking_keys (
+                tracking_key TEXT PRIMARY KEY,
+                order_number TEXT,
+                tracking_number TEXT,
+                submitted_date TEXT,
+                FOREIGN KEY (order_number) REFERENCES orders (order_number)
+            )
         '''
     }
 }
 
 AMAZON_DB_SETTINGS = {
-    'filename': 'amazon_orders.sqlite3',
     'tables': {
         'orders': '''
             CREATE TABLE IF NOT EXISTS orders (
@@ -169,6 +177,15 @@ AMAZON_DB_SETTINGS = {
                 quantity TEXT,
                 tracking_number TEXT,
                 state TEXT
+            )
+        ''',
+        'submitted_tracking_keys': '''
+            CREATE TABLE IF NOT EXISTS submitted_tracking_keys (
+                tracking_key TEXT PRIMARY KEY,
+                order_number TEXT,
+                tracking_number TEXT,
+                submitted_date TEXT,
+                FOREIGN KEY (order_number) REFERENCES orders (order_number)
             )
         '''
     }

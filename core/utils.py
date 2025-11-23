@@ -126,7 +126,7 @@ def get_email_username(email: str) -> str:
 def get_db_filename(email: str = None, service: str = 'bestbuy') -> str:
     if email:
         username = get_email_username(email)
-        return f'{username}_orders.sqlite3'
+        return f'{username}.sqlite3'
     else:
         if service.lower() == 'amazon':
             return 'amazon_orders.sqlite3'

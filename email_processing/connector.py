@@ -269,7 +269,13 @@ class EmailConnector:
             spinner.start()
             
             if use_uid_filter:
-                _, uid_data = self.connection.uid('search', None, formatted_criteria)
+                try:
+                    criteria_bytes = formatted_criteria.encode('utf-8')
+                    _, uid_data = self.connection.uid('search', 'CHARSET', 'UTF-8', criteria_bytes)
+                except imaplib.IMAP4.error as e:
+                    print(f"⚠ UTF-8 search failed, retrying with ASCII: {e}")
+                    _, uid_data = self.connection.uid('search', None, formatted_criteria)
+                
                 spinner.stop()
                 
                 if uid_data[0]:
@@ -296,7 +302,13 @@ class EmailConnector:
                 
                 return True, []
             else:
-                _, message_numbers = self.connection.search(None, formatted_criteria)
+                try:
+                    criteria_bytes = formatted_criteria.encode('utf-8')
+                    _, message_numbers = self.connection.search('UTF-8', criteria_bytes)
+                except imaplib.IMAP4.error as e:
+                    print(f"⚠ UTF-8 search failed, retrying with ASCII: {e}")
+                    _, message_numbers = self.connection.search(None, formatted_criteria)
+
                 spinner.stop()
                 
                 if message_numbers[0]:

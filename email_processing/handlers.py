@@ -35,10 +35,10 @@ class OrderEmailHandler(BaseEmailHandler):
             'tracking_numbers': 0
         })
 
-    def process_confirmation_emails(self, folder: str) -> List[Dict]:
+    def process_confirmation_emails(self, folder: str, ignore_cache: bool = False) -> List[Dict]:
         print(f"\nProcessing confirmation emails in folder: {folder}")
 
-        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['confirmation'])
+        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['confirmation'], use_uid_filter=not ignore_cache)
 
         if not success:
             return []
@@ -104,12 +104,13 @@ class OrderEmailHandler(BaseEmailHandler):
 
         return orders
 
-    def process_cancellation_emails(self, folder: str, orders: List[Dict]) -> None:
+    def process_cancellation_emails(self, folder: str, orders: List[Dict], ignore_cache: bool = False) -> None:
         print(f"\nProcessing cancellation emails in folder: {folder}")
 
         success, messages = self.connector.search_emails(
             folder,
-            SEARCH_CRITERIA['cancellation']
+            SEARCH_CRITERIA['cancellation'],
+            use_uid_filter=not ignore_cache
         )
 
         if not success:
@@ -163,12 +164,13 @@ class OrderEmailHandler(BaseEmailHandler):
 
                 self._update_stats(bool(result.get('order_number')))
 
-    def process_shipped_emails(self, folder: str, orders: List[Dict], db_manager=None) -> None:
+    def process_shipped_emails(self, folder: str, orders: List[Dict], db_manager=None, ignore_cache: bool = False) -> None:
         print(f"\nProcessing shipped emails in folder: {folder}")
 
         success, messages = self.connector.search_emails(
             folder,
-            SEARCH_CRITERIA['shipped']
+            SEARCH_CRITERIA['shipped'],
+            use_uid_filter=not ignore_cache
         )
 
         if not success:
@@ -260,10 +262,10 @@ class OrderEmailHandler(BaseEmailHandler):
 
 
 class XboxEmailHandler(BaseEmailHandler):
-    def process_xbox_emails(self, folder: str) -> List[Dict]:
+    def process_xbox_emails(self, folder: str, ignore_cache: bool = False) -> List[Dict]:
         print(f"\nProcessing Xbox Game Pass emails in folder: {folder}")
 
-        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['xbox'])
+        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['xbox'], use_uid_filter=not ignore_cache)
 
         if not success:
             print("Failed to search for Xbox Game Pass emails")

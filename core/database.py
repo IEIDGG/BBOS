@@ -26,6 +26,7 @@ class DatabaseManager:
 
     def create_connection(self) -> None:
         try:
+            print(f"Connecting to database: {self.db_file}")
             self.connection = sqlite3.connect(self.db_file)
         except Exception as e:
             print(f"Error connecting to database: {str(e)}")

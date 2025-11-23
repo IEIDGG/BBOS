@@ -10,9 +10,10 @@ from typing import Optional, Dict, Any, Set, List
 from core.profile_manager import ProfileManager
 from core.utils import get_db_settings
 from core.database import DatabaseManager
+from core.updater import UpdateManager
 from email_processing.connector import EmailConnector
 from email_processing.handlers import OrderEmailHandler, XboxEmailHandler
-from config.settings import SEARCH_CRITERIA
+from config.settings import SEARCH_CRITERIA, CURRENT_VERSION
 from output.file_handlers import OutputHandler
 from continuous_monitor import ContinuousMonitor
 from api.submitter import APIConfig, OrderAPISubmitter
@@ -21,6 +22,7 @@ from api.submitter import APIConfig, OrderAPISubmitter
 class BBOSApplication:
     def __init__(self):
         self.profile_manager = ProfileManager()
+        self.updater = UpdateManager()
         self.output_handler = None
         self.email_connector = None
         self.current_profile = None
@@ -30,7 +32,7 @@ class BBOSApplication:
 
     def display_banner(self):
         print("\n" + "="*60)
-        print("        BBOS - Multi-Platform Order Scraper")
+        print(f"        BBOS - Multi-Platform Order Scraper v{CURRENT_VERSION}")
         print("    Advanced Order Management & Processing System")
         print("          Best Buy | Amazon | Multi-Service")
         print("="*60)
@@ -43,10 +45,11 @@ class BBOSApplication:
         print("3. Both Services")
         print("4. Continuous Monitor (30s refresh)")
         print("5. Settings")
+        print("6. Check for Updates")
         print("q. Cancel")
         
         while True:
-            choice = input("\nSelect service (1-5) or 'q' to cancel: ").strip().lower()
+            choice = input("\nEnter choice (1-6) or 'q': ").strip().lower()
             
             if choice == 'q':
                 return None
@@ -60,8 +63,10 @@ class BBOSApplication:
                 return 'monitor'
             elif choice == '5':
                 return 'settings'
+            elif choice == '6':
+                return 'update'
             else:
-                print("Please enter a valid choice (1-5) or 'q' to cancel")
+                print("Please enter a valid choice (1-6) or 'q' to cancel")
 
     def get_profile(self) -> Optional[Dict[str, Any]]:
         try:
@@ -149,14 +154,14 @@ class BBOSApplication:
             else:
                 return "INBOX"
 
-    def process_bestbuy_orders(self, folder: str) -> None:
+    def process_bestbuy_orders(self, folder: str, ignore_cache: bool = False) -> None:
         try:
             print(f"\nProcessing Best Buy orders from folder: {folder}")
             print("="*50)
             
             order_handler = OrderEmailHandler(self.email_connector)
             
-            orders = order_handler.process_confirmation_emails(folder)
+            orders = order_handler.process_confirmation_emails(folder, ignore_cache=ignore_cache)
             
             if not orders:
                 print("No new confirmation emails found")
@@ -177,8 +182,8 @@ class BBOSApplication:
                         print("No existing orders found in database")
             
             if orders:
-                order_handler.process_cancellation_emails(folder, orders)
-                order_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager)
+                order_handler.process_cancellation_emails(folder, orders, ignore_cache=ignore_cache)
+                order_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager, ignore_cache=ignore_cache)
                 
                 self.output_handler.save_orders(orders)
                 self.output_handler.finalize_database()
@@ -191,7 +196,7 @@ class BBOSApplication:
         except Exception as e:
             print(f"Error processing Best Buy orders: {str(e)}")
 
-    def process_amazon_orders(self, folder: str) -> None:
+    def process_amazon_orders(self, folder: str, ignore_cache: bool = False) -> None:
         # TODO: Implement Amazon order processing
         print(f"\nProcessing Amazon orders from folder: {folder}")
         print("="*50)
@@ -205,13 +210,13 @@ class BBOSApplication:
         print("- Amazon shipped email processing")
         print("- Amazon tracking number extraction")
 
-    def process_xbox_codes(self, folder: str) -> None:
+    def process_xbox_codes(self, folder: str, ignore_cache: bool = False) -> None:
         try:
             print(f"\nProcessing Xbox Game Pass codes from folder: {folder}")
             print("="*50)
             
             xbox_handler = XboxEmailHandler(self.email_connector)
-            xbox_codes = xbox_handler.process_xbox_emails(folder)
+            xbox_codes = xbox_handler.process_xbox_emails(folder, ignore_cache=ignore_cache)
             
             if xbox_codes:
                 self.output_handler.save_xbox_codes(xbox_codes)
@@ -258,49 +263,69 @@ class BBOSApplication:
             print(f"Please enter a valid option (1-{max_choice})")
 
     def run_processing(self, folder: str) -> None:
+        ignore_cache = False
+        cache_choice = input("\nIgnore cache (process all emails)? (y/n): ").strip().lower()
+        if cache_choice in ['y', 'yes']:
+            ignore_cache = True
+            print("⚠ Cache ignored: All matching emails will be processed.")
+
+        last_choice = None
+
         while True:
-            choice = self.display_processing_menu()
+            if last_choice:
+                choice = last_choice
+            else:
+                choice = self.display_processing_menu()
             
             if self.selected_service == 'bestbuy':
                 if choice == '1':
-                    self.process_bestbuy_orders(folder)
+                    self.process_bestbuy_orders(folder, ignore_cache)
                 elif choice == '2':
-                    self.process_xbox_codes(folder)
+                    self.process_xbox_codes(folder, ignore_cache)
                 elif choice == '3':
-                    self.process_bestbuy_orders(folder)
-                    self.process_xbox_codes(folder)
+                    self.process_bestbuy_orders(folder, ignore_cache)
+                    self.process_xbox_codes(folder, ignore_cache)
                 elif choice == '4':
                     break
                     
             elif self.selected_service == 'amazon':
                 if choice == '1':
-                    self.process_amazon_orders(folder)
+                    self.process_amazon_orders(folder, ignore_cache)
                 elif choice == '2':
                     print("TODO: Amazon gift card processing not yet implemented")
                 elif choice == '3':
-                    self.process_amazon_orders(folder)
+                    self.process_amazon_orders(folder, ignore_cache)
                     print("TODO: Amazon gift card processing not yet implemented")
                 elif choice == '4':
                     break
                     
             elif self.selected_service == 'both':
                 if choice == '1':
-                    self.process_bestbuy_orders(folder)
+                    self.process_bestbuy_orders(folder, ignore_cache)
                 elif choice == '2':
-                    self.process_amazon_orders(folder)
+                    self.process_amazon_orders(folder, ignore_cache)
                 elif choice == '3':
-                    self.process_xbox_codes(folder)
+                    self.process_xbox_codes(folder, ignore_cache)
                 elif choice == '4':
-                    self.process_bestbuy_orders(folder)
-                    self.process_amazon_orders(folder)
-                    self.process_xbox_codes(folder)
+                    self.process_bestbuy_orders(folder, ignore_cache)
+                    self.process_amazon_orders(folder, ignore_cache)
+                    self.process_xbox_codes(folder, ignore_cache)
                 elif choice == '5':
                     break
             
-            if choice not in ['4', '5']:
+            should_break = False
+            if self.selected_service == 'bestbuy' and choice == '4': should_break = True
+            elif self.selected_service == 'amazon' and choice == '4': should_break = True
+            elif self.selected_service == 'both' and choice == '5': should_break = True
+            
+            if not should_break:
                 continue_choice = input("\nProcess again? (y/n): ").strip().lower()
-                if continue_choice not in ['y', 'yes']:
+                if continue_choice in ['y', 'yes']:
+                    last_choice = choice
+                else:
                     break
+            else:
+                break
 
     def initialize_output_handler(self, service: str) -> None:
         try:
@@ -541,6 +566,17 @@ class BBOSApplication:
 
     def run(self):
         try:
+            if not hasattr(self, '_update_checked'):
+                self._update_checked = True
+                print("Checking for updates...")
+                is_avail, new_ver = self.updater.check_for_updates()
+                if is_avail:
+                    print("\n" + "!"*60)
+                    print(f"!!! NEW UPDATE AVAILABLE: v{new_ver} !!!")
+                    print(f"!!! Select 'Check for Updates' in the menu to install !!!")
+                    print("!"*60 + "\n")
+                    time.sleep(2)
+
             self.display_banner()
             
             self.selected_service = self.select_service()
@@ -551,18 +587,32 @@ class BBOSApplication:
             if self.selected_service == 'settings':
                 self.show_settings_menu()
                 return self.run()
+
+            if self.selected_service == 'update':
+                print("\nChecking for updates...")
+                is_avail, new_ver = self.updater.check_for_updates()
+                if is_avail:
+                    print(f"\nUpdate available: v{new_ver}")
+                    if input("Do you want to update now? (y/n): ").lower().startswith('y'):
+                        if self.updater.perform_update():
+                            print("\nPlease restart the application to use the new version.")
+                            return
+                else:
+                    print("\nNo updates available. You are on the latest version.")
+                    input("\nPress Enter to continue...")
+                return self.run()
             
+            profile = self.get_profile()
+            if not profile:
+                print("No profile selected. Exiting...")
+                return
+
             if self.selected_service == 'monitor':
                 print("\nContinuous Monitoring Mode Selected")
                 self.initialize_output_handler('bestbuy')
             else:
                 print(f"\nService selected: {self.selected_service.title()}")
                 self.initialize_output_handler(self.selected_service)
-            
-            profile = self.get_profile()
-            if not profile:
-                print("No profile selected. Exiting...")
-                return
             
             if not self.connect_to_email(profile):
                 print("Failed to connect to email. Exiting...")

@@ -5,6 +5,6 @@ bestbuy_orders.csv
 bestbuy_orders.sqlite3
 xbox_codes.csv
 my_orders.sqlite3
-config/profiles.json
 .processed_uids_*.json
-api\api_config.json
+api/api_config.json
+config/profiles.json

@@ -1,7 +1,6 @@
 import json
 import os
 from typing import Dict, List, Optional, Any
-from getpass import getpass
 import re
 from pathlib import Path
 
@@ -82,12 +81,12 @@ class ProfileManager:
 
         while True:
             try:
-                password = getpass("Enter password: ")
+                password = input("Enter password: ").strip()
                 if not password:
                     print("Password cannot be empty.")
                     continue
 
-                confirm = getpass("Confirm password: ")
+                confirm = input("Confirm password: ").strip()
                 if password != confirm:
                     print("Passwords don't match. Please try again.")
                     continue
@@ -163,7 +162,9 @@ class ProfileManager:
         profiles = self.list_profiles()
 
         if not profiles:
-            print("\nNo profiles found. Please add a profile first.")
+            print("\nNo profiles found. Creating a new profile...")
+            if self.add_profile():
+                return self.select_profile()
             return None
 
         print("\nAvailable Profiles:")
