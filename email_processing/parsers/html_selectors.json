@@ -1,0 +1,158 @@
+{
+  "product_parsing": {
+    "product_sections": {
+      "tag": "td",
+      "attributes": {
+        "style_contains": "width:60%;max-width:359px;"
+      }
+    },
+    "title": {
+      "tag": "a",
+      "attributes": {
+        "style_contains": "text-decoration: none",
+        "href_contains": "click.emailinfo2.bestbuy.com"
+      },
+      "text_min_length": 10
+    },
+    "quantity": {
+      "tag": "td",
+      "search_string": "Qty:",
+      "method": "find_next_sibling"
+    },
+    "price": {
+      "tag": "span",
+      "text_contains": "$",
+      "attributes": {
+        "style_contains": "font-weight: 700;font-size: 14px;line-height: 18px;"
+      }
+    },
+    "total": {
+      "tag": "td",
+      "attributes": {
+        "align": "right",
+        "style_contains": "padding-top:12px; padding-left:0;padding-right:0; padding-bottom:0; color:#000000;"
+      }
+    }
+  },
+  "order_number": {
+    "confirmation": {
+      "tag": "span",
+      "text_contains": "BBY01-"
+    },
+    "shipped_cancelled": {
+      "tag": "span",
+      "attributes": {
+        "style": "font: bold 23px Arial; color: #1d252c;"
+      },
+      "text_replace": {
+        "from": "Order #",
+        "to": ""
+      }
+    },
+    "alternative": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "padding-bottom:12px"
+        },
+        "text_contains": "Order number:"
+      },
+      "target": {
+        "tag": "span",
+        "attributes": {
+          "style_contains_all": ["font-weight: 700", "font-size: 14px"]
+        }
+      }
+    },
+    "cancelled": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "style": "padding-bottom:12px;"
+        },
+        "text_contains": "Order number:"
+      },
+      "target": {
+        "tag": "span",
+        "attributes": {
+          "style_contains_all": ["font-weight: 700", "font-size: 14px", "line-height: 18px"]
+        }
+      }
+    }
+  },
+  "tracking_numbers": {
+    "format_1": {
+      "container": {
+        "tag": "span",
+        "attributes": {
+          "style": "font: bold 14px Arial"
+        },
+        "text_contains": "Tracking #:"
+      },
+      "target": {
+        "tag": "a"
+      }
+    },
+    "format_2": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "padding-bottom:12px"
+        },
+        "text_contains": "Tracking Number:"
+      },
+      "target": {
+        "tag": "span",
+        "attributes": {
+          "style_contains_all": ["font-weight: 700", "font-size: 14px"]
+        }
+      }
+    },
+    "format_3": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "padding-bottom:12px"
+        },
+        "text_contains": "Tracking number:"
+      },
+      "target": {
+        "tag": "span",
+        "attributes": {
+          "style_contains_all": ["font-weight: 700", "font-size: 14px"]
+        }
+      }
+    }
+  },
+  "xbox_parsing": {
+    "title": {
+      "tag": "span",
+      "attributes": {
+        "style_contains_all": ["font-weight: 700", "font-size: 14px", "line-height: 18px", "font-family: Arial"]
+      }
+    },
+    "code_extraction": {
+      "container": {
+        "tag": "strong",
+        "text_contains": "Here is your code:"
+      },
+      "target": {
+        "method": "find_next_sibling",
+        "tag": "strong"
+      }
+    }
+  },
+  "shipping_address": {
+    "container": {
+      "tag": "td",
+      "attributes": {},
+      "text_contains": "Your order is shipping to:"
+    },
+    "address_span": {
+      "tag": "span",
+      "attributes": {
+        "style_contains_all": ["font-size: 20px", "font-weight: 700"]
+      }
+    }
+  }
+} 
