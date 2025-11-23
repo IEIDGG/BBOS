@@ -13,15 +13,11 @@ from config.settings import CURRENT_VERSION
 class UpdateManager:
     def __init__(self):
         self.github_repo = "IEIDGG/BBOS"
-        self.branch = "Enchanced"
+        self.branch = "FastAPI-Config"
         self.raw_base_url = f"https://raw.githubusercontent.com/{self.github_repo}/{self.branch}"
         self.zip_url = f"https://github.com/{self.github_repo}/archive/refs/heads/{self.branch}.zip"
         
     def check_for_updates(self) -> Tuple[bool, str]:
-        """
-        Check if a new version is available by comparing with remote settings.py.
-        Returns (is_update_available, remote_version)
-        """
         try:
             settings_url = f"{self.raw_base_url}/config/settings.py"
             response = requests.get(settings_url, timeout=10)
