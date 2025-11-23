@@ -374,19 +374,26 @@ class BBOSApplication:
         print("\nSelect test type:")
         print("1. Test Single Order Submission (latest order)")
         print("2. Test Bulk Order Submission (latest 2 orders)")
-        print("3. Cancel")
+        print("3. Test Bulk Order Submission (Custom DB)")
+        print("4. Cancel")
         
         while True:
-            test_choice = input("\nSelect option (1-3): ").strip()
+            test_choice = input("\nSelect option (1-4): ").strip()
             
-            if test_choice == '3':
+            if test_choice == '4':
                 return
             
-            if test_choice not in ['1', '2']:
-                print("Please enter a valid option (1-3)")
+            if test_choice not in ['1', '2', '3']:
+                print("Please enter a valid option (1-4)")
                 continue
             
             try:
+                if test_choice == '3':
+                    api_submitter = OrderAPISubmitter(self.api_config)
+                    api_submitter.run_interactive_bulk_test()
+                    input("\nPress Enter to continue...")
+                    return
+
                 email = None
                 if self.current_profile:
                     email = self.current_profile.get('email')

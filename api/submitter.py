@@ -450,55 +450,59 @@ class OrderAPISubmitter:
                     })
                 continue
             
-            try:
-                endpoint = f"{api_url}/bestbuy/submit-orders"
-                bulk_payload = {"orders": filtered_payloads}
+            batch_size = 50
+            group_successful = 0
+            group_failed = 0
+            group_response_details = []
+            group_errors = []
+            
+            for i in range(0, len(filtered_payloads), batch_size):
+                batch_payloads = filtered_payloads[i:i + batch_size]
                 
-                response = requests.post(endpoint, json=bulk_payload, headers=headers, timeout=30)
-                
-                if response.status_code == 200:
-                    response_data = response.json()
-                    successful = response_data.get('successful', 0)
-                    failed = response_data.get('failed', 0)
+                try:
+                    endpoint = f"{api_url}/bestbuy/submit-orders"
+                    bulk_payload = {"orders": batch_payloads}
                     
-                    for payload in filtered_payloads:
-                        unique_key = f"{payload['order_id']}_{payload['tracking_number']}"
-                        self.submitted_orders.add(unique_key)
+                    response = requests.post(endpoint, json=bulk_payload, headers=headers, timeout=30)
                     
-                    total_submitted += successful
-                    total_failed += failed
-                    
-                    group_results.append({
-                        "buying_group": buying_group,
-                        "total": len(filtered_payloads),
-                        "successful": successful,
-                        "failed": failed,
-                        "skipped": len(skipped),
-                        "message": f"Submitted {successful}/{len(filtered_payloads)} orders successfully",
-                        "details": response_data.get('results', [])
-                    })
-                else:
-                    total_failed += len(filtered_payloads)
-                    group_results.append({
-                        "buying_group": buying_group,
-                        "total": len(filtered_payloads),
-                        "successful": 0,
-                        "failed": len(filtered_payloads),
-                        "skipped": len(skipped),
-                        "message": f"HTTP {response.status_code}: {response.text}",
-                        "details": []
-                    })
-            except requests.exceptions.RequestException as e:
-                total_failed += len(filtered_payloads)
-                group_results.append({
-                    "buying_group": buying_group,
-                    "total": len(filtered_payloads),
-                    "successful": 0,
-                    "failed": len(filtered_payloads),
-                    "skipped": len(skipped),
-                    "message": f"Request failed: {str(e)}",
-                    "details": []
-                })
+                    if response.status_code == 200:
+                        response_data = response.json()
+                        successful = response_data.get('successful', 0)
+                        failed = response_data.get('failed', 0)
+                        
+                        for payload in batch_payloads:
+                            unique_key = f"{payload['order_id']}_{payload['tracking_number']}"
+                            self.submitted_orders.add(unique_key)
+                        
+                        group_successful += successful
+                        group_failed += failed
+                        total_submitted += successful
+                        total_failed += failed
+                        
+                        if 'results' in response_data:
+                            group_response_details.extend(response_data['results'])
+                    else:
+                        group_failed += len(batch_payloads)
+                        total_failed += len(batch_payloads)
+                        group_errors.append(f"Batch {i//batch_size + 1}: HTTP {response.status_code}: {response.text}")
+                except requests.exceptions.RequestException as e:
+                    group_failed += len(batch_payloads)
+                    total_failed += len(batch_payloads)
+                    group_errors.append(f"Batch {i//batch_size + 1}: Request failed: {str(e)}")
+
+            message = f"Submitted {group_successful}/{len(filtered_payloads)} orders successfully"
+            if group_errors:
+                message += f". Errors: {'; '.join(group_errors)}"
+            
+            group_results.append({
+                "buying_group": buying_group,
+                "total": len(filtered_payloads),
+                "successful": group_successful,
+                "failed": group_failed,
+                "skipped": len(skipped),
+                "message": message,
+                "details": group_response_details
+            })
         
         return {
             "success": total_submitted > 0,
@@ -509,4 +513,69 @@ class OrderAPISubmitter:
             "buying_groups": len(grouped_by_buying_group),
             "group_results": group_results
         }
+
+    def run_interactive_bulk_test(self):
+        from core.database import DatabaseManager
+        from config.settings import DB_SETTINGS
+        
+        print("\n" + "="*60)
+        print("          INTERACTIVE BULK SUBMISSION TEST")
+        print("="*60)
+
+        default_db = "bestbuy_orders.sqlite3"
+        print(f"\nEnter database file path (default: {default_db})")
+        db_path = input("> ").strip()
+        
+        if not db_path:
+            db_path = default_db
+            
+        if not os.path.exists(db_path):
+            print(f"\n✗ Error: Database file not found at: {db_path}")
+            return
+
+        try:
+            db_config = DB_SETTINGS.copy()
+            db_config['filename'] = db_path
+            
+            print(f"\nConnecting to database: {db_path}")
+            db_manager = DatabaseManager(db_config=db_config)
+            
+            print("Fetching latest 2 orders with tracking information...")
+            orders = db_manager.get_latest_orders(limit=2, with_tracking_only=True)
+            
+            if not orders:
+                print("✗ No orders with tracking found in this database.")
+                db_manager.close()
+                return
+
+            print(f"✓ Found {len(orders)} order(s).")
+            for order in orders:
+                print(f"  - Order {order.get('order_number', 'Unknown')}: {len(order.get('tracking', []))} tracking #s")
+
+            print("\nSubmitting orders via Bulk API...")
+            result = self.submit_orders_bulk(orders)
+            
+            print("\n" + "-"*60)
+            if result['success']:
+                print(f"✓ Status: SUCCESS")
+                print(f"✓ Message: {result['message']}")
+                print(f"✓ Total Submitted: {result['total_submitted']}")
+                print(f"✓ Buying Groups: {result['buying_groups']}")
+                
+                if 'group_results' in result:
+                    print("\nGroup Results:")
+                    for group in result['group_results']:
+                        print(f"  - {group['buying_group']}: {group['successful']} success, {group['failed']} failed")
+            else:
+                print(f"✗ Status: FAILED")
+                print(f"✗ Message: {result['message']}")
+                print(f"✗ Errors: {result.get('total_failed')} failed")
+            print("-"*60)
+            
+            db_manager.close()
+
+        except Exception as e:
+            print(f"\n✗ Error running test: {str(e)}")
+            import traceback
+            traceback.print_exc()
 

@@ -348,6 +348,10 @@ class ContinuousMonitor:
             
             self.monitoring_start_date = datetime.now().strftime("%Y/%m/%d")
             print(f"Future scans will only check emails from: {self.monitoring_start_date}")
+
+            print("\nProcessing baseline tracking submissions...")
+            self.submit_recent_trackings(lookback_days=30)  
+
             print("\nStarting continuous monitoring...")
             
             self.start_continuous_monitoring(folder)
@@ -369,7 +373,7 @@ class ContinuousMonitor:
             print(f"Warning: Could not load submitted tracking keys: {str(e)}")
             self.submitted_tracking_keys = set()
 
-    def submit_recent_trackings(self) -> None:
+    def submit_recent_trackings(self, lookback_days: int = 3) -> None:
         if not self.api_config.is_enabled():
             return
         
@@ -379,7 +383,7 @@ class ContinuousMonitor:
         try:
             now = datetime.now()
             end_date = now.strftime("%Y-%m-%d")
-            lookback_date = (now - timedelta(days=2)).strftime("%Y-%m-%d")
+            lookback_date = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
             print(f"Checking for orders with tracking between {lookback_date} and {end_date}")
             orders_with_tracking = self.output_handler.db_manager.get_orders_with_tracking_since_date(lookback_date, end_date)
             
