@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-CURRENT_VERSION = "2.0.3"
+CURRENT_VERSION = "2.0.4"
 universal_date = "2025/11/01"
 SEARCH_CRITERIA = {
     'confirmation': {
@@ -203,3 +203,4 @@ AMAZON_OUTPUT_SETTINGS = {
     'csv_filename': 'amazon_orders.csv',
     'gift_cards_filename': 'amazon_gift_cards.csv'
 }
+
