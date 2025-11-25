@@ -154,5 +154,179 @@
         "style_contains_all": ["font-size: 20px", "font-weight: 700"]
       }
     }
+  },
+  "costco_parsing": {
+    "order_number": {
+      "confirmation": {
+        "tag": "a",
+        "attributes": {
+          "style_contains": "font-size: 14px; color: rgb(0, 96, 169)"
+        }
+      },
+      "cancellation": {
+        "tag": "a",
+        "attributes": {
+          "style_contains": "font-weight: normal; font-size: 16px"
+        }
+      },
+      "shipped": {
+        "tag": "a",
+        "attributes": {
+          "style_contains": "font-size: 14px; color: rgb(0, 96, 169)"
+        }
+      }
+    },
+    "order_date": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "class": "order-placed-text"
+        },
+        "text_contains": "Order Placed"
+      },
+      "value": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "font-size: 14px; line-height: 24px"
+        }
+      }
+    },
+    "cancellation_date": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "class": "align-column"
+        },
+        "text_contains": "Cancellation Date"
+      },
+      "value": {
+        "tag": "td",
+        "attributes": {
+          "class": "align-column",
+          "style_contains": "font-weight: normal; font-size: 16px"
+        }
+      }
+    },
+    "membership_number": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "class": "order-placed-text"
+        },
+        "text_contains": "Membership Number"
+      },
+      "value": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "font-size: 14px; line-height: 24px"
+        }
+      }
+    },
+    "shipping_address": {
+      "table": {
+        "tag": "table",
+        "attributes": {
+          "id": "shipping-address-table"
+        }
+      },
+      "label": {
+        "tag": "span",
+        "attributes": {
+          "style_contains": "font-weight: bold; font-size: 14px"
+        },
+        "text_contains": "Shipping Address"
+      },
+      "address_lines": {
+        "tag": "span",
+        "attributes": {
+          "style_contains": "font-size: 14px; line-height: 24px"
+        }
+      }
+    },
+    "product": {
+      "sections": {
+        "tag": "div",
+        "attributes": {
+          "class": "item-desc-column"
+        }
+      },
+      "title": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "font-size: 14px; line-height: 24px"
+        }
+      },
+      "item_number": {
+        "tag": "td",
+        "text_contains": "Item #"
+      },
+      "price": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "font-size: 14px; line-height: 24px"
+        },
+        "text_contains": "$"
+      },
+      "quantity": {
+        "tag": "td",
+        "attributes": {
+          "style_contains": "font-size: 14px; line-height: 24px"
+        },
+        "text_contains": "Quantity"
+      }
+    },
+    "price_summary": {
+      "subtotal": {
+        "label": {
+          "tag": "h2",
+          "attributes": {
+            "style_contains": "font-size: 16px"
+          },
+          "text_contains": "Subtotal"
+        }
+      },
+      "shipping": {
+        "label": {
+          "tag": "h3",
+          "attributes": {
+            "style_contains": "font-size: 16px"
+          },
+          "text_contains": "Shipping"
+        }
+      },
+      "tax": {
+        "label": {
+          "tag": "h3",
+          "attributes": {
+            "style_contains": "font-size: 16px"
+          },
+          "text_contains": "Tax"
+        }
+      },
+      "total": {
+        "label": {
+          "tag": "h2",
+          "attributes": {
+            "style_contains": "font-size: 18px"
+          },
+          "text_contains": "Total"
+        }
+      }
+    },
+    "tracking": {
+      "container": {
+        "tag": "td",
+        "attributes": {
+          "class": "align-column",
+          "style_contains": "font-size: 16px"
+        }
+      },
+      "link": {
+        "tag": "a",
+        "attributes": {
+          "target": "_blank"
+        }
+      }
+    }
   }
 } 

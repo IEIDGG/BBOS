@@ -48,24 +48,29 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE orders ADD COLUMN state TEXT")
                 self.connection.commit()
             
+            if 'website' not in columns:
+                cursor.execute("ALTER TABLE orders ADD COLUMN website TEXT")
+                self.connection.commit()
+            
             cursor.execute('SELECT * FROM orders WHERE order_number = ?', (order['number'],))
             existing_order = cursor.fetchone()
 
             state_value = order.get('state', '')
+            website_value = order.get('website', 'BestBuy')
             
             if existing_order:
                 cursor.execute('''
                     UPDATE orders 
-                    SET order_date = ?, total_price = ?, status = ?, email_address = ?, state = ?
+                    SET order_date = ?, total_price = ?, status = ?, email_address = ?, state = ?, website = ?
                     WHERE order_number = ?
                 ''', (order['date'], order['total_price'], order['status'],
-                     order['email_address'], state_value, order['number']))
+                     order['email_address'], state_value, website_value, order['number']))
             else:
                 cursor.execute('''
-                    INSERT INTO orders (order_number, order_date, total_price, status, email_address, state)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO orders (order_number, order_date, total_price, status, email_address, state, website)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (order['number'], order['date'], order['total_price'],
-                     order['status'], order['email_address'], state_value))
+                     order['status'], order['email_address'], state_value, website_value))
 
             order_id = order['number']
 
@@ -109,35 +114,115 @@ class DatabaseManager:
             print(f"Error inserting Xbox code: {str(e)}")
             self.connection.rollback()
 
+    def insert_membership_number(self, membership_data: Dict) -> None:
+        if not self.connection:
+            return
+
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='membership_numbers'")
+            if not cursor.fetchone():
+                table_sql = self.db_config['tables'].get('membership_numbers', '''
+                    CREATE TABLE IF NOT EXISTS membership_numbers (
+                        id INTEGER PRIMARY KEY,
+                        membership_number TEXT UNIQUE,
+                        email_address TEXT,
+                        first_seen_date TEXT
+                    )
+                ''')
+                cursor.executescript(table_sql)
+                self.connection.commit()
+                print("Created membership_numbers table")
+            
+            cursor.execute('''
+                INSERT OR IGNORE INTO membership_numbers (membership_number, email_address, first_seen_date)
+                VALUES (?, ?, ?)
+            ''', (membership_data['membership_number'], 
+                  membership_data.get('email_address', ''), 
+                  membership_data.get('date', datetime.now().strftime("%Y-%m-%d"))))
+            self.connection.commit()
+            print(f"Stored membership number: {membership_data['membership_number']}")
+        except Exception as e:
+            print(f"Error inserting membership number: {str(e)}")
+            self.connection.rollback()
+
+    def get_membership_numbers(self) -> List[Dict]:
+        if not self.connection:
+            return []
+
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='membership_numbers'")
+            if not cursor.fetchone():
+                return []
+            
+            cursor.execute('SELECT membership_number, email_address, first_seen_date FROM membership_numbers')
+            rows = cursor.fetchall()
+            return [{'membership_number': row[0], 'email_address': row[1], 'first_seen_date': row[2]} for row in rows]
+        except Exception as e:
+            print(f"Error getting membership numbers: {str(e)}")
+            return []
+
     def create_successful_orders_view(self) -> None:
         if not self.connection:
             return
 
         cursor = self.connection.cursor()
         try:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS successful_orders_temp AS
-                SELECT 
-                    o.order_number,
-                    o.order_date,
-                    o.total_price,
-                    o.status,
-                    GROUP_CONCAT(p.title, '; ') as title,
-                    GROUP_CONCAT(p.quantity, '; ') as quantity,
-                    GROUP_CONCAT(t.tracking_number, '; ') as tracking_number,
-                    COALESCE(o.state, '') as state,
-                    COALESCE(o.email_address, '') as email_address
-                FROM 
-                    orders o
-                LEFT JOIN 
-                    products p ON o.order_number = p.order_id
-                LEFT JOIN 
-                    tracking_numbers t ON o.order_number = t.order_id
-                WHERE 
-                    o.status != 'Cancelled'
-                GROUP BY 
-                    o.order_number
-            ''')
+            cursor.execute("PRAGMA table_info(orders)")
+            columns = [row[1] for row in cursor.fetchall()]
+            has_website = 'website' in columns
+            
+            if has_website:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS successful_orders_temp AS
+                    SELECT 
+                        COALESCE(o.website, 'BestBuy') as website,
+                        o.order_number,
+                        o.order_date,
+                        o.total_price,
+                        o.status,
+                        GROUP_CONCAT(p.title, '; ') as title,
+                        GROUP_CONCAT(p.quantity, '; ') as quantity,
+                        GROUP_CONCAT(t.tracking_number, '; ') as tracking_number,
+                        COALESCE(o.state, '') as state,
+                        COALESCE(o.email_address, '') as email_address
+                    FROM 
+                        orders o
+                    LEFT JOIN 
+                        products p ON o.order_number = p.order_id
+                    LEFT JOIN 
+                        tracking_numbers t ON o.order_number = t.order_id
+                    WHERE 
+                        o.status != 'Cancelled'
+                    GROUP BY 
+                        o.order_number
+                ''')
+            else:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS successful_orders_temp AS
+                    SELECT 
+                        'BestBuy' as website,
+                        o.order_number,
+                        o.order_date,
+                        o.total_price,
+                        o.status,
+                        GROUP_CONCAT(p.title, '; ') as title,
+                        GROUP_CONCAT(p.quantity, '; ') as quantity,
+                        GROUP_CONCAT(t.tracking_number, '; ') as tracking_number,
+                        COALESCE(o.state, '') as state,
+                        COALESCE(o.email_address, '') as email_address
+                    FROM 
+                        orders o
+                    LEFT JOIN 
+                        products p ON o.order_number = p.order_id
+                    LEFT JOIN 
+                        tracking_numbers t ON o.order_number = t.order_id
+                    WHERE 
+                        o.status != 'Cancelled'
+                    GROUP BY 
+                        o.order_number
+                ''')
             
             cursor.execute('DROP TABLE IF EXISTS successful_orders')
             cursor.execute('ALTER TABLE successful_orders_temp RENAME TO successful_orders')

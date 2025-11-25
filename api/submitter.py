@@ -84,7 +84,7 @@ class APIConfig:
         except FileNotFoundError:
             print(f"Config file not found: {self.config_path}")
             return {
-                "api_url": "http://localhost:8000",
+                "api_url": "http://localhost:8050",
                 "api_key": "",
                 "enabled": False,
                 "zip_to_buying_group": {},
@@ -109,7 +109,7 @@ class APIConfig:
         self.save_config()
     
     def get_api_url(self) -> str:
-        return self.config.get('api_url', 'http://localhost:8000')
+        return self.config.get('api_url', 'http://localhost:8050')
     
     def get_api_key(self) -> str:
         return self.config.get('api_key', '')
@@ -522,7 +522,7 @@ class OrderAPISubmitter:
         print("          INTERACTIVE BULK SUBMISSION TEST")
         print("="*60)
 
-        default_db = "bestbuy_orders.sqlite3"
+        default_db = "db/bestbuy_orders.sqlite3"
         print(f"\nEnter database file path (default: {default_db})")
         db_path = input("> ").strip()
         

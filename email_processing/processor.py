@@ -1,16 +1,21 @@
 import email
+import logging
 from email.header import decode_header
 from datetime import datetime
 from bs4 import BeautifulSoup
 from typing import Dict, Any, Optional, Tuple
 from .parsers.bb_parser import OrderParser
 from .parsers.xbox_parser import XboxParser
+from .parsers.costco_parser import CostcoParser
+
+logger = logging.getLogger(__name__)
 
 
 class EmailProcessor:
     def __init__(self):
         self.order_parser = OrderParser()
         self.xbox_parser = XboxParser()
+        self.costco_parser = CostcoParser()
 
     def _parse_email_metadata(self, email_data: tuple) -> Tuple[str, str, Optional[str]]:
         if isinstance(email_data, tuple):
@@ -158,3 +163,134 @@ class EmailProcessor:
         except Exception as e:
             print(f"Error processing Xbox email: {str(e)}")
             return {}
+
+    def process_costco_confirmation_email(self, email_data: tuple) -> Dict[str, Any]:
+        try:
+            subject = self._extract_subject(email_data)
+            
+            if 'Confirmed' not in subject and 'confirmed' not in subject.lower():
+                logger.debug(f"Skipping non-confirmation email: {subject[:50]}")
+                return {}
+            
+            email_address, email_date, html_content = self._parse_email_metadata(email_data)
+            if not html_content:
+                logger.warning("No HTML content found in Costco confirmation email")
+                return {}
+
+            soup = BeautifulSoup(html_content, 'lxml')
+            
+            order_number = self.costco_parser.extract_order_number(soup, 'confirmation', subject)
+            if not order_number:
+                logger.warning("Could not extract Costco order number")
+                return {}
+
+            order_date = self.costco_parser.extract_order_date(soup)
+            membership_number = self.costco_parser.extract_membership_number(soup)
+            shipping_address = self.costco_parser.extract_shipping_address(soup)
+            products, total_price = self.costco_parser.parse_product_details(html_content)
+            price_summary = self.costco_parser.extract_price_summary(soup)
+
+            return {
+                'date': order_date or email_date,
+                'order_number': order_number,
+                'membership_number': membership_number,
+                'shipping_address': shipping_address,
+                'products': products,
+                'total_price': total_price,
+                'price_summary': price_summary,
+                'email_address': email_address,
+                'state': shipping_address.get('state', ''),
+                'subject': subject
+            }
+        except Exception as e:
+            logger.error(f"Error processing Costco confirmation email: {str(e)}")
+            return {}
+
+    def process_costco_cancellation_email(self, email_data: tuple) -> Dict[str, Any]:
+        try:
+            subject = self._extract_subject(email_data)
+            
+            if 'Cancelled' not in subject and 'cancelled' not in subject.lower() and 'Canceled' not in subject and 'canceled' not in subject.lower():
+                logger.debug(f"Skipping non-cancellation email: {subject[:50]}")
+                return {}
+            
+            email_address, email_date, html_content = self._parse_email_metadata(email_data)
+            if not html_content:
+                return {}
+
+            soup = BeautifulSoup(html_content, 'lxml')
+            
+            order_number = self.costco_parser.extract_order_number(soup, 'cancellation', subject)
+            cancellation_date = self.costco_parser.extract_cancellation_date(soup)
+
+            return {
+                'date': email_date,
+                'order_number': order_number,
+                'cancellation_date': cancellation_date,
+                'email_address': email_address,
+                'subject': subject
+            }
+        except Exception as e:
+            logger.error(f"Error processing Costco cancellation email: {str(e)}")
+            return {}
+
+    def process_costco_shipped_email(self, email_data: tuple) -> Dict[str, Any]:
+        try:
+            subject = self._extract_subject(email_data)
+            
+            if 'Shipped' not in subject and 'shipped' not in subject.lower():
+                logger.debug(f"Skipping non-shipped email: {subject[:50]}")
+                return {}
+            
+            email_address, email_date, html_content = self._parse_email_metadata(email_data)
+            if not html_content:
+                return {}
+
+            soup = BeautifulSoup(html_content, 'lxml')
+            
+            order_number = self.costco_parser.extract_order_number(soup, 'shipped', subject)
+            if not order_number:
+                return {}
+
+            tracking_numbers = self.costco_parser.extract_tracking_numbers(soup, html_content)
+
+            return {
+                'date': email_date,
+                'order_number': order_number,
+                'tracking_numbers': tracking_numbers,
+                'email_address': email_address,
+                'subject': subject
+            }
+        except Exception as e:
+            logger.error(f"Error processing Costco shipped email: {str(e)}")
+            return {}
+
+    def _extract_subject(self, email_data: tuple) -> str:
+        try:
+            if isinstance(email_data, tuple):
+                email_body = email_data[1]
+            else:
+                email_body = email_data
+            
+            if isinstance(email_body, bytes):
+                email_message = email.message_from_bytes(email_body)
+            else:
+                email_message = email.message_from_string(str(email_body))
+
+            raw_subject = email_message['Subject']
+            decoded_parts = decode_header(raw_subject)
+            subject_parts = []
+            for content, encoding in decoded_parts:
+                if isinstance(content, bytes):
+                    if encoding:
+                        try:
+                            subject_parts.append(content.decode(encoding))
+                        except:
+                            subject_parts.append(content.decode('utf-8', errors='ignore'))
+                    else:
+                        subject_parts.append(content.decode('utf-8', errors='ignore'))
+                else:
+                    subject_parts.append(str(content))
+            return ''.join(subject_parts)
+        except Exception:
+            return ''

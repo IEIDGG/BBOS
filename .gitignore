@@ -8,3 +8,6 @@ my_orders.sqlite3
 .processed_uids_*.json
 api/api_config.json
 config/profiles.json
+/cache/
+__init__.py
+docs/Costco.md

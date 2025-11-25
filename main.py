@@ -12,7 +12,7 @@ from core.utils import get_db_settings
 from core.database import DatabaseManager
 from core.updater import UpdateManager
 from email_processing.connector import EmailConnector
-from email_processing.handlers import OrderEmailHandler, XboxEmailHandler
+from email_processing.handlers import OrderEmailHandler, XboxEmailHandler, CostcoEmailHandler
 from config.settings import SEARCH_CRITERIA, CURRENT_VERSION
 from output.file_handlers import OutputHandler
 from continuous_monitor import ContinuousMonitor
@@ -38,35 +38,54 @@ class BBOSApplication:
         print("="*60)
 
     def select_service(self) -> Optional[str]:
+        print("\nMain Menu:")
+        print("="*30)
+        print("1. Process Orders")
+        print("2. Continuous Monitor (30s refresh)")
+        print("3. Settings")
+        print("4. Check for Updates")
+        print("q. Cancel")
+        
+        while True:
+            choice = input("\nEnter choice (1-4) or 'q': ").strip().lower()
+            
+            if choice == 'q':
+                return None
+            elif choice == '1':
+                return self._select_service_submenu()
+            elif choice == '2':
+                return 'monitor'
+            elif choice == '3':
+                return 'settings'
+            elif choice == '4':
+                return 'update'
+            else:
+                print("Please enter a valid choice (1-4) or 'q' to cancel")
+
+    def _select_service_submenu(self) -> Optional[str]:
         print("\nSelect Service to Process:")
         print("="*30)
         print("1. Best Buy")
         print("2. Amazon")
-        print("3. Both Services")
-        print("4. Continuous Monitor (30s refresh)")
-        print("5. Settings")
-        print("6. Check for Updates")
-        print("q. Cancel")
+        print("3. Costco")
+        print("4. All Services")
+        print("b. Back")
         
         while True:
-            choice = input("\nEnter choice (1-6) or 'q': ").strip().lower()
+            choice = input("\nEnter choice (1-4) or 'b': ").strip().lower()
             
-            if choice == 'q':
-                return None
+            if choice == 'b':
+                return self.select_service()
             elif choice == '1':
                 return 'bestbuy'
             elif choice == '2':
                 return 'amazon'
             elif choice == '3':
-                return 'both'
+                return 'costco'
             elif choice == '4':
-                return 'monitor'
-            elif choice == '5':
-                return 'settings'
-            elif choice == '6':
-                return 'update'
+                return 'all'
             else:
-                print("Please enter a valid choice (1-6) or 'q' to cancel")
+                print("Please enter a valid choice (1-4) or 'b' to go back")
 
     def get_profile(self) -> Optional[Dict[str, Any]]:
         try:
@@ -209,6 +228,49 @@ class BBOSApplication:
         print("- Amazon shipped email processing")
         print("- Amazon tracking number extraction")
 
+    def process_costco_orders(self, folder: str, ignore_cache: bool = False, date_filter: str = None) -> None:
+        try:
+            print(f"\nProcessing Costco orders from folder: {folder}")
+            print("="*50)
+            
+            costco_handler = CostcoEmailHandler(self.email_connector)
+            
+            orders = costco_handler.process_confirmation_emails(folder, ignore_cache=ignore_cache, date_filter=date_filter)
+            
+            if not orders:
+                print("No new Costco confirmation emails found")
+                if self.output_handler and self.output_handler.db_manager:
+                    existing_order_numbers = self.output_handler.db_manager.get_all_orders()
+                    if existing_order_numbers:
+                        print(f"Loading {len(existing_order_numbers)} existing orders from database for processing...")
+                        orders = []
+                        for order_data in existing_order_numbers:
+                            full_order = self.output_handler.db_manager.get_order_by_number(order_data['number'])
+                            if full_order:
+                                orders.append(full_order)
+                        if orders:
+                            print(f"Loaded {len(orders)} orders with full details")
+                        else:
+                            print("No orders with full details found")
+                    else:
+                        print("No existing orders found in database")
+            
+            if orders:
+                costco_handler.process_cancellation_emails(folder, orders, ignore_cache=ignore_cache, date_filter=date_filter)
+                costco_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager if self.output_handler else None, ignore_cache=ignore_cache, date_filter=date_filter)
+                
+                if self.output_handler:
+                    self.output_handler.save_orders(orders)
+                    self.output_handler.finalize_database()
+                    self.output_handler.display_order_summary(costco_handler.get_statistics())
+            else:
+                print("No Costco orders found to process")
+            
+            costco_handler.print_fetch_statistics()
+                
+        except Exception as e:
+            print(f"Error processing Costco orders: {str(e)}")
+
     def process_xbox_codes(self, folder: str, ignore_cache: bool = False, date_filter: str = None) -> None:
         try:
             print(f"\nProcessing Xbox Game Pass codes from folder: {folder}")
@@ -241,19 +303,27 @@ class BBOSApplication:
             print("2. Process Xbox Game Pass Codes")
             print("3. Process Both")
             print("4. Exit")
+            max_choice = 4
         elif self.selected_service == 'amazon':
             print("1. Process Amazon Orders")
             print("2. Process Amazon Gift Cards (TODO)")
             print("3. Process Both")
             print("4. Exit")
-        elif self.selected_service == 'both':
+            max_choice = 4
+        elif self.selected_service == 'costco':
+            print("1. Process Costco Orders")
+            print("2. Exit")
+            max_choice = 2
+        elif self.selected_service == 'all':
             print("1. Process Best Buy Orders")
             print("2. Process Amazon Orders")
-            print("3. Process Xbox Game Pass Codes")
-            print("4. Process All")
-            print("5. Exit")
-        
-        max_choice = 4 if self.selected_service in ['bestbuy', 'amazon'] else 5
+            print("3. Process Costco Orders")
+            print("4. Process Xbox Game Pass Codes")
+            print("5. Process All")
+            print("6. Exit")
+            max_choice = 6
+        else:
+            max_choice = 4
         
         while True:
             choice = input(f"\nSelect processing option (1-{max_choice}): ").strip()
@@ -340,7 +410,8 @@ class BBOSApplication:
             else:
                 choice = self.display_processing_menu()
             
-            exit_choice = '4' if self.selected_service in ['bestbuy', 'amazon'] else '5'
+            exit_choices = {'bestbuy': '4', 'amazon': '4', 'costco': '2', 'all': '6'}
+            exit_choice = exit_choices.get(self.selected_service, '4')
             if choice != exit_choice:
                 date_filter = self.select_date_range()
             
@@ -365,25 +436,35 @@ class BBOSApplication:
                     print("TODO: Amazon gift card processing not yet implemented")
                 elif choice == '4':
                     break
+
+            elif self.selected_service == 'costco':
+                if choice == '1':
+                    self.process_costco_orders(folder, ignore_cache, date_filter)
+                elif choice == '2':
+                    break
                     
-            elif self.selected_service == 'both':
+            elif self.selected_service == 'all':
                 if choice == '1':
                     self.process_bestbuy_orders(folder, ignore_cache, date_filter)
                 elif choice == '2':
                     self.process_amazon_orders(folder, ignore_cache, date_filter)
                 elif choice == '3':
-                    self.process_xbox_codes(folder, ignore_cache, date_filter)
+                    self.process_costco_orders(folder, ignore_cache, date_filter)
                 elif choice == '4':
-                    self.process_bestbuy_orders(folder, ignore_cache, date_filter)
-                    self.process_amazon_orders(folder, ignore_cache, date_filter)
                     self.process_xbox_codes(folder, ignore_cache, date_filter)
                 elif choice == '5':
+                    self.process_bestbuy_orders(folder, ignore_cache, date_filter)
+                    self.process_amazon_orders(folder, ignore_cache, date_filter)
+                    self.process_costco_orders(folder, ignore_cache, date_filter)
+                    self.process_xbox_codes(folder, ignore_cache, date_filter)
+                elif choice == '6':
                     break
             
             should_break = False
             if self.selected_service == 'bestbuy' and choice == '4': should_break = True
             elif self.selected_service == 'amazon' and choice == '4': should_break = True
-            elif self.selected_service == 'both' and choice == '5': should_break = True
+            elif self.selected_service == 'costco' and choice == '2': should_break = True
+            elif self.selected_service == 'all' and choice == '6': should_break = True
             
             if not should_break:
                 continue_choice = input("\nProcess again? (y/n): ").strip().lower()
@@ -408,11 +489,10 @@ class BBOSApplication:
                 print("- Create Amazon-specific CSV files")
                 print("- Handle Amazon order data structure")
                 self.output_handler = OutputHandler(email=email, service='amazon')
-            elif service == 'both':
-                print("TODO: Multi-service output handler needs to be implemented")
-                print("- Handle both Best Buy and Amazon databases")
-                print("- Separate CSV files for each service")
-                print("- Combined reporting functionality")
+            elif service == 'costco':
+                self.output_handler = OutputHandler(email=email, service='costco')
+            elif service == 'all':
+                print("Multi-service mode: Using Best Buy output handler as default")
                 self.output_handler = OutputHandler(email=email, service='bestbuy')
         except Exception as e:
             print(f"Error initializing output handler: {str(e)}")

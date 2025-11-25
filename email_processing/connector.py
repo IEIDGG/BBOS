@@ -86,7 +86,9 @@ class EmailConnector:
         self.fetch_count = 0
         self.current_folder: Optional[str] = None
         
-        self.processed_uids_file = Path(f'.processed_uids_{email.replace("@", "_").replace(".", "_")}.json')
+        cache_dir = Path('cache')
+        cache_dir.mkdir(exist_ok=True)
+        self.processed_uids_file = cache_dir / f'processed_uids_{email.replace("@", "_").replace(".", "_")}.json'
         self.processed_uids: Set[str] = self._load_processed_uids()
         
         if self.service_config['server'] == '127.0.0.1':

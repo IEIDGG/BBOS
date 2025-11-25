@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-CURRENT_VERSION = "2.0.6"
+CURRENT_VERSION = "2.1.0"
 universal_date = "2025/11/01"
 SEARCH_CRITERIA = {
     'confirmation': {
@@ -54,7 +54,6 @@ SEARCH_CRITERIA = {
 # 6. Add Amazon-specific output settings to OUTPUT_SETTINGS
 
 AMAZON_SEARCH_CRITERIA = {
-    # TODO: Implement Amazon search criteria
     'confirmation': {
         'from': '(OR (FROM "ship-confirm@amazon.com") (FROM "auto-confirm@amazon.com"))',
         'subject': 'SUBJECT "Your order of"',
@@ -76,6 +75,24 @@ AMAZON_SEARCH_CRITERIA = {
     }
 }
 
+COSTCO_SEARCH_CRITERIA = {
+    'confirmation': {
+        'from': 'FROM "orderstatus@costco.com"',
+        'subject': 'SUBJECT "Your Costco.com Order Number" SUBJECT "is Confirmed"',
+        'date': f'after:{universal_date}'
+    },
+    'cancellation': {
+        'from': 'FROM "order-cancel@costco.com"',
+        'subject': 'SUBJECT "Your Costco.com Order" SUBJECT "Was Cancelled"',
+        'date': f'after:{universal_date}'
+    },
+    'shipped': {
+        'from': 'FROM "orderstatus@costco.com"',
+        'subject': 'SUBJECT "Your Costco.com Order Number" SUBJECT "Was Shipped"',
+        'date': f'after:{universal_date}'
+    }
+}
+
 DB_SETTINGS = {
     'tables': {
         'orders': '''
@@ -85,7 +102,8 @@ DB_SETTINGS = {
                 total_price TEXT,
                 status TEXT,
                 email_address TEXT,
-                state TEXT
+                state TEXT,
+                website TEXT DEFAULT 'BestBuy'
             )
         ''',
         'products': '''
@@ -115,6 +133,7 @@ DB_SETTINGS = {
         ''',
         'successful_orders': '''
             CREATE TABLE IF NOT EXISTS successful_orders (
+                website TEXT,
                 order_number TEXT PRIMARY KEY,
                 order_date TEXT,
                 total_price TEXT,
@@ -147,7 +166,8 @@ AMAZON_DB_SETTINGS = {
                 total_price TEXT,
                 status TEXT,
                 email_address TEXT,
-                state TEXT
+                state TEXT,
+                website TEXT DEFAULT 'Amazon'
             )
         ''',
         'products': '''
@@ -170,6 +190,7 @@ AMAZON_DB_SETTINGS = {
         ''',
         'successful_orders': '''
             CREATE TABLE IF NOT EXISTS successful_orders (
+                website TEXT,
                 order_number TEXT PRIMARY KEY,
                 order_date TEXT,
                 total_price TEXT,
@@ -193,16 +214,88 @@ AMAZON_DB_SETTINGS = {
     }
 }
 
+COSTCO_DB_SETTINGS = {
+    'tables': {
+        'orders': '''
+            CREATE TABLE IF NOT EXISTS orders (
+                order_number TEXT PRIMARY KEY,
+                order_date TEXT,
+                total_price TEXT,
+                status TEXT,
+                email_address TEXT,
+                state TEXT,
+                cancellation_date TEXT,
+                website TEXT DEFAULT 'Costco'
+            )
+        ''',
+        'products': '''
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY,
+                order_id TEXT,
+                title TEXT,
+                item_number TEXT,
+                price TEXT,
+                quantity TEXT,
+                FOREIGN KEY (order_id) REFERENCES orders (order_number)
+            )
+        ''',
+        'tracking_numbers': '''
+            CREATE TABLE IF NOT EXISTS tracking_numbers (
+                id INTEGER PRIMARY KEY,
+                order_id TEXT,
+                tracking_number TEXT,
+                FOREIGN KEY (order_id) REFERENCES orders (order_number)
+            )
+        ''',
+        'membership_numbers': '''
+            CREATE TABLE IF NOT EXISTS membership_numbers (
+                id INTEGER PRIMARY KEY,
+                membership_number TEXT UNIQUE,
+                email_address TEXT,
+                first_seen_date TEXT
+            )
+        ''',
+        'successful_orders': '''
+            CREATE TABLE IF NOT EXISTS successful_orders (
+                website TEXT,
+                order_number TEXT PRIMARY KEY,
+                order_date TEXT,
+                total_price TEXT,
+                status TEXT,
+                title TEXT,
+                quantity TEXT,
+                tracking_number TEXT,
+                state TEXT,
+                email_address TEXT,
+                membership_number TEXT
+            )
+        ''',
+        'submitted_tracking_keys': '''
+            CREATE TABLE IF NOT EXISTS submitted_tracking_keys (
+                tracking_key TEXT PRIMARY KEY,
+                order_number TEXT,
+                tracking_number TEXT,
+                submitted_date TEXT,
+                FOREIGN KEY (order_number) REFERENCES orders (order_number)
+            )
+        '''
+    }
+}
+
 OUTPUT_SETTINGS = {
     'enable_output': False,
     'csv_filename': 'bestbuy_orders.csv',
     'xbox_filename': 'bestbuy_xbox_codes.csv'
 }
 
-# TODO: Add Amazon-specific output settings
 AMAZON_OUTPUT_SETTINGS = {
     'enable_output': False,
     'csv_filename': 'amazon_orders.csv',
     'gift_cards_filename': 'amazon_gift_cards.csv'
+}
+
+COSTCO_OUTPUT_SETTINGS = {
+    'enable_output': False,
+    'csv_filename': 'costco_orders.csv'
 }
 

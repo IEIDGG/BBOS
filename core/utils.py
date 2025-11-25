@@ -95,10 +95,12 @@ def format_currency(amount: str) -> str:
 
 
 def get_db_settings(service: str = 'bestbuy') -> Dict:
-    from config.settings import DB_SETTINGS, AMAZON_DB_SETTINGS
+    from config.settings import DB_SETTINGS, AMAZON_DB_SETTINGS, COSTCO_DB_SETTINGS
     
     if service.lower() == 'amazon':
         return AMAZON_DB_SETTINGS
+    elif service.lower() == 'costco':
+        return COSTCO_DB_SETTINGS
     else:
         return DB_SETTINGS
 
@@ -124,11 +126,15 @@ def get_email_username(email: str) -> str:
 
 
 def get_db_filename(email: str = None, service: str = 'bestbuy') -> str:
+    db_dir = 'db'
+    if not os.path.exists(db_dir):
+        os.makedirs(db_dir)
+    
     if email:
         username = get_email_username(email)
-        return f'{username}.sqlite3'
+        return os.path.join(db_dir, f'{username}.sqlite3')
     else:
         if service.lower() == 'amazon':
-            return 'amazon_orders.sqlite3'
+            return os.path.join(db_dir, 'amazon_orders.sqlite3')
         else:
-            return 'bestbuy_orders.sqlite3'
+            return os.path.join(db_dir, 'bestbuy_orders.sqlite3')
