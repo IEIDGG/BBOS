@@ -38,7 +38,8 @@ class OrderEmailHandler(BaseEmailHandler):
     def process_confirmation_emails(self, folder: str, ignore_cache: bool = False) -> List[Dict]:
         print(f"\nProcessing confirmation emails in folder: {folder}")
 
-        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['confirmation'], use_uid_filter=not ignore_cache)
+        use_uid_filter = not ignore_cache
+        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['confirmation'], use_uid_filter=use_uid_filter)
 
         if not success:
             return []
@@ -48,7 +49,7 @@ class OrderEmailHandler(BaseEmailHandler):
 
         if len(messages) > 10:
             print("Using batch fetching for efficiency...")
-            email_data_list = self.connector.fetch_emails_batch(messages)
+            email_data_list = self.connector.fetch_emails_batch(messages, use_uid=use_uid_filter)
             
             print("⚡ Using parallel processing for email parsing...")
             with ThreadPoolExecutor(max_workers=4) as executor:
@@ -81,7 +82,7 @@ class OrderEmailHandler(BaseEmailHandler):
                         self._update_stats(False)
         else:
             for msg_id in messages:
-                success, email_data = self.connector.fetch_email(msg_id)
+                success, email_data = self.connector.fetch_email(msg_id, use_uid=use_uid_filter)
                 if not success:
                     continue
 
@@ -107,10 +108,11 @@ class OrderEmailHandler(BaseEmailHandler):
     def process_cancellation_emails(self, folder: str, orders: List[Dict], ignore_cache: bool = False) -> None:
         print(f"\nProcessing cancellation emails in folder: {folder}")
 
+        use_uid_filter = not ignore_cache
         success, messages = self.connector.search_emails(
             folder,
             SEARCH_CRITERIA['cancellation'],
-            use_uid_filter=not ignore_cache
+            use_uid_filter=use_uid_filter
         )
 
         if not success:
@@ -120,7 +122,7 @@ class OrderEmailHandler(BaseEmailHandler):
 
         if len(messages) > 10:
             print("Using batch fetching for efficiency...")
-            email_data_list = self.connector.fetch_emails_batch(messages)
+            email_data_list = self.connector.fetch_emails_batch(messages, use_uid=use_uid_filter)
             
             print("⚡ Using parallel processing for email parsing...")
             with ThreadPoolExecutor(max_workers=4) as executor:
@@ -148,7 +150,7 @@ class OrderEmailHandler(BaseEmailHandler):
                         self._update_stats(False)
         else:
             for msg_id in messages:
-                success, email_data = self.connector.fetch_email(msg_id)
+                success, email_data = self.connector.fetch_email(msg_id, use_uid=use_uid_filter)
                 if not success:
                     continue
 
@@ -167,10 +169,11 @@ class OrderEmailHandler(BaseEmailHandler):
     def process_shipped_emails(self, folder: str, orders: List[Dict], db_manager=None, ignore_cache: bool = False) -> None:
         print(f"\nProcessing shipped emails in folder: {folder}")
 
+        use_uid_filter = not ignore_cache
         success, messages = self.connector.search_emails(
             folder,
             SEARCH_CRITERIA['shipped'],
-            use_uid_filter=not ignore_cache
+            use_uid_filter=use_uid_filter
         )
 
         if not success:
@@ -180,7 +183,7 @@ class OrderEmailHandler(BaseEmailHandler):
 
         if len(messages) > 10:
             print("Using batch fetching for efficiency...")
-            email_data_list = self.connector.fetch_emails_batch(messages)
+            email_data_list = self.connector.fetch_emails_batch(messages, use_uid=use_uid_filter)
             
             print("⚡ Using parallel processing for email parsing...")
             with ThreadPoolExecutor(max_workers=4) as executor:
@@ -221,7 +224,7 @@ class OrderEmailHandler(BaseEmailHandler):
                         self._update_stats(False)
         else:
             for msg_id in messages:
-                success, email_data = self.connector.fetch_email(msg_id)
+                success, email_data = self.connector.fetch_email(msg_id, use_uid=use_uid_filter)
                 if not success:
                     continue
 
@@ -265,7 +268,8 @@ class XboxEmailHandler(BaseEmailHandler):
     def process_xbox_emails(self, folder: str, ignore_cache: bool = False) -> List[Dict]:
         print(f"\nProcessing Xbox Game Pass emails in folder: {folder}")
 
-        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['xbox'], use_uid_filter=not ignore_cache)
+        use_uid_filter = not ignore_cache
+        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['xbox'], use_uid_filter=use_uid_filter)
 
         if not success:
             print("Failed to search for Xbox Game Pass emails")
@@ -280,7 +284,7 @@ class XboxEmailHandler(BaseEmailHandler):
 
         if len(messages) > 10:
             print("Using batch fetching for efficiency...")
-            email_data_list = self.connector.fetch_emails_batch(messages)
+            email_data_list = self.connector.fetch_emails_batch(messages, use_uid=use_uid_filter)
             
             print("⚡ Using parallel processing for email parsing...")
             with ThreadPoolExecutor(max_workers=4) as executor:
@@ -304,7 +308,7 @@ class XboxEmailHandler(BaseEmailHandler):
                         self._update_stats(False)
         else:
             for msg_id in messages:
-                success, email_data = self.connector.fetch_email(msg_id)
+                success, email_data = self.connector.fetch_email(msg_id, use_uid=use_uid_filter)
                 if not success or not email_data:
                     print(f"Failed to fetch email ID: {msg_id}")
                     continue

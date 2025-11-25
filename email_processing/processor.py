@@ -1,4 +1,5 @@
 import email
+from email.header import decode_header
 from datetime import datetime
 from bs4 import BeautifulSoup
 from typing import Dict, Any, Optional, Tuple
@@ -23,7 +24,22 @@ class EmailProcessor:
             email_message = email.message_from_string(str(email_body))
 
         email_address = email_message['To']
-        subject = email_message['Subject']
+        
+        raw_subject = email_message['Subject']
+        decoded_parts = decode_header(raw_subject)
+        subject_parts = []
+        for content, encoding in decoded_parts:
+            if isinstance(content, bytes):
+                if encoding:
+                    try:
+                        subject_parts.append(content.decode(encoding))
+                    except:
+                        subject_parts.append(content.decode('utf-8', errors='ignore'))
+                else:
+                    subject_parts.append(content.decode('utf-8', errors='ignore'))
+            else:
+                subject_parts.append(str(content))
+        subject = ''.join(subject_parts)
 
         date_tuple = email.utils.parsedate_tz(email_message['Date'])
         if date_tuple:
