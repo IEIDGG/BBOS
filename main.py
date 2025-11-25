@@ -4,7 +4,7 @@ import sys
 import os
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Set, List
 
 from core.profile_manager import ProfileManager
@@ -154,14 +154,14 @@ class BBOSApplication:
             else:
                 return "INBOX"
 
-    def process_bestbuy_orders(self, folder: str, ignore_cache: bool = False) -> None:
+    def process_bestbuy_orders(self, folder: str, ignore_cache: bool = False, date_filter: str = None) -> None:
         try:
             print(f"\nProcessing Best Buy orders from folder: {folder}")
             print("="*50)
             
             order_handler = OrderEmailHandler(self.email_connector)
             
-            orders = order_handler.process_confirmation_emails(folder, ignore_cache=ignore_cache)
+            orders = order_handler.process_confirmation_emails(folder, ignore_cache=ignore_cache, date_filter=date_filter)
             
             if not orders:
                 print("No new confirmation emails found")
@@ -182,8 +182,8 @@ class BBOSApplication:
                         print("No existing orders found in database")
             
             if orders:
-                order_handler.process_cancellation_emails(folder, orders, ignore_cache=ignore_cache)
-                order_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager, ignore_cache=ignore_cache)
+                order_handler.process_cancellation_emails(folder, orders, ignore_cache=ignore_cache, date_filter=date_filter)
+                order_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager, ignore_cache=ignore_cache, date_filter=date_filter)
                 
                 self.output_handler.save_orders(orders)
                 self.output_handler.finalize_database()
@@ -196,8 +196,7 @@ class BBOSApplication:
         except Exception as e:
             print(f"Error processing Best Buy orders: {str(e)}")
 
-    def process_amazon_orders(self, folder: str, ignore_cache: bool = False) -> None:
-        # TODO: Implement Amazon order processing
+    def process_amazon_orders(self, folder: str, ignore_cache: bool = False, date_filter: str = None) -> None:
         print(f"\nProcessing Amazon orders from folder: {folder}")
         print("="*50)
         print("TODO: Amazon order processing not yet implemented")
@@ -210,13 +209,13 @@ class BBOSApplication:
         print("- Amazon shipped email processing")
         print("- Amazon tracking number extraction")
 
-    def process_xbox_codes(self, folder: str, ignore_cache: bool = False) -> None:
+    def process_xbox_codes(self, folder: str, ignore_cache: bool = False, date_filter: str = None) -> None:
         try:
             print(f"\nProcessing Xbox Game Pass codes from folder: {folder}")
             print("="*50)
             
             xbox_handler = XboxEmailHandler(self.email_connector)
-            xbox_codes = xbox_handler.process_xbox_emails(folder, ignore_cache=ignore_cache)
+            xbox_codes = xbox_handler.process_xbox_emails(folder, ignore_cache=ignore_cache, date_filter=date_filter)
             
             if xbox_codes:
                 self.output_handler.save_xbox_codes(xbox_codes)
@@ -262,6 +261,69 @@ class BBOSApplication:
                 return choice
             print(f"Please enter a valid option (1-{max_choice})")
 
+    def select_date_range(self) -> str:
+        print("\nDate Range Options:")
+        print("="*30)
+        print("1. Last 7 days")
+        print("2. Last 30 days")
+        print("3. Last 60 days")
+        print("4. Last 90 days")
+        print("5. Last year")
+        print("6. Custom days back")
+        print("7. Custom date")
+        print("8. All time (no date filter)")
+        
+        while True:
+            choice = input("\nSelect date range (1-8): ").strip()
+            
+            if choice == '1':
+                date_filter = (datetime.now() - timedelta(days=7)).strftime('%Y/%m/%d')
+                print(f"📅 Searching emails from: {date_filter}")
+                return date_filter
+            elif choice == '2':
+                date_filter = (datetime.now() - timedelta(days=30)).strftime('%Y/%m/%d')
+                print(f"📅 Searching emails from: {date_filter}")
+                return date_filter
+            elif choice == '3':
+                date_filter = (datetime.now() - timedelta(days=60)).strftime('%Y/%m/%d')
+                print(f"📅 Searching emails from: {date_filter}")
+                return date_filter
+            elif choice == '4':
+                date_filter = (datetime.now() - timedelta(days=90)).strftime('%Y/%m/%d')
+                print(f"📅 Searching emails from: {date_filter}")
+                return date_filter
+            elif choice == '5':
+                date_filter = (datetime.now() - timedelta(days=365)).strftime('%Y/%m/%d')
+                print(f"📅 Searching emails from: {date_filter}")
+                return date_filter
+            elif choice == '6':
+                while True:
+                    try:
+                        days = input("Enter number of days back: ").strip()
+                        days_int = int(days)
+                        if days_int <= 0:
+                            print("Please enter a positive number")
+                            continue
+                        date_filter = (datetime.now() - timedelta(days=days_int)).strftime('%Y/%m/%d')
+                        print(f"📅 Searching emails from: {date_filter}")
+                        return date_filter
+                    except ValueError:
+                        print("Please enter a valid number")
+            elif choice == '7':
+                while True:
+                    custom_date = input("Enter date (YYYY/MM/DD): ").strip()
+                    try:
+                        parsed_date = datetime.strptime(custom_date, '%Y/%m/%d')
+                        print(f"📅 Searching emails from: {custom_date}")
+                        return custom_date
+                    except ValueError:
+                        print("Invalid date format. Please use YYYY/MM/DD (e.g., 2025/01/15)")
+            elif choice == '8':
+                print("📅 Searching all emails (no date filter)")
+                return None
+            else:
+                print("Please enter a valid option (1-8)")
+
     def run_processing(self, folder: str) -> None:
         ignore_cache = False
         cache_choice = input("\nIgnore cache (process all emails)? (y/n): ").strip().lower()
@@ -270,6 +332,7 @@ class BBOSApplication:
             print("⚠ Cache ignored: All matching emails will be processed.")
 
         last_choice = None
+        date_filter = None
 
         while True:
             if last_choice:
@@ -277,39 +340,43 @@ class BBOSApplication:
             else:
                 choice = self.display_processing_menu()
             
+            exit_choice = '4' if self.selected_service in ['bestbuy', 'amazon'] else '5'
+            if choice != exit_choice:
+                date_filter = self.select_date_range()
+            
             if self.selected_service == 'bestbuy':
                 if choice == '1':
-                    self.process_bestbuy_orders(folder, ignore_cache)
+                    self.process_bestbuy_orders(folder, ignore_cache, date_filter)
                 elif choice == '2':
-                    self.process_xbox_codes(folder, ignore_cache)
+                    self.process_xbox_codes(folder, ignore_cache, date_filter)
                 elif choice == '3':
-                    self.process_bestbuy_orders(folder, ignore_cache)
-                    self.process_xbox_codes(folder, ignore_cache)
+                    self.process_bestbuy_orders(folder, ignore_cache, date_filter)
+                    self.process_xbox_codes(folder, ignore_cache, date_filter)
                 elif choice == '4':
                     break
                     
             elif self.selected_service == 'amazon':
                 if choice == '1':
-                    self.process_amazon_orders(folder, ignore_cache)
+                    self.process_amazon_orders(folder, ignore_cache, date_filter)
                 elif choice == '2':
                     print("TODO: Amazon gift card processing not yet implemented")
                 elif choice == '3':
-                    self.process_amazon_orders(folder, ignore_cache)
+                    self.process_amazon_orders(folder, ignore_cache, date_filter)
                     print("TODO: Amazon gift card processing not yet implemented")
                 elif choice == '4':
                     break
                     
             elif self.selected_service == 'both':
                 if choice == '1':
-                    self.process_bestbuy_orders(folder, ignore_cache)
+                    self.process_bestbuy_orders(folder, ignore_cache, date_filter)
                 elif choice == '2':
-                    self.process_amazon_orders(folder, ignore_cache)
+                    self.process_amazon_orders(folder, ignore_cache, date_filter)
                 elif choice == '3':
-                    self.process_xbox_codes(folder, ignore_cache)
+                    self.process_xbox_codes(folder, ignore_cache, date_filter)
                 elif choice == '4':
-                    self.process_bestbuy_orders(folder, ignore_cache)
-                    self.process_amazon_orders(folder, ignore_cache)
-                    self.process_xbox_codes(folder, ignore_cache)
+                    self.process_bestbuy_orders(folder, ignore_cache, date_filter)
+                    self.process_amazon_orders(folder, ignore_cache, date_filter)
+                    self.process_xbox_codes(folder, ignore_cache, date_filter)
                 elif choice == '5':
                     break
             

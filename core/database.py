@@ -125,7 +125,8 @@ class DatabaseManager:
                     GROUP_CONCAT(p.title, '; ') as title,
                     GROUP_CONCAT(p.quantity, '; ') as quantity,
                     GROUP_CONCAT(t.tracking_number, '; ') as tracking_number,
-                    COALESCE(o.state, '') as state
+                    COALESCE(o.state, '') as state,
+                    COALESCE(o.email_address, '') as email_address
                 FROM 
                     orders o
                 LEFT JOIN 

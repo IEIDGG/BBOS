@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-CURRENT_VERSION = "2.0.5"
+CURRENT_VERSION = "2.0.6"
 universal_date = "2025/11/01"
 SEARCH_CRITERIA = {
     'confirmation': {
@@ -122,7 +122,8 @@ DB_SETTINGS = {
                 title TEXT,
                 quantity TEXT,
                 tracking_number TEXT,
-                state TEXT
+                state TEXT,
+                email_address TEXT
             )
         ''',
         'submitted_tracking_keys': '''
@@ -176,7 +177,8 @@ AMAZON_DB_SETTINGS = {
                 title TEXT,
                 quantity TEXT,
                 tracking_number TEXT,
-                state TEXT
+                state TEXT,
+                email_address TEXT
             )
         ''',
         'submitted_tracking_keys': '''

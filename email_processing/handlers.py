@@ -1,10 +1,20 @@
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import copy
 import email
 from .connector import EmailConnector
 from .processor import EmailProcessor
 from config.settings import SEARCH_CRITERIA
+
+
+def get_search_criteria_with_date(criteria_key: str, date_filter: Optional[str] = None) -> dict:
+    criteria = copy.deepcopy(SEARCH_CRITERIA[criteria_key])
+    if date_filter:
+        criteria['date'] = f'after:{date_filter}'
+    elif date_filter is None and 'date' in criteria:
+        pass
+    return criteria
 
 
 class BaseEmailHandler:
@@ -35,11 +45,12 @@ class OrderEmailHandler(BaseEmailHandler):
             'tracking_numbers': 0
         })
 
-    def process_confirmation_emails(self, folder: str, ignore_cache: bool = False) -> List[Dict]:
+    def process_confirmation_emails(self, folder: str, ignore_cache: bool = False, date_filter: Optional[str] = None) -> List[Dict]:
         print(f"\nProcessing confirmation emails in folder: {folder}")
 
         use_uid_filter = not ignore_cache
-        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['confirmation'], use_uid_filter=use_uid_filter)
+        search_criteria = get_search_criteria_with_date('confirmation', date_filter)
+        success, messages = self.connector.search_emails(folder, search_criteria, use_uid_filter=use_uid_filter)
 
         if not success:
             return []
@@ -105,13 +116,14 @@ class OrderEmailHandler(BaseEmailHandler):
 
         return orders
 
-    def process_cancellation_emails(self, folder: str, orders: List[Dict], ignore_cache: bool = False) -> None:
+    def process_cancellation_emails(self, folder: str, orders: List[Dict], ignore_cache: bool = False, date_filter: Optional[str] = None) -> None:
         print(f"\nProcessing cancellation emails in folder: {folder}")
 
         use_uid_filter = not ignore_cache
+        search_criteria = get_search_criteria_with_date('cancellation', date_filter)
         success, messages = self.connector.search_emails(
             folder,
-            SEARCH_CRITERIA['cancellation'],
+            search_criteria,
             use_uid_filter=use_uid_filter
         )
 
@@ -166,13 +178,14 @@ class OrderEmailHandler(BaseEmailHandler):
 
                 self._update_stats(bool(result.get('order_number')))
 
-    def process_shipped_emails(self, folder: str, orders: List[Dict], db_manager=None, ignore_cache: bool = False) -> None:
+    def process_shipped_emails(self, folder: str, orders: List[Dict], db_manager=None, ignore_cache: bool = False, date_filter: Optional[str] = None) -> None:
         print(f"\nProcessing shipped emails in folder: {folder}")
 
         use_uid_filter = not ignore_cache
+        search_criteria = get_search_criteria_with_date('shipped', date_filter)
         success, messages = self.connector.search_emails(
             folder,
-            SEARCH_CRITERIA['shipped'],
+            search_criteria,
             use_uid_filter=use_uid_filter
         )
 
@@ -265,11 +278,12 @@ class OrderEmailHandler(BaseEmailHandler):
 
 
 class XboxEmailHandler(BaseEmailHandler):
-    def process_xbox_emails(self, folder: str, ignore_cache: bool = False) -> List[Dict]:
+    def process_xbox_emails(self, folder: str, ignore_cache: bool = False, date_filter: Optional[str] = None) -> List[Dict]:
         print(f"\nProcessing Xbox Game Pass emails in folder: {folder}")
 
         use_uid_filter = not ignore_cache
-        success, messages = self.connector.search_emails(folder, SEARCH_CRITERIA['xbox'], use_uid_filter=use_uid_filter)
+        search_criteria = get_search_criteria_with_date('xbox', date_filter)
+        success, messages = self.connector.search_emails(folder, search_criteria, use_uid_filter=use_uid_filter)
 
         if not success:
             print("Failed to search for Xbox Game Pass emails")
