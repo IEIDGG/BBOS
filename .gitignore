@@ -11,3 +11,4 @@ config/profiles.json
 /cache/
 __init__.py
 docs/Costco.md
+docs/

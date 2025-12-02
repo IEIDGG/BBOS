@@ -134,7 +134,10 @@ def get_db_filename(email: str = None, service: str = 'bestbuy') -> str:
         username = get_email_username(email)
         return os.path.join(db_dir, f'{username}.sqlite3')
     else:
-        if service.lower() == 'amazon':
+        service_lower = service.lower()
+        if service_lower == 'amazon':
             return os.path.join(db_dir, 'amazon_orders.sqlite3')
+        elif service_lower == 'costco':
+            return os.path.join(db_dir, 'costco_orders.sqlite3')
         else:
             return os.path.join(db_dir, 'bestbuy_orders.sqlite3')

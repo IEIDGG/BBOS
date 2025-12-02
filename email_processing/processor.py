@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, Tuple
 from .parsers.bb_parser import OrderParser
 from .parsers.xbox_parser import XboxParser
 from .parsers.costco_parser import CostcoParser
+from .parsers.amazon_parser import AmazonParser
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ class EmailProcessor:
         self.order_parser = OrderParser()
         self.xbox_parser = XboxParser()
         self.costco_parser = CostcoParser()
+        self.amazon_parser = AmazonParser()
 
     def _parse_email_metadata(self, email_data: tuple) -> Tuple[str, str, Optional[str]]:
         if isinstance(email_data, tuple):
@@ -294,3 +296,88 @@ class EmailProcessor:
             return ''.join(subject_parts)
         except Exception:
             return ''
+
+    def process_amazon_confirmation_email(self, email_data: tuple) -> Dict[str, Any]:
+        try:
+            subject = self._extract_subject(email_data)
+            
+            if 'Ordered' not in subject and 'ordered' not in subject.lower():
+                logger.debug(f"Skipping non-confirmation Amazon email: {subject[:50]}")
+                return {}
+            
+            email_address, email_date, html_content = self._parse_email_metadata(email_data)
+            if not html_content:
+                logger.warning("No HTML content found in Amazon confirmation email")
+                return {}
+
+            result = self.amazon_parser.parse_confirmation_email(html_content, subject)
+            if not result.get('order_number'):
+                logger.warning("Could not extract Amazon order number")
+                return {}
+
+            return {
+                'date': email_date,
+                'order_number': result['order_number'],
+                'products': result.get('products', []),
+                'total_price': result.get('total_price', 'N/A'),
+                'email_address': email_address,
+                'state': result.get('state', ''),
+                'subject': subject
+            }
+        except Exception as e:
+            logger.error(f"Error processing Amazon confirmation email: {str(e)}")
+            return {}
+
+    def process_amazon_cancellation_email(self, email_data: tuple) -> Dict[str, Any]:
+        try:
+            subject = self._extract_subject(email_data)
+            
+            if 'cancel' not in subject.lower():
+                logger.debug(f"Skipping non-cancellation Amazon email: {subject[:50]}")
+                return {}
+            
+            email_address, email_date, html_content = self._parse_email_metadata(email_data)
+            if not html_content:
+                return {}
+
+            result = self.amazon_parser.parse_cancellation_email(html_content, subject)
+            if not result.get('order_number'):
+                return {}
+
+            return {
+                'date': email_date,
+                'order_number': result['order_number'],
+                'email_address': email_address,
+                'subject': subject
+            }
+        except Exception as e:
+            logger.error(f"Error processing Amazon cancellation email: {str(e)}")
+            return {}
+
+    def process_amazon_shipped_email(self, email_data: tuple) -> Dict[str, Any]:
+        try:
+            subject = self._extract_subject(email_data)
+            
+            email_address, email_date, html_content = self._parse_email_metadata(email_data)
+            if not html_content:
+                return {}
+
+            result = self.amazon_parser.parse_shipped_email(html_content, subject)
+            if not result.get('order_number'):
+                return {}
+
+            return {
+                'date': email_date,
+                'order_number': result['order_number'],
+                'tracking_numbers': result.get('tracking_numbers', []),
+                'tracking_with_links': result.get('tracking_with_links', []),
+                'email_address': email_address,
+                'state': result.get('state', ''),
+                'track_package_link': result.get('track_package_link', ''),
+                'products': result.get('products', []),
+                'total_price': result.get('total_price', 'N/A'),
+                'subject': subject
+            }
+        except Exception as e:
+            logger.error(f"Error processing Amazon shipped email: {str(e)}")
+            return {}

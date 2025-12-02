@@ -71,6 +71,50 @@ class OutputHandler:
         except Exception as e:
             print(f"Error saving orders to database: {str(e)}")
 
+    def save_amazon_orders(self, orders: List[Dict]) -> None:
+        if self.output_settings.get('enable_output', False):
+            try:
+                csv_filename = self.output_settings.get('csv_filename', 'amazon_orders.csv')
+                with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
+                    fieldnames = [
+                        'order_number', 'asin', 'order_date', 
+                        'quantity', 'unit_price', 'total_price', 'shipped_quantity',
+                        'status', 'email_address', 'state', 'product', 'tracking_numbers'
+                    ]
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writeheader()
+
+                    for order in orders:
+                        products = order.get('products', [])
+                        product_str = products[0].get('title', 'N/A') if products else 'N/A'
+                        
+                        writer.writerow({
+                            'order_number': order.get('number', ''),
+                            'asin': order.get('asin', ''),
+                            'order_date': order.get('date', ''),
+                            'quantity': order.get('quantity', '1'),
+                            'unit_price': order.get('unit_price', ''),
+                            'total_price': order.get('total_price', ''),
+                            'shipped_quantity': order.get('shipped_quantity', ''),
+                            'status': order.get('status', ''),
+                            'email_address': order.get('email_address', ''),
+                            'state': order.get('state', ''),
+                            'product': product_str,
+                            'tracking_numbers': ', '.join(order.get('tracking', []))
+                        })
+                print(f"Amazon orders saved to {csv_filename}")
+            except Exception as e:
+                print(f"Error saving Amazon orders to CSV: {str(e)}")
+        else:
+            print("CSV output disabled in settings - skipping CSV save operations")
+
+        try:
+            for order in orders:
+                self.db_manager.insert_amazon_order(order)
+            print("Amazon orders saved to SQLite database successfully")
+        except Exception as e:
+            print(f"Error saving Amazon orders to database: {str(e)}")
+
     def save_xbox_codes(self, codes: List[Dict]) -> None:
         if OUTPUT_SETTINGS['enable_output']:
             try:

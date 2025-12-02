@@ -12,7 +12,7 @@ from core.utils import get_db_settings
 from core.database import DatabaseManager
 from core.updater import UpdateManager
 from email_processing.connector import EmailConnector
-from email_processing.handlers import OrderEmailHandler, XboxEmailHandler, CostcoEmailHandler
+from email_processing.handlers import OrderEmailHandler, XboxEmailHandler, CostcoEmailHandler, AmazonEmailHandler
 from config.settings import SEARCH_CRITERIA, CURRENT_VERSION
 from output.file_handlers import OutputHandler
 from continuous_monitor import ContinuousMonitor
@@ -130,19 +130,20 @@ class BBOSApplication:
                 default_folder = "INBOX"
                 default_msg = "INBOX"
 
-            last_folder = None
-            if self.current_profile:
+            service_folder = None
+            if self.current_profile and self.selected_service:
                 profile_name = self.current_profile.get('name')
                 if profile_name:
-                    last_folder = self.profile_manager.get_last_folder(profile_name)
-                    if last_folder and last_folder in folders:
-                        default_folder = last_folder
-                        default_msg = last_folder
+                    service_folder = self.profile_manager.get_service_folder(profile_name, self.selected_service)
+                    if service_folder and service_folder in folders:
+                        default_folder = service_folder
+                        default_msg = service_folder
 
             print("\nAvailable email folders:")
             print("="*30)
             for i, folder in enumerate(folders, 1):
-                print(f"{i}. {folder}")
+                default_marker = " (default)" if folder == default_folder else ""
+                print(f"{i}. {folder}{default_marker}")
 
             while True:
                 try:
@@ -158,10 +159,10 @@ class BBOSApplication:
                             print(f"Please enter a number between 1 and {len(folders)}")
                             continue
                     
-                    if self.current_profile:
+                    if self.current_profile and self.selected_service:
                         profile_name = self.current_profile.get('name')
                         if profile_name:
-                            self.profile_manager.save_last_folder(profile_name, selected_folder)
+                            self.profile_manager.save_service_folder(profile_name, self.selected_service, selected_folder)
                     
                     return selected_folder
                 except ValueError:
@@ -216,17 +217,47 @@ class BBOSApplication:
             print(f"Error processing Best Buy orders: {str(e)}")
 
     def process_amazon_orders(self, folder: str, ignore_cache: bool = False, date_filter: str = None) -> None:
-        print(f"\nProcessing Amazon orders from folder: {folder}")
-        print("="*50)
-        print("TODO: Amazon order processing not yet implemented")
-        print("Features to implement:")
-        print("- Amazon email parser (similar to bb_parser.py)")
-        print("- Amazon search criteria in settings.py")
-        print("- Amazon-specific email handlers")
-        print("- Amazon order confirmation email processing")
-        print("- Amazon cancellation email processing")
-        print("- Amazon shipped email processing")
-        print("- Amazon tracking number extraction")
+        try:
+            print(f"\nProcessing Amazon orders from folder: {folder}")
+            print("="*50)
+            
+            amazon_handler = AmazonEmailHandler(self.email_connector)
+            
+            orders = amazon_handler.process_confirmation_emails(folder, ignore_cache=ignore_cache, date_filter=date_filter)
+            
+            if not orders:
+                print("No new Amazon confirmation emails found")
+                if self.output_handler and self.output_handler.db_manager:
+                    existing_order_numbers = self.output_handler.db_manager.get_all_orders()
+                    if existing_order_numbers:
+                        print(f"Loading {len(existing_order_numbers)} existing orders from database for processing...")
+                        orders = []
+                        for order_data in existing_order_numbers:
+                            full_order = self.output_handler.db_manager.get_order_by_number(order_data['number'])
+                            if full_order:
+                                orders.append(full_order)
+                        if orders:
+                            print(f"Loaded {len(orders)} orders with full details")
+                        else:
+                            print("No orders with full details found")
+                    else:
+                        print("No existing orders found in database")
+            
+            if orders:
+                amazon_handler.process_cancellation_emails(folder, orders, ignore_cache=ignore_cache, date_filter=date_filter)
+                amazon_handler.process_shipped_emails(folder, orders, self.output_handler.db_manager if self.output_handler else None, ignore_cache=ignore_cache, date_filter=date_filter)
+                
+                if self.output_handler:
+                    self.output_handler.save_amazon_orders(orders)
+                    self.output_handler.finalize_database()
+                    self.output_handler.display_order_summary(amazon_handler.get_statistics())
+            else:
+                print("No Amazon orders found to process")
+            
+            amazon_handler.print_fetch_statistics()
+                
+        except Exception as e:
+            print(f"Error processing Amazon orders: {str(e)}")
 
     def process_costco_orders(self, folder: str, ignore_cache: bool = False, date_filter: str = None) -> None:
         try:
@@ -306,10 +337,8 @@ class BBOSApplication:
             max_choice = 4
         elif self.selected_service == 'amazon':
             print("1. Process Amazon Orders")
-            print("2. Process Amazon Gift Cards (TODO)")
-            print("3. Process Both")
-            print("4. Exit")
-            max_choice = 4
+            print("2. Exit")
+            max_choice = 2
         elif self.selected_service == 'costco':
             print("1. Process Costco Orders")
             print("2. Exit")
@@ -396,9 +425,29 @@ class BBOSApplication:
 
     def run_processing(self, folder: str) -> None:
         ignore_cache = False
-        cache_choice = input("\nIgnore cache (process all emails)? (y/n): ").strip().lower()
-        if cache_choice in ['y', 'yes']:
+        default_ignore_cache = None
+        if self.current_profile:
+            profile_name = self.current_profile.get('name')
+            if profile_name:
+                default_ignore_cache = self.profile_manager.get_ignore_cache(profile_name)
+        
+        default_char = 'y' if default_ignore_cache else 'n'
+        default_text = f" (default: {default_char})" if default_ignore_cache is not None else ""
+        cache_choice = input(f"\nIgnore cache (process all emails)? (y/n){default_text}: ").strip().lower()
+        
+        if not cache_choice and default_ignore_cache is not None:
+            ignore_cache = default_ignore_cache
+        elif cache_choice in ['y', 'yes']:
             ignore_cache = True
+        else:
+            ignore_cache = False
+        
+        if self.current_profile:
+            profile_name = self.current_profile.get('name')
+            if profile_name:
+                self.profile_manager.save_ignore_cache(profile_name, ignore_cache)
+        
+        if ignore_cache:
             print("⚠ Cache ignored: All matching emails will be processed.")
 
         last_choice = None
@@ -484,10 +533,6 @@ class BBOSApplication:
             if service == 'bestbuy':
                 self.output_handler = OutputHandler(email=email, service='bestbuy')
             elif service == 'amazon':
-                print("TODO: Amazon output handler needs to be implemented")
-                print("- Use AMAZON_DB_SETTINGS for database configuration")
-                print("- Create Amazon-specific CSV files")
-                print("- Handle Amazon order data structure")
                 self.output_handler = OutputHandler(email=email, service='amazon')
             elif service == 'costco':
                 self.output_handler = OutputHandler(email=email, service='costco')

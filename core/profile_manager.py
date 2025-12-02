@@ -167,17 +167,33 @@ class ProfileManager:
                 return self.select_profile()
             return None
 
+        last_profile = self.get_last_profile()
+        default_idx = None
+        if last_profile and last_profile in profiles:
+            default_idx = profiles.index(last_profile) + 1
+
         print("\nAvailable Profiles:")
         print("=" * 20)
         for i, name in enumerate(profiles, 1):
             profile = self.profiles['profiles'][name]
-            print(f"{i}. {name} ({profile['email']} - {profile['service'].title()})")
+            default_marker = " (default)" if name == last_profile else ""
+            print(f"{i}. {name} ({profile['email']} - {profile['service'].title()}){default_marker}")
 
         print("\na. Add new profile")
         print("q. Cancel")
 
+        default_prompt = f" or Enter for {last_profile}" if last_profile and last_profile in profiles else ""
         while True:
-            choice = input("\nSelect profile (enter choice): ").strip().lower()
+            choice = input(f"\nSelect profile (enter choice{default_prompt}): ").strip().lower()
+
+            if not choice and default_idx:
+                profile_name = last_profile
+                profile_data = self.profiles["profiles"][profile_name]
+                self.save_last_profile(profile_name)
+                return {
+                    "name": profile_name,
+                    **profile_data
+                }
 
             if choice == 'q':
                 return None
@@ -192,6 +208,7 @@ class ProfileManager:
                 if 1 <= idx <= len(profiles):
                     profile_name = profiles[idx - 1]
                     profile_data = self.profiles["profiles"][profile_name]
+                    self.save_last_profile(profile_name)
                     return {
                         "name": profile_name,
                         **profile_data
@@ -292,6 +309,50 @@ class ProfileManager:
             return self._save_profiles()
         except Exception as e:
             print(f"Error saving last folder: {e}")
+            return False
+
+    def get_service_folder(self, profile_name: str, service: str) -> Optional[str]:
+        if profile_name not in self.profiles["profiles"]:
+            return None
+        service_folders = self.profiles["profiles"][profile_name].get("service_folders", {})
+        return service_folders.get(service)
+
+    def save_service_folder(self, profile_name: str, service: str, folder_name: str) -> bool:
+        if profile_name not in self.profiles["profiles"]:
+            return False
+        try:
+            if "service_folders" not in self.profiles["profiles"][profile_name]:
+                self.profiles["profiles"][profile_name]["service_folders"] = {}
+            self.profiles["profiles"][profile_name]["service_folders"][service] = folder_name
+            return self._save_profiles()
+        except Exception as e:
+            print(f"Error saving service folder: {e}")
+            return False
+
+    def get_last_profile(self) -> Optional[str]:
+        return self.profiles.get("last_profile")
+
+    def save_last_profile(self, profile_name: str) -> bool:
+        try:
+            self.profiles["last_profile"] = profile_name
+            return self._save_profiles()
+        except Exception as e:
+            print(f"Error saving last profile: {e}")
+            return False
+
+    def get_ignore_cache(self, profile_name: str) -> Optional[bool]:
+        if profile_name not in self.profiles["profiles"]:
+            return None
+        return self.profiles["profiles"][profile_name].get("ignore_cache")
+
+    def save_ignore_cache(self, profile_name: str, value: bool) -> bool:
+        if profile_name not in self.profiles["profiles"]:
+            return False
+        try:
+            self.profiles["profiles"][profile_name]["ignore_cache"] = value
+            return self._save_profiles()
+        except Exception as e:
+            print(f"Error saving ignore cache preference: {e}")
             return False
 
 

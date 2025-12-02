@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-CURRENT_VERSION = "2.1.0"
+CURRENT_VERSION = "2.1.1"
 universal_date = "2025/11/01"
 SEARCH_CRITERIA = {
     'confirmation': {
@@ -39,38 +39,20 @@ SEARCH_CRITERIA = {
     }
 }
 
-# TODO: Add Amazon search criteria
-# 
-# Amazon Implementation Requirements:
-# 1. Create AMAZON_SEARCH_CRITERIA similar to SEARCH_CRITERIA above
-# 2. Add Amazon email addresses and subject patterns:
-#    - Confirmation emails: ship-confirm@amazon.com, auto-confirm@amazon.com
-#    - Cancellation emails: Various cancellation subjects
-#    - Shipped emails: ship-confirm@amazon.com with tracking info
-#    - Gift card emails: gc-orders@amazon.com
-# 3. Create amazon_parser.py in email_processing/parsers/
-# 4. Update email_processing/handlers.py to include Amazon handlers
-# 5. Modify output/file_handlers.py to support Amazon CSV format
-# 6. Add Amazon-specific output settings to OUTPUT_SETTINGS
-
 AMAZON_SEARCH_CRITERIA = {
     'confirmation': {
-        'from': '(OR (FROM "ship-confirm@amazon.com") (FROM "auto-confirm@amazon.com"))',
-        'subject': 'SUBJECT "Your order of"',
+        'from': 'FROM "auto-confirm@amazon.com"',
+        'subject': 'SUBJECT "Ordered"',
         'date': f'after:{universal_date}'
     },
     'cancellation': {
-        'subject': 'OR SUBJECT "Your Amazon.com order has been canceled" SUBJECT "Canceled:"',
+        'from': '(OR (FROM "qla@amazon.com") (FROM "order-update@amazon.com"))',
+        'subject': '(OR (SUBJECT "canceled") (SUBJECT "cancelled"))',
         'date': f'after:{universal_date}'
     },
     'shipped': {
-        'from': 'FROM "ship-confirm@amazon.com"',
-        'subject': 'SUBJECT "Your package has shipped"',
-        'date': f'after:{universal_date}'
-    },
-    'gift_cards': {
-        'from': 'FROM "gc-orders@amazon.com"',
-        'subject': 'SUBJECT "Your Amazon.com Gift Card order"',
+        'from': 'FROM "shipment-tracking@amazon.com"',
+        'subject': '(OR (SUBJECT "shipped") (SUBJECT "arriving") (SUBJECT "package"))',
         'date': f'after:{universal_date}'
     }
 }
@@ -175,6 +157,7 @@ AMAZON_DB_SETTINGS = {
                 id INTEGER PRIMARY KEY,
                 order_id TEXT,
                 title TEXT,
+                item_url TEXT,
                 price TEXT,
                 quantity TEXT,
                 FOREIGN KEY (order_id) REFERENCES orders (order_number)
@@ -185,6 +168,7 @@ AMAZON_DB_SETTINGS = {
                 id INTEGER PRIMARY KEY,
                 order_id TEXT,
                 tracking_number TEXT,
+                tracking_url TEXT,
                 FOREIGN KEY (order_id) REFERENCES orders (order_number)
             )
         ''',
@@ -291,7 +275,6 @@ OUTPUT_SETTINGS = {
 AMAZON_OUTPUT_SETTINGS = {
     'enable_output': False,
     'csv_filename': 'amazon_orders.csv',
-    'gift_cards_filename': 'amazon_gift_cards.csv'
 }
 
 COSTCO_OUTPUT_SETTINGS = {
