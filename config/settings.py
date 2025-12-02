@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-CURRENT_VERSION = "2.1.2"
+CURRENT_VERSION = "2.1.3"
 universal_date = "2025/11/01"
 SEARCH_CRITERIA = {
     'confirmation': {
