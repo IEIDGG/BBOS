@@ -9,6 +9,5 @@ my_orders.sqlite3
 api/api_config.json
 config/profiles.json
 /cache/
-__init__.py
 docs/Costco.md
 docs/
