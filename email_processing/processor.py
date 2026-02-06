@@ -161,6 +161,7 @@ class EmailProcessor:
                 return {}
 
             result['date'] = email_date
+            result['email_address'] = email_address
             return result
         except Exception as e:
             print(f"Error processing Xbox email: {str(e)}")

@@ -119,7 +119,7 @@ class OutputHandler:
         if OUTPUT_SETTINGS['enable_output']:
             try:
                 with open(OUTPUT_SETTINGS['xbox_filename'], 'w', newline='', encoding='utf-8') as csvfile:
-                    fieldnames = ['code', 'date']
+                    fieldnames = ['code', 'date', 'email_address']
                     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                     writer.writeheader()
                     for code in codes:

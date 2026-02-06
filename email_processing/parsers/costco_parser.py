@@ -273,6 +273,8 @@ class CostcoParser:
 
     @staticmethod
     def extract_shipping_address(soup: BeautifulSoup) -> Dict[str, str]:
+        from copy import copy
+        
         address = {
             'name': '',
             'address1': '',
@@ -282,26 +284,37 @@ class CostcoParser:
             'zip': ''
         }
         
-        shipping_table = soup.find('table', id='shipping-address-table')
-        if shipping_table:
-            spans = shipping_table.find_all('span')
-            address_parts = []
-            for span in spans:
-                text = CostcoParser._clean_text(span.get_text())
-                if text and 'Shipping Address' not in text:
-                    lines = [line.strip() for line in text.split('\n') if line.strip()]
-                    address_parts.extend(lines)
+        all_spans = soup.find_all('span')
+        shipping_label_span = None
+        address_span = None
+        for span in all_spans:
+            text = span.get_text().strip()
+            if 'Shipping Address' in text and len(text) < 30:
+                shipping_label_span = span
+            if shipping_label_span and span != shipping_label_span:
+                span_text = span.get_text()
+                if len(span_text) > 20 and any(c.isdigit() for c in span_text):
+                    address_span = span
+                    break
+        
+        if address_span:
+            address_span_copy = copy(address_span)
+            for br in address_span_copy.find_all('br'):
+                br.replace_with('\n')
+            text_with_newlines = address_span_copy.get_text()
+            text_with_newlines = text_with_newlines.replace('\u00a0', ' ').replace('\u200c', '')
+            lines = [line.strip() for line in text_with_newlines.split('\n') if line.strip()]
             
-            if address_parts:
-                if len(address_parts) >= 1:
-                    address['name'] = address_parts[0]
-                if len(address_parts) >= 2:
-                    address['address1'] = address_parts[1]
-                if len(address_parts) >= 4:
-                    address['address2'] = address_parts[2]
-                    city_state_zip = address_parts[3]
+            if lines:
+                address['name'] = lines[0] if len(lines) > 0 else ''
+                address['address1'] = lines[1] if len(lines) > 1 else ''
+                if len(lines) > 3:
+                    address['address2'] = lines[2]
+                    city_state_zip = lines[-1]
+                elif len(lines) > 2:
+                    city_state_zip = lines[-1]
                 else:
-                    city_state_zip = address_parts[-1] if len(address_parts) > 2 else ''
+                    city_state_zip = ''
                 
                 if city_state_zip:
                     match = re.match(r'(.+),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)', city_state_zip)
@@ -309,9 +322,37 @@ class CostcoParser:
                         address['city'] = match.group(1).strip()
                         address['state'] = match.group(2)
                         address['zip'] = match.group(3)
-                
-                logger.debug(f"Extracted shipping address: {address}")
         
+        if not address['name']:
+            shipping_table = soup.find('table', id='shipping-address-table')
+            if shipping_table:
+                spans = shipping_table.find_all('span')
+                address_parts = []
+                for span in spans:
+                    text = CostcoParser._clean_text(span.get_text())
+                    if text and 'Shipping Address' not in text:
+                        lines = [line.strip() for line in text.split('\n') if line.strip()]
+                        address_parts.extend(lines)
+                
+                if address_parts:
+                    if len(address_parts) >= 1:
+                        address['name'] = address_parts[0]
+                    if len(address_parts) >= 2:
+                        address['address1'] = address_parts[1]
+                    if len(address_parts) >= 4:
+                        address['address2'] = address_parts[2]
+                        city_state_zip = address_parts[3]
+                    else:
+                        city_state_zip = address_parts[-1] if len(address_parts) > 2 else ''
+                    
+                    if city_state_zip:
+                        match = re.match(r'(.+),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)', city_state_zip)
+                        if match:
+                            address['city'] = match.group(1).strip()
+                            address['state'] = match.group(2)
+                            address['zip'] = match.group(3)
+        
+        logger.debug(f"Extracted shipping address: {address}")
         return address
 
     @staticmethod

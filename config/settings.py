@@ -16,7 +16,7 @@ EMAIL_SERVERS = {
     }
 }
 
-CURRENT_VERSION = "2.1.3"
+CURRENT_VERSION = "2.1.4"
 universal_date = "2025/11/01"
 SEARCH_CRITERIA = {
     'confirmation': {
@@ -110,7 +110,8 @@ DB_SETTINGS = {
             CREATE TABLE IF NOT EXISTS xbox_codes (
                 id INTEGER PRIMARY KEY,
                 code TEXT UNIQUE,
-                email_date TEXT
+                email_date TEXT,
+                email_address TEXT
             )
         ''',
         'successful_orders': '''

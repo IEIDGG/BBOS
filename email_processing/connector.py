@@ -256,6 +256,43 @@ class EmailConnector:
 
         return ' '.join(formatted_parts)
 
+    def _encode_for_proton(self, text: str) -> str:
+        bytes_data = text.encode('utf-8')
+        encoded_parts = []
+        for b in bytes_data:
+            if 33 <= b <= 126 and b != 61: # Printable ASCII except '='
+                encoded_parts.append(chr(b))
+            elif b == 32: # Space
+                encoded_parts.append('_')
+            else:
+                encoded_parts.append(f'={b:02X}')
+        return "".join(encoded_parts)
+
+    def _enhance_criteria_for_proton(self, search_criteria: dict) -> dict:
+        new_criteria = search_criteria.copy()
+        
+        if 'subject' in new_criteria:
+            original_subject_str = new_criteria['subject']
+            
+            matches = re.findall(r'SUBJECT "([^"]+)"', original_subject_str)
+            new_clauses = []
+            
+            for match in matches:
+                if any(ord(c) > 127 for c in match):
+                    encoded = self._encode_for_proton(match)
+                    new_clauses.append(f'(SUBJECT "{encoded}")')
+            
+            if new_clauses:
+                if original_subject_str.strip().startswith('(OR') and original_subject_str.strip().endswith(')'):
+                    insert_pos = original_subject_str.rindex(')')
+                    new_str = original_subject_str[:insert_pos] + " " + " ".join(new_clauses) + original_subject_str[insert_pos:]
+                    new_criteria['subject'] = new_str
+                else:
+                    new_str = f'(OR ({original_subject_str}) {" ".join(new_clauses)})'
+                    new_criteria['subject'] = new_str
+                    
+        return new_criteria
+
     def search_emails(self, folder: str, search_criteria: dict, use_uid_filter: bool = True) -> Tuple[bool, list]:
         spinner = None
         try:
@@ -279,6 +316,11 @@ class EmailConnector:
             if not selected:
                 raise Exception(f"Could not select folder '{folder}' (tried: {', '.join(folder_variants)})")
             
+            if self.service_config['server'] == '127.0.0.1':
+                search_criteria = self._enhance_criteria_for_proton(search_criteria)
+                if search_criteria != search_criteria: # Just debugging logic check (redundant)
+                   pass
+
             formatted_criteria = self._format_search_criteria(search_criteria)
             print(f"Using IMAP search criteria: {formatted_criteria}")
             
@@ -290,11 +332,8 @@ class EmailConnector:
                     criteria_bytes = formatted_criteria.encode('utf-8')
                     _, uid_data = self.connection.uid('search', 'CHARSET', 'UTF-8', criteria_bytes)
                 except imaplib.IMAP4.error as e:
-                    print(f"⚠ UTF-8 search failed, retrying with ASCII: {e}")
-                    ascii_criteria = remove_emojis(formatted_criteria)
-                    if ascii_criteria != formatted_criteria:
-                        print(f"🔧 Removed emojis from search criteria for ASCII compatibility")
-                    _, uid_data = self.connection.uid('search', None, ascii_criteria)
+                    print(f"⚠ UTF-8 search failed: {e}")
+                    _, uid_data = self.connection.uid('search', None, criteria_bytes)
                 
                 spinner.stop()
                 

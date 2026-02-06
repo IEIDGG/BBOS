@@ -75,10 +75,12 @@ class BestBuyDatabaseManager(BaseDatabaseManager):
 
         cursor = self.connection.cursor()
         try:
+            self._ensure_column('xbox_codes', 'email_address')
+            
             cursor.execute('''
-                INSERT OR IGNORE INTO xbox_codes (code, email_date)
-                VALUES (?, ?)
-            ''', (code_data['code'], code_data['date']))
+                INSERT OR IGNORE INTO xbox_codes (code, email_date, email_address)
+                VALUES (?, ?, ?)
+            ''', (code_data['code'], code_data['date'], code_data.get('email_address')))
             self.connection.commit()
         except Exception as e:
             logger.error(f"Error inserting Xbox code: {str(e)}")
