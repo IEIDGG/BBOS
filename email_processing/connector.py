@@ -91,12 +91,13 @@ class EmailConnector:
         self.processed_uids_file = cache_dir / f'processed_uids_{email.replace("@", "_").replace(".", "_")}.json'
         self.processed_uids: Set[str] = self._load_processed_uids()
         
-        if self.service_config['server'] == '127.0.0.1':
+        self.is_proton = service_type == 'proton' or self.service_config['server'] in ['127.0.0.1', 'localhost', 'host.docker.internal']
+        if self.is_proton:
             self.fetch_delay = 0.01
             self.batch_delay = 0.05
             self.batch_size = 200
             self.max_fetches_per_session = 5000
-            print("⚡ ProtonMail Bridge detected: Using optimized settings (200 batch, 0.01s delay)")
+            print(f"⚡ ProtonMail Bridge detected ({self.service_config['server']}): Using optimized settings (200 batch, 0.01s delay)")
         else:
             self.fetch_delay = 0.1
             self.batch_delay = 0.5
@@ -181,6 +182,11 @@ class EmailConnector:
         try:
             if self.service_config['use_ssl']:
                 self.connection = imaplib.IMAP4_SSL(
+                    self.service_config['server'],
+                    self.service_config['port']
+                )
+            elif getattr(self, 'is_proton', False) or self.service_config['server'] in ['127.0.0.1', 'localhost', 'host.docker.internal']:
+                self.connection = imaplib.IMAP4(
                     self.service_config['server'],
                     self.service_config['port']
                 )

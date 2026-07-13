@@ -1,3 +1,5 @@
+import os
+
 EMAIL_SERVERS = {
     'gmail': {
         'server': 'imap.gmail.com',
@@ -5,8 +7,8 @@ EMAIL_SERVERS = {
         'use_ssl': True
     },
     'proton': {
-        'server': '127.0.0.1',
-        'port': 1143,
+        'server': os.getenv('PROTON_BRIDGE_HOST', '127.0.0.1'),
+        'port': int(os.getenv('PROTON_BRIDGE_PORT', 1143)),
         'use_ssl': False
     },
     'icloud': {
