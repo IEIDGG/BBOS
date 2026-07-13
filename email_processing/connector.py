@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, List, Set
 from functools import wraps
-from config.settings import EMAIL_SERVERS
+from order_extraction.config.settings import EMAIL_SERVERS
 
 
 def remove_emojis(text: str) -> str:
