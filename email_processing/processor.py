@@ -1,3 +1,4 @@
+import re
 import email
 import logging
 from email.header import decode_header
@@ -158,9 +159,25 @@ class EmailProcessor:
             if not result:
                 return {}
 
+            cleaned_email = (email_address or '').strip()
+            if cleaned_email.startswith('<') and cleaned_email.endswith('>'):
+                cleaned_email = cleaned_email[1:-1].strip()
+            elif '<' in cleaned_email and '>' in cleaned_email:
+                match = re.search(r'<([^>]+)>', cleaned_email)
+                if match:
+                    cleaned_email = match.group(1).strip()
+
+            result['email_address'] = cleaned_email
             result['date'] = email_date
+            logger.info(
+                "Xbox email processed: code=%s email=%s date=%s",
+                result.get('code'),
+                result.get('email_address'),
+                email_date,
+            )
             return result
         except Exception as e:
+            logger.error("Error processing Xbox email: %s", e)
             print(f"Error processing Xbox email: {str(e)}")
             return {}
 
