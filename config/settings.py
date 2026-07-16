@@ -89,8 +89,8 @@ COSTCO_SEARCH_CRITERIA = {
         'date': f'after:{universal_date}'
     },
     'shipped': {
-        'from': 'FROM "orderstatus@costco.com"',
-        'subject': 'SUBJECT "Your Costco.com Order Number" SUBJECT "Was Shipped"',
+        'from': '(OR (FROM "orderstatus@costco.com") (FROM "Costco@orders.costco.com") (FROM "orders.costco.com"))',
+        'subject': '(OR (SUBJECT "Your Costco.com Order Number" SUBJECT "Was Shipped") (SUBJECT "has shipped"))',
         'date': f'after:{universal_date}'
     }
 }

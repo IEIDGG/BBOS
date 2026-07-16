@@ -94,6 +94,10 @@ class CostcoParser:
             return text
         text = text.replace('\u200c', '')
         text = text.replace('&zwnj;', '')
+        text = text.replace('\u200b', '')
+        text = text.replace('\xad', '')
+        text = text.replace('\xa0', ' ')
+        text = text.replace('&nbsp;', ' ')
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
 
@@ -124,15 +128,22 @@ class CostcoParser:
             return None
         
         if email_type == 'cancellation':
-            match = re.search(r'Order\s*#(\d{10})', subject)
+            patterns = [r'Order\s*#(\d{10})']
+        elif email_type == 'shipped':
+            patterns = [
+                r'Order\s*Number\s*(\d{10})',
+                r'order\s+(\d{10})\s+has\s+shipped',
+            ]
         else:
-            match = re.search(r'Order\s*Number\s*(\d{10})', subject)
+            patterns = [r'Order\s*Number\s*(\d{10})']
         
-        if match:
-            order_num = match.group(1)
-            if CostcoParser._is_valid_costco_order_number(order_num):
-                logger.debug(f"Extracted order number from subject: {order_num}")
-                return order_num
+        for pattern in patterns:
+            match = re.search(pattern, subject, re.IGNORECASE)
+            if match:
+                order_num = match.group(1)
+                if CostcoParser._is_valid_costco_order_number(order_num):
+                    logger.debug(f"Extracted order number from subject: {order_num}")
+                    return order_num
         return None
 
     @staticmethod
@@ -172,6 +183,16 @@ class CostcoParser:
                 if CostcoParser._is_valid_costco_order_number(order_num):
                     logger.debug(f"Extracted shipped order number from HTML: {order_num}")
                     return order_num
+            
+            tracking_links = soup.find_all('a', href=lambda h: h and 'shipmenttracking.costco.com' in h.lower())
+            for link in tracking_links:
+                href = link.get('href', '')
+                match = re.search(r'/odn/(\d{10})', href)
+                if match:
+                    order_num = match.group(1)
+                    if CostcoParser._is_valid_costco_order_number(order_num):
+                        logger.debug(f"Extracted shipped order number from tracking URL: {order_num}")
+                        return order_num
         
         order_links = soup.find_all('a', href=lambda h: h and 'costco.com' in h.lower())
         for link in order_links:
@@ -270,26 +291,48 @@ class CostcoParser:
                     address_parts.extend(lines)
             
             if address_parts:
-                if len(address_parts) >= 1:
-                    address['name'] = address_parts[0]
-                if len(address_parts) >= 2:
-                    address['address1'] = address_parts[1]
-                if len(address_parts) >= 4:
-                    address['address2'] = address_parts[2]
-                    city_state_zip = address_parts[3]
-                else:
-                    city_state_zip = address_parts[-1] if len(address_parts) > 2 else ''
-                
-                if city_state_zip:
-                    match = re.match(r'(.+),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)', city_state_zip)
-                    if match:
-                        address['city'] = match.group(1).strip()
-                        address['state'] = match.group(2)
-                        address['zip'] = match.group(3)
-                
+                CostcoParser._populate_address_from_parts(address, address_parts)
                 logger.debug(f"Extracted shipping address: {address}")
+                return address
+        
+        for h3 in soup.find_all('h3'):
+            if 'Shipping Address' not in CostcoParser._clean_text(h3.get_text()):
+                continue
+            address_p = h3.find_next_sibling('p')
+            if not address_p:
+                parent = h3.parent
+                if parent:
+                    address_p = parent.find('p')
+            if not address_p:
+                continue
+            raw_text = address_p.get_text(separator='\n')
+            address_parts = [CostcoParser._clean_text(line) for line in raw_text.split('\n')]
+            address_parts = [line for line in address_parts if line]
+            if address_parts:
+                CostcoParser._populate_address_from_parts(address, address_parts)
+                logger.debug(f"Extracted shipping address from new template: {address}")
+                return address
         
         return address
+
+    @staticmethod
+    def _populate_address_from_parts(address: Dict[str, str], address_parts: List[str]) -> None:
+        if len(address_parts) >= 1:
+            address['name'] = address_parts[0]
+        if len(address_parts) >= 2:
+            address['address1'] = address_parts[1]
+        if len(address_parts) >= 4:
+            address['address2'] = address_parts[2]
+            city_state_zip = address_parts[3]
+        else:
+            city_state_zip = address_parts[-1] if len(address_parts) > 2 else ''
+        
+        if city_state_zip:
+            match = re.match(r'(.+),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)', city_state_zip)
+            if match:
+                address['city'] = match.group(1).strip()
+                address['state'] = match.group(2)
+                address['zip'] = match.group(3)
 
     @staticmethod
     def _is_valid_membership_number(text: str) -> bool:
@@ -325,6 +368,19 @@ class CostcoParser:
     @staticmethod
     def extract_tracking_numbers(soup: BeautifulSoup, html_content: str = None) -> List[str]:
         tracking_numbers = []
+        
+        carrier_line_pattern = re.compile(
+            r'(?:United Parcel Service|UPS|USPS|United States Postal(?:\s+Service)?|FedEx|OnTrac|ONTRAC|DHL|LaserShip)\s*:\s*([A-Za-z0-9]+)',
+            re.IGNORECASE
+        )
+        for p in soup.find_all('p'):
+            p_text = CostcoParser._clean_text(p.get_text())
+            match = carrier_line_pattern.search(p_text)
+            if match:
+                text_clean = match.group(1).upper().strip()
+                if CostcoParser._is_valid_tracking(text_clean) and text_clean not in tracking_numbers:
+                    tracking_numbers.append(text_clean)
+                    logger.info(f"Extracted tracking from carrier line: {text_clean}")
         
         carrier_keywords = [
             'Tracking Number', 'tracking number',
