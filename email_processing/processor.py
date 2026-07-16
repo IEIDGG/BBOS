@@ -95,12 +95,23 @@ class EmailProcessor:
                 print("Warning: Could not extract order number")
                 return {}
 
-            products, total_price = self.order_parser.parse_product_details(html_content)
+            products, total_price, xbox_items = self.order_parser.parse_product_details(html_content)
+            item_image = next((p.get('item_image') for p in products if p.get('item_image')), '')
+            if item_image:
+                logger.info("Best Buy confirmation %s: scraped item_image", order_number)
+            if xbox_items:
+                logger.info(
+                    "Best Buy confirmation %s: scraped %s Xbox item(s)",
+                    order_number,
+                    len(xbox_items),
+                )
 
             return {
                 'date': email_date,
                 'order_number': order_number,
                 'products': products,
+                'xbox_items': xbox_items,
+                'item_image': item_image,
                 'total_price': total_price,
                 'email_address': email_address
             }

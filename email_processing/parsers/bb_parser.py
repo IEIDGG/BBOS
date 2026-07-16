@@ -1,7 +1,10 @@
 import json
+import logging
 import os
 from bs4 import BeautifulSoup
 from typing import Tuple, List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 
 class OrderParser:
@@ -77,10 +80,36 @@ class OrderParser:
         return soup.find(tag, **kwargs)
 
     @staticmethod
-    def parse_product_details(html_content: str) -> Tuple[List[Dict[str, str]], str]:
+    def _extract_product_image(section) -> str:
+        parent_row = section.find_parent('tr')
+        if not parent_row:
+            return ''
+        img = parent_row.find('img', alt=lambda a: a and 'Product Image For:' in a)
+        if not img:
+            img = parent_row.find('img', src=lambda s: s and 'bbystatic.com/image2/BestBuy_US/images/products/' in s)
+        src = (img.get('src') or '').strip() if img else ''
+        if src:
+            logger.debug("Extracted Best Buy product image: %s", src[:120])
+        return src
+
+    @staticmethod
+    def _is_xbox_item(title: str) -> bool:
+        return 'Xbox' in title or 'Game Pass' in title
+
+    @staticmethod
+    def _is_skipped_perk(title: str) -> bool:
+        return (
+            'fubo' in title
+            or 'Apple TV' in title
+            or 'Norton' in title
+        )
+
+    @staticmethod
+    def parse_product_details(html_content: str) -> Tuple[List[Dict[str, str]], str, List[Dict[str, str]]]:
         config = OrderParser._load_config()
         soup = BeautifulSoup(html_content, 'lxml')
         products = []
+        xbox_items = []
         
         product_config = config['product_parsing']
         
@@ -92,43 +121,64 @@ class OrderParser:
                 continue
             
             title = title_tag.text.strip()
-            
-            if 'Xbox' in title or 'Game Pass' in title or 'fubo' in title or 'Apple TV' in title or 'Norton' in title:
+            item_image = OrderParser._extract_product_image(section)
+
+            if OrderParser._is_skipped_perk(title):
+                logger.debug("Skipping perk item: %s", title[:80])
                 continue
 
             qty_tag = section.find_next('td', string='Qty:')
             qty = qty_tag.find_next_sibling('td').text.strip() if qty_tag else "N/A"
 
+            model_tag = section.find_next('td', string=lambda t: t and 'Model' in t and '#' in t)
+            model_number = ''
+            if model_tag:
+                model_val_td = model_tag.find_next_sibling('td')
+                if model_val_td:
+                    model_number = model_val_td.text.strip()
+
             dollar_spans = section.find_all('span', string=lambda text: text and '$' in text)
-            for span in dollar_spans:
-                print(f"  - Text: '{span.text}'")
-                
+
             price_tag = section.find(
                 product_config['price']['tag'],
                 string=lambda text: text and '$' in text,
                 style=lambda value: value and product_config['price']['attributes']['style_contains'] in value
             )
-            
+
             if not price_tag and dollar_spans:
                 for span in dollar_spans:
                     if '$' in span.text and not span.text.strip() in ['$0.00', '$']:
                         price_tag = span
                         break
-                
+
             price = price_tag.text.strip() if price_tag else "N/A"
+
+            if OrderParser._is_xbox_item(title):
+                xbox_items.append({
+                    'title': title,
+                    'quantity': qty if qty != "N/A" else '1',
+                    'price': price if price != "N/A" else '',
+                    'model_number': model_number,
+                    'item_image': item_image,
+                })
+                logger.info("Scraped Xbox item from confirmation: %s", title[:80])
+                continue
 
             if price != "N/A":
                 products.append({
                     'title': title,
                     'quantity': qty,
-                    'price': price
+                    'price': price,
+                    'model_number': model_number,
+                    'item_image': item_image,
                 })
-                break
+                if item_image:
+                    logger.info("Scraped product image for: %s", title[:80])
 
         total_td = OrderParser._find_element(soup, product_config['total'])
         total_price = total_td.text.strip() if total_td else "N/A"
 
-        return products, total_price
+        return products, total_price, xbox_items
 
     @staticmethod
     def extract_order_number(soup: BeautifulSoup, email_type: str) -> str:

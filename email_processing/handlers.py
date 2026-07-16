@@ -82,6 +82,8 @@ class OrderEmailHandler(BaseEmailHandler):
                                 'status': "",
                                 'tracking': [],
                                 'products': result['products'],
+                                'xbox_items': result.get('xbox_items', []),
+                                'item_image': result.get('item_image', ''),
                                 'total_price': result['total_price'],
                                 'email_address': result['email_address'],
                                 'website': 'BestBuy'
@@ -110,6 +112,8 @@ class OrderEmailHandler(BaseEmailHandler):
                         'status': "",
                         'tracking': [],
                         'products': result['products'],
+                        'xbox_items': result.get('xbox_items', []),
+                        'item_image': result.get('item_image', ''),
                         'total_price': result['total_price'],
                         'email_address': result['email_address'],
                         'website': 'BestBuy'
