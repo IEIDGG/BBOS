@@ -510,6 +510,50 @@ class CostcoParser:
         return tracking_numbers
 
     @staticmethod
+    def _extract_product_image(section, title: str = '') -> str:
+        def _is_product_src(src: str) -> bool:
+            src_l = src.lower()
+            if not src:
+                return False
+            if 'barcode' in src_l or 'tracking' in src_l or 'emailtracking' in src_l:
+                return False
+            if 'costco_wholesale' in src_l or 'logo' in src_l:
+                return False
+            return (
+                'costco-static.com' in src_l
+                or 'bfasset.costco' in src_l
+                or ('wcsstore' in src_l and 'images' in src_l)
+            )
+
+        search_roots = [section]
+        parent_td = section.find_parent('td')
+        if parent_td:
+            search_roots.append(parent_td)
+        parent_tr = section.find_parent('tr')
+        if parent_tr:
+            search_roots.append(parent_tr)
+
+        for root in search_roots:
+            for img in root.find_all('img'):
+                src = (img.get('src') or '').strip()
+                if _is_product_src(src):
+                    logger.debug("Extracted Costco product image: %s", src[:120])
+                    return src
+
+        if title:
+            title_prefix = title[:40]
+            soup = section.find_parent('html') or section
+            for img in soup.find_all('img'):
+                alt = (img.get('alt') or '').strip()
+                src = (img.get('src') or '').strip()
+                if not src or not alt or not _is_product_src(src):
+                    continue
+                if title_prefix in alt or alt[:40] in title:
+                    logger.debug("Matched Costco product image by alt: %s", src[:120])
+                    return src
+        return ''
+
+    @staticmethod
     def parse_product_details(html_content: str) -> Tuple[List[Dict[str, str]], str]:
         config = CostcoParser._load_config()
         soup = BeautifulSoup(html_content, 'lxml')
@@ -552,6 +596,10 @@ class CostcoParser:
                     product['quantity'] = '1'
                 if 'price' not in product:
                     product['price'] = 'N/A'
+                item_image = CostcoParser._extract_product_image(section, product.get('title', ''))
+                if item_image:
+                    product['item_image'] = item_image
+                    logger.info("Scraped Costco product image for: %s", product['title'][:80])
                 products.append(product)
                 logger.debug(f"Extracted product: {product}")
         

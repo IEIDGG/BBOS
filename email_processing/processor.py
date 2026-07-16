@@ -217,6 +217,9 @@ class EmailProcessor:
             shipping_address = self.costco_parser.extract_shipping_address(soup)
             products, total_price = self.costco_parser.parse_product_details(html_content)
             price_summary = self.costco_parser.extract_price_summary(soup)
+            item_image = next((prod.get('item_image') for prod in products if prod.get('item_image')), '')
+            if item_image:
+                logger.info("Costco confirmation %s: scraped item_image", order_number)
 
             return {
                 'date': order_date or email_date,
@@ -224,6 +227,7 @@ class EmailProcessor:
                 'membership_number': membership_number,
                 'shipping_address': shipping_address,
                 'products': products,
+                'item_image': item_image,
                 'total_price': total_price,
                 'price_summary': price_summary,
                 'email_address': email_address,
