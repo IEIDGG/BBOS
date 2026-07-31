@@ -27,52 +27,58 @@ SEARCH_CRITERIA = {
         'date': f'after:{universal_date}'
     },
     'cancellation': {
-        'subject': '(OR (SUBJECT "Your Best Buy order has been canceled") (SUBJECT "An item has been cancelled from your order.") (SUBJECT "Your order has been cancelled.") (SUBJECT "We received your cancellation request."))',
+        'subject': '(OR (SUBJECT "Your Best Buy order has been canceled") (SUBJECT "An item has been cancelled from your order.") (SUBJECT "Your order has been cancelled.") (SUBJECT "We received your cancellation request.") (SUBJECT "Update your payment information."))',
         'date': f'after:{universal_date}'
     },
     'shipped': {
-        'subject': f'(OR (SUBJECT "📦 Your package is out for delivery. 📦") (SUBJECT "Your order will be shipped soon!") (SUBJECT "We have your tracking number.") (SUBJECT "📦 Your package is on its way. 📦"))',
+        'from': '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
+        'subject': '(OR (SUBJECT "📦 Your package is on its way. 📦") (SUBJECT "📦 Your package is out for delivery. 📦") (SUBJECT "Your order will be shipped soon!") (SUBJECT "We have your tracking number."))',
         'date': f'after:{universal_date}'
     },
     'xbox': {
         'from': '',
         'subject': '(OR (SUBJECT "Enjoy 1 month free of Game Pass Ultimate with your Best Buy purchase.") (SUBJECT "Enjoy your recent shopping perks.") (SUBJECT "Enjoy your recent shopping perk.") (SUBJECT "Your recent purchase came with a free gift."))',
         'date': f'after:{universal_date}'
+    },
+    'price_match_credit': {
+        'from': 'FROM "BestBuyInfo@emailinfo.bestbuy.com"',
+        'subject': 'SUBJECT "We\'ve applied a credit to your account."',
+        'date': f'after:{universal_date}'
     }
 }
 
-# TODO: Add Amazon search criteria
-# 
-# Amazon Implementation Requirements:
-# 1. Create AMAZON_SEARCH_CRITERIA similar to SEARCH_CRITERIA above
-# 2. Add Amazon email addresses and subject patterns:
-#    - Confirmation emails: ship-confirm@amazon.com, auto-confirm@amazon.com
-#    - Cancellation emails: Various cancellation subjects
-#    - Shipped emails: ship-confirm@amazon.com with tracking info
-#    - Gift card emails: gc-orders@amazon.com
-# 3. Create amazon_parser.py in email_processing/parsers/
-# 4. Update email_processing/handlers.py to include Amazon handlers
-# 5. Modify output/file_handlers.py to support Amazon CSV format
-# 6. Add Amazon-specific output settings to OUTPUT_SETTINGS
-
 AMAZON_SEARCH_CRITERIA = {
     'confirmation': {
-        'from': '(OR (FROM "ship-confirm@amazon.com") (FROM "auto-confirm@amazon.com"))',
-        'subject': 'SUBJECT "Your order of"',
+        'from': 'FROM "auto-confirm@amazon.com"',
+        'subject': 'SUBJECT "Ordered"',
         'date': f'after:{universal_date}'
     },
     'cancellation': {
-        'subject': 'OR SUBJECT "Your Amazon.com order has been canceled" SUBJECT "Canceled:"',
+        'from': '(OR (FROM "qla@amazon.com") (FROM "order-update@amazon.com"))',
+        'subject': '(OR (SUBJECT "canceled") (SUBJECT "cancelled"))',
         'date': f'after:{universal_date}'
     },
     'shipped': {
-        'from': 'FROM "ship-confirm@amazon.com"',
-        'subject': 'SUBJECT "Your package has shipped"',
+        'from': 'FROM "shipment-tracking@amazon.com"',
+        'subject': '(OR (SUBJECT "shipped") (SUBJECT "arriving") (SUBJECT "package"))',
+        'date': f'after:{universal_date}'
+    }
+}
+
+WALMART_SEARCH_CRITERIA = {
+    'confirmation': {
+        'from': '(OR (FROM "help@walmart.com") (FROM "noreply@walmart.com"))',
+        'subject': '(OR (SUBJECT "Thanks for your delivery order") (SUBJECT "Thanks for your order"))',
         'date': f'after:{universal_date}'
     },
-    'gift_cards': {
-        'from': 'FROM "gc-orders@amazon.com"',
-        'subject': 'SUBJECT "Your Amazon.com Gift Card order"',
+    'cancellation': {
+        'from': '(OR (FROM "help@walmart.com") (FROM "noreply@walmart.com"))',
+        'subject': '(OR (SUBJECT "Canceled") (SUBJECT "Cancelled"))',
+        'date': f'after:{universal_date}'
+    },
+    'shipped': {
+        'from': '(OR (FROM "help@walmart.com") (FROM "noreply@walmart.com"))',
+        'subject': 'SUBJECT "Shipped"',
         'date': f'after:{universal_date}'
     }
 }
@@ -177,6 +183,7 @@ AMAZON_DB_SETTINGS = {
                 id INTEGER PRIMARY KEY,
                 order_id TEXT,
                 title TEXT,
+                item_url TEXT,
                 price TEXT,
                 quantity TEXT,
                 FOREIGN KEY (order_id) REFERENCES orders (order_number)
@@ -187,6 +194,7 @@ AMAZON_DB_SETTINGS = {
                 id INTEGER PRIMARY KEY,
                 order_id TEXT,
                 tracking_number TEXT,
+                tracking_url TEXT,
                 FOREIGN KEY (order_id) REFERENCES orders (order_number)
             )
         ''',
@@ -293,7 +301,6 @@ OUTPUT_SETTINGS = {
 AMAZON_OUTPUT_SETTINGS = {
     'enable_output': False,
     'csv_filename': 'amazon_orders.csv',
-    'gift_cards_filename': 'amazon_gift_cards.csv'
 }
 
 COSTCO_OUTPUT_SETTINGS = {

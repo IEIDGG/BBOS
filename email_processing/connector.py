@@ -4,6 +4,7 @@ import re
 import time
 import json
 import sys
+import logging
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -11,20 +12,7 @@ from typing import Optional, Tuple, List, Set
 from functools import wraps
 from order_extraction.config.settings import EMAIL_SERVERS
 
-
-def remove_emojis(text: str) -> str:
-    emoji_pattern = re.compile(
-        "["
-        "\U0001F600-\U0001F64F"
-        "\U0001F300-\U0001F5FF"
-        "\U0001F680-\U0001F6FF"
-        "\U0001F1E0-\U0001F1FF"
-        "\U00002702-\U000027B0"
-        "\U000024C2-\U0001F251"
-        "]+",
-        flags=re.UNICODE
-    )
-    return emoji_pattern.sub('', text)
+logger = logging.getLogger(__name__)
 
 
 def retry_with_backoff(max_retries=3, base_delay=1):
@@ -185,7 +173,7 @@ class EmailConnector:
                     self.service_config['server'],
                     self.service_config['port']
                 )
-            elif getattr(self, 'is_proton', False) or self.service_config['server'] in ['127.0.0.1', 'localhost', 'host.docker.internal']:
+            elif self.service_config['server'] == '127.0.0.1':
                 self.connection = imaplib.IMAP4(
                     self.service_config['server'],
                     self.service_config['port']
@@ -211,8 +199,12 @@ class EmailConnector:
             return ""
 
         try:
-            clean_date = date_str.replace('after:', '')
-            date_obj = datetime.strptime(clean_date, '%Y/%m/%d')
+            clean_date = date_str.replace('after:', '').strip()
+            try:
+                date_obj = datetime.strptime(clean_date, '%Y/%m/%d')
+            except ValueError:
+                date_obj = datetime.strptime(clean_date, '%Y-%m-%d')
+            
             return date_obj.strftime('%d-%b-%Y')
         except ValueError as e:
             print(f"Error formatting date: {str(e)}")
@@ -244,23 +236,137 @@ class EmailConnector:
                     formatted_parts.append(f'FROM "{address.group(1)}"')
 
         if 'subject' in criteria_parts:
-            subject_criteria = criteria_parts['subject']
-            if 'OR' in subject_criteria:
-                subjects = re.findall(r'"([^"]+)"', subject_criteria)
-                if subjects:
-                    if len(subjects) > 1:
-                        or_chain = f'SUBJECT "{subjects[0]}"'
-                        for subject in subjects[1:]:
-                            or_chain = f'OR {or_chain} SUBJECT "{subject}"'
-                        formatted_parts.append(f'({or_chain})')
-                    else:
-                        formatted_parts.append(f'SUBJECT "{subjects[0]}"')
-            else:
-                subject = re.search(r'"([^"]+)"', subject_criteria)
-                if subject:
-                    formatted_parts.append(f'SUBJECT "{subject.group(1)}"')
+            subjects = re.findall(r'"([^"]+)"', criteria_parts['subject'])
+            if subjects:
+                expr = f'SUBJECT "{subjects[0]}"'
+                for subject in subjects[1:]:
+                    expr = f'OR ({expr}) (SUBJECT "{subject}")'
+                formatted_parts.append(f'({expr})' if len(subjects) > 1 else expr)
 
         return ' '.join(formatted_parts)
+
+    def _encode_q_subject(self, text: str) -> str:
+        bytes_data = text.encode('utf-8')
+        encoded_parts = []
+        for b in bytes_data:
+            if 33 <= b <= 126 and b != 61:
+                encoded_parts.append(chr(b))
+            elif b == 32:
+                encoded_parts.append('_')
+            else:
+                encoded_parts.append(f'={b:02X}')
+        return "".join(encoded_parts)
+
+    def _ascii_subject(self, text: str) -> str:
+        ascii_only = text.encode('ascii', 'ignore').decode('ascii')
+        return re.sub(r'\s+', ' ', ascii_only).strip()
+
+    def _subject_search_variants(self, subject: str) -> List[str]:
+        variants = []
+        seen = set()
+
+        def _add(value: str):
+            cleaned = (value or '').strip()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                variants.append(cleaned)
+
+        original = (subject or '').strip()
+        ascii_subject = self._ascii_subject(original)
+
+        if self.is_proton and any(ord(c) > 127 for c in original):
+            _add(original)
+
+        _add(ascii_subject)
+
+        if ascii_subject and ' ' in ascii_subject:
+            _add(ascii_subject.replace(' ', '_'))
+
+        if original and any(ord(c) > 127 for c in original):
+            _add(self._encode_q_subject(original))
+
+        logger.debug(
+            "Subject search variants for %r -> %s",
+            original[:80],
+            variants,
+        )
+        return variants
+
+    def _expand_subject_criteria(self, search_criteria: dict) -> dict:
+        new_criteria = search_criteria.copy()
+        subject_criteria = new_criteria.get('subject')
+        if not subject_criteria:
+            return new_criteria
+
+        raw_subjects = re.findall(r'"([^"]+)"', subject_criteria)
+        if not raw_subjects:
+            return new_criteria
+
+        expanded = []
+        seen = set()
+        for subject in raw_subjects:
+            for variant in self._subject_search_variants(subject):
+                if variant not in seen:
+                    seen.add(variant)
+                    expanded.append(variant)
+
+        if not expanded:
+            return new_criteria
+
+        if len(expanded) == 1:
+            new_criteria['subject'] = f'SUBJECT "{expanded[0]}"'
+        else:
+            parts = ' '.join(f'(SUBJECT "{subject}")' for subject in expanded)
+            new_criteria['subject'] = f'(OR {parts})'
+
+        logger.info(
+            "Expanded %s subject criteria into %s variant(s)",
+            'Proton' if self.is_proton else 'IMAP',
+            len(expanded),
+        )
+        return new_criteria
+
+    def _to_ascii_criteria(self, formatted_criteria: str) -> str:
+        ascii_only = formatted_criteria.encode('ascii', 'ignore').decode('ascii')
+
+        def _trim_quoted(match):
+            inner = re.sub(r'\s+', ' ', match.group(1)).strip()
+            return f'"{inner}"'
+
+        ascii_only = re.sub(r'"([^"]*)"', _trim_quoted, ascii_only)
+        ascii_only = re.sub(r'\s+', ' ', ascii_only).strip()
+        return ascii_only
+
+    def _run_search(self, formatted_criteria: str, use_uid: bool):
+        if not formatted_criteria.strip():
+            logger.warning("Empty search criteria; defaulting to ALL")
+            formatted_criteria = 'ALL'
+
+        def _search(criteria: str, charset: Optional[str]):
+            criteria_bytes = criteria.encode('ascii' if charset is None else 'utf-8')
+            if use_uid:
+                if charset is None:
+                    typ, data = self.connection.uid('search', criteria_bytes)
+                else:
+                    typ, data = self.connection.uid('search', 'CHARSET', charset, criteria_bytes)
+            else:
+                typ, data = self.connection.search(charset, criteria_bytes)
+            if typ != 'OK':
+                raise imaplib.IMAP4.error(f"SEARCH returned {typ}: {data}")
+            return data
+
+        if formatted_criteria.isascii():
+            return _search(formatted_criteria, None)
+
+        try:
+            return _search(formatted_criteria, 'UTF-8')
+        except imaplib.IMAP4.error as e:
+            ascii_criteria = self._to_ascii_criteria(formatted_criteria) or 'ALL'
+            logger.warning(
+                "UTF-8 search failed (%s); retrying with ASCII criteria: %s",
+                e, ascii_criteria,
+            )
+            return _search(ascii_criteria, None)
 
     def search_emails(self, folder: str, search_criteria: dict, use_uid_filter: bool = True) -> Tuple[bool, list]:
         spinner = None
@@ -285,64 +391,66 @@ class EmailConnector:
             if not selected:
                 raise Exception(f"Could not select folder '{folder}' (tried: {', '.join(folder_variants)})")
             
+            search_criteria = self._expand_subject_criteria(search_criteria)
+
             formatted_criteria = self._format_search_criteria(search_criteria)
+            if not self.is_proton and not formatted_criteria.isascii():
+                ascii_fallback = self._to_ascii_criteria(formatted_criteria)
+                logger.warning(
+                    "Non-ASCII IMAP criteria for non-Proton account; using ASCII fallback: %s",
+                    ascii_fallback,
+                )
+                formatted_criteria = ascii_fallback
             print(f"Using IMAP search criteria: {formatted_criteria}")
+            logger.info("IMAP search criteria: %s", formatted_criteria)
             
             spinner = ProgressSpinner(f"Searching folder '{folder}'")
             spinner.start()
             
-            if use_uid_filter:
-                try:
-                    criteria_bytes = formatted_criteria.encode('utf-8')
-                    _, uid_data = self.connection.uid('search', 'CHARSET', 'UTF-8', criteria_bytes)
-                except imaplib.IMAP4.error as e:
-                    print(f"⚠ UTF-8 search failed, retrying with ASCII: {e}")
-                    ascii_criteria = remove_emojis(formatted_criteria)
-                    if ascii_criteria != formatted_criteria:
-                        print(f"🔧 Removed emojis from search criteria for ASCII compatibility")
-                    _, uid_data = self.connection.uid('search', None, ascii_criteria)
-                
-                spinner.stop()
-                
-                if uid_data[0]:
-                    all_uids = uid_data[0].split()
+            try:
+                if use_uid_filter:
+                    uid_data = self._run_search(formatted_criteria, use_uid=True)
                     
-                    if len(all_uids) > 100:
-                        print(f"🔄 Filtering {len(all_uids)} emails against processed cache...")
-                        filter_start = time.time()
-                        new_uids = []
-                        for i, uid in enumerate(all_uids):
-                            if uid.decode() not in self.processed_uids:
-                                new_uids.append(uid)
-                            if i % 500 == 0 and i > 0:
-                                sys.stdout.write(f'\r  Filtered {i}/{len(all_uids)} emails...')
-                                sys.stdout.flush()
-                        filter_time = time.time() - filter_start
-                        sys.stdout.write(f'\r✓ Filtered {len(all_uids)} emails in {filter_time:.1f}s\n')
-                        sys.stdout.flush()
-                    else:
-                        new_uids = [uid for uid in all_uids if uid.decode() not in self.processed_uids]
+                    spinner.stop()
                     
-                    print(f"📊 Found {len(all_uids)} total emails, {len(new_uids)} new (skipping {len(all_uids) - len(new_uids)} already processed)")
-                    return True, new_uids
-                
-                return True, []
-            else:
-                try:
-                    criteria_bytes = formatted_criteria.encode('utf-8')
-                    _, message_numbers = self.connection.search('UTF-8', criteria_bytes)
-                except imaplib.IMAP4.error as e:
-                    print(f"⚠ UTF-8 search failed, retrying with ASCII: {e}")
-                    ascii_criteria = remove_emojis(formatted_criteria)
-                    if ascii_criteria != formatted_criteria:
-                        print(f"🔧 Removed emojis from search criteria for ASCII compatibility")
-                    _, message_numbers = self.connection.search(None, ascii_criteria)
+                    if uid_data[0]:
+                        all_uids = uid_data[0].split()
+                        
+                        if len(all_uids) > 100:
+                            print(f"🔄 Filtering {len(all_uids)} emails against processed cache...")
+                            filter_start = time.time()
+                            new_uids = []
+                            for i, uid in enumerate(all_uids):
+                                if uid.decode() not in self.processed_uids:
+                                    new_uids.append(uid)
+                                if i % 500 == 0 and i > 0:
+                                    sys.stdout.write(f'\r  Filtered {i}/{len(all_uids)} emails...')
+                                    sys.stdout.flush()
+                            filter_time = time.time() - filter_start
+                            sys.stdout.write(f'\r✓ Filtered {len(all_uids)} emails in {filter_time:.1f}s\n')
+                            sys.stdout.flush()
+                        else:
+                            new_uids = [uid for uid in all_uids if uid.decode() not in self.processed_uids]
+                        
+                        print(f"📊 Found {len(all_uids)} total emails, {len(new_uids)} new (skipping {len(all_uids) - len(new_uids)} already processed)")
+                        return True, new_uids
+                    
+                    return True, []
+                else:
+                    message_numbers = self._run_search(formatted_criteria, use_uid=False)
 
-                spinner.stop()
-                
-                if message_numbers[0]:
-                    return True, message_numbers[0].split()
-                return True, []
+                    spinner.stop()
+                    
+                    if message_numbers[0]:
+                        return True, message_numbers[0].split()
+                    return True, []
+
+            except imaplib.IMAP4.error as e:
+                if spinner: spinner.stop()
+                logger.error("IMAP search failed in folder '%s': %s", folder, e)
+                print(f"⚠ Search failed: {e}")
+                return False, []
+
         except Exception as e:
             try:
                 if spinner:
