@@ -222,6 +222,13 @@ class OrderParser:
                 if order_span:
                     return order_span.text.strip()
 
+        # Fallback to regex for order number if HTML selectors fail
+        import re
+        html_content = str(soup)
+        match = re.search(r'BBY\d{2}-\d{9,15}', html_content)
+        if match:
+            return match.group(0)
+
         return None
 
     @staticmethod
@@ -285,15 +292,25 @@ class OrderParser:
                 for td in all_tds_with_tracking[:3]:
                     print(f"       Sample: {td.text.strip()[:100]}")
 
+        if not tracking_numbers:
+            all_tds_with_tracking = soup.find_all('td', string=lambda text: text and 'tracking' in text.lower())
+            if all_tds_with_tracking:
+                print(f"     ⚠ Found {len(all_tds_with_tracking)} TDs containing 'tracking' but couldn't extract numbers")
+                for td in all_tds_with_tracking[:3]:
+                    print(f"       Sample: {td.text.strip()[:100]}")
+
         return tracking_numbers
 
     @staticmethod
     def extract_shipping_address(soup: BeautifulSoup) -> str:
+        logger.debug("Starting shipping address extraction")
         shipping_tds = soup.find_all('td')
         old_format_tds = [td for td in shipping_tds if 'Your order is shipping to:' in td.get_text()]
+        logger.debug(f"Old format - Found {len(old_format_tds)} TDs with 'Your order is shipping to:'")
         
         for td in old_format_tds:
             spans = td.find_all('span')
+            logger.debug(f"Old format - Found {len(spans)} spans in TD")
             
             for span in spans:
                 span_text = span.get_text().strip()
@@ -312,19 +329,21 @@ class OrderParser:
                     'font-weight: 700' in span_style and 'font-size' in span_style
                 )
                 
+                logger.debug(f"Old format - Span text: '{span_text[:50]}...' | is_address: {is_address} | has_style: {has_style}")
+                
                 if is_address and has_style:
-                    address_text = span.get_text().replace('<br>', '\n').replace('<br/>', '\n')
+                    address_text = span.get_text(separator='\n')
                     lines = [line.strip() for line in address_text.split('\n') if line.strip()]
+                    logger.debug(f"Old format - Address lines: {lines}")
                     
                     last_line = lines[-1] if lines else ''
-                    if ', ' in last_line:
-                        parts = last_line.split(', ')
-                        if len(parts) >= 2:
-                            state_zip = parts[1].strip()
-                            if state_zip:
-                                return state_zip
+                    logger.debug(f"Old format - Last line: '{last_line}'")
+                    if ', ' in last_line and any(char.isdigit() for char in last_line):
+                        logger.info("Old format - Extracted location: '%s'", last_line)
+                        return last_line
         
         new_format_tds = [td for td in shipping_tds if 'Shipping to:' in td.get_text() and 'Your order is shipping to:' not in td.get_text()]
+        logger.debug(f"New format - Found {len(new_format_tds)} TDs with 'Shipping to:'")
         
         for td in new_format_tds:
             parent = td.find_parent('tr')
@@ -333,12 +352,33 @@ class OrderParser:
                 if next_row:
                     address_span = next_row.find('span', style=lambda v: v and 'font-size: 16px' in v)
                     if address_span:
-                        address_text = address_span.get_text().strip()
+                        address_text = address_span.get_text(separator='\n').strip()
+                        logger.debug(f"New format - Address text: '{address_text}'")
                         if ', ' in address_text and any(char.isdigit() for char in address_text):
-                            parts = address_text.split(', ')
-                            if len(parts) >= 2:
-                                state_zip = parts[1].strip()
-                                if state_zip:
-                                    return state_zip
+                            logger.info("New format - Extracted location: '%s'", address_text)
+                            return address_text
         
+        logger.warning("No state/zip found in shipping address")
+        return ''
+
+    @staticmethod
+    def extract_order_details_link(soup: BeautifulSoup) -> str:
+        config = OrderParser._load_config()
+        if 'details_link' not in config:
+            print("     ⚠ 'details_link' not found in config")
+            return ''
+        
+        details_link_config = config['details_link']['confirmation']
+        link_tag = OrderParser._find_element(soup, details_link_config)
+        
+        if link_tag:
+            href = link_tag.get('href')
+            if href:
+                print(f"     ✓ Extracted order details link: {href[:50]}...")
+                return href
+            else:
+                print("     ⚠ Found link tag for 'View order details' but it has no href")
+        else:
+            print("     ⚠ Could not find 'View order details' link tag")
+            
         return ''
