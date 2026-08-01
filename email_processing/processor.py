@@ -10,9 +10,18 @@ from .parsers.bb_parser import OrderParser
 from .parsers.xbox_parser import XboxParser
 from .parsers.costco_parser import CostcoParser
 from .parsers.amazon_parser import AmazonParser
-from .parsers.walmart_parser import WalmartParser
 
 logger = logging.getLogger(__name__)
+
+
+def _load_optional_parser(module_name: str, class_name: str):
+    try:
+        module = importlib.import_module(f'.parsers.{module_name}', __package__)
+        parser_cls = getattr(module, class_name)
+        return parser_cls()
+    except ImportError:
+        logger.warning("Optional parser %s.%s is not available", module_name, class_name)
+        return None
 
 
 _BESTBUY_LOCATION_RE = re.compile(
@@ -99,7 +108,7 @@ class EmailProcessor:
         self.xbox_parser = XboxParser()
         self.costco_parser = CostcoParser()
         self.amazon_parser = AmazonParser()
-        self.walmart_parser = WalmartParser()
+        self.walmart_parser = _load_optional_parser('walmart_parser', 'WalmartParser')
 
     def _parse_email_metadata(self, email_data: tuple) -> Tuple[str, str, Optional[str]]:
         if isinstance(email_data, tuple):
@@ -635,6 +644,9 @@ class EmailProcessor:
             return {}
 
     def process_walmart_confirmation_email(self, email_data: tuple) -> Dict[str, Any]:
+        if not self.walmart_parser:
+            logger.warning("Walmart parser is not available")
+            return {}
         try:
             subject = self._extract_subject(email_data)
 
@@ -673,6 +685,9 @@ class EmailProcessor:
             return {}
 
     def process_walmart_cancellation_email(self, email_data: tuple) -> Dict[str, Any]:
+        if not self.walmart_parser:
+            logger.warning("Walmart parser is not available")
+            return {}
         try:
             subject = self._extract_subject(email_data)
 
@@ -701,6 +716,9 @@ class EmailProcessor:
             return {}
 
     def process_walmart_shipped_email(self, email_data: tuple) -> Dict[str, Any]:
+        if not self.walmart_parser:
+            logger.warning("Walmart parser is not available")
+            return {}
         try:
             subject = self._extract_subject(email_data)
 
