@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 set "UV_EXE=uv"
@@ -13,7 +13,7 @@ if errorlevel 1 (
     exit /b 1
   )
   set "UV_EXE=%USERPROFILE%\.local\bin\uv.exe"
-  if not exist "%UV_EXE%" (
+  if not exist "!UV_EXE!" (
     echo uv was installed but could not be found at the expected location.
     echo Please close this window, open a new one, and run install.bat again.
     pause
@@ -22,7 +22,7 @@ if errorlevel 1 (
 )
 
 echo Setting up Python and installing required packages
-"%UV_EXE%" sync
+"!UV_EXE!" sync
 if errorlevel 1 (
   echo Setup failed. Check the error messages above.
   pause
