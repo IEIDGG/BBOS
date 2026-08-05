@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Tuple, Optional
 
-from config.settings import CURRENT_VERSION
+from order_extraction.config.settings import CURRENT_VERSION
 
 class UpdateManager:
     def __init__(self):

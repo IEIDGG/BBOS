@@ -95,7 +95,7 @@ def format_currency(amount: str) -> str:
 
 
 def get_db_settings(service: str = 'bestbuy') -> Dict:
-    from config.settings import DB_SETTINGS, AMAZON_DB_SETTINGS, COSTCO_DB_SETTINGS
+    from order_extraction.config.settings import DB_SETTINGS, AMAZON_DB_SETTINGS, COSTCO_DB_SETTINGS
     
     if service.lower() == 'amazon':
         return AMAZON_DB_SETTINGS
@@ -106,7 +106,7 @@ def get_db_settings(service: str = 'bestbuy') -> Dict:
 
 
 def get_output_filename(service: str = 'bestbuy', file_type: str = 'csv') -> str:
-    from config.settings import OUTPUT_SETTINGS
+    from order_extraction.config.settings import OUTPUT_SETTINGS
     
     if service.lower() == 'amazon':
         return f'amazon_orders.{file_type}'

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Set, List
 
 from email_processing.handlers import OrderEmailHandler
-from config.settings import SEARCH_CRITERIA
+from order_extraction.config.settings import SEARCH_CRITERIA
 from api.submitter import OrderAPISubmitter, APIConfig
 
 

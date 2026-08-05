@@ -13,7 +13,7 @@ from core.database import DatabaseManager
 from core.updater import UpdateManager
 from email_processing.connector import EmailConnector
 from email_processing.handlers import OrderEmailHandler, XboxEmailHandler, CostcoEmailHandler
-from config.settings import SEARCH_CRITERIA, CURRENT_VERSION
+from order_extraction.config.settings import SEARCH_CRITERIA, CURRENT_VERSION
 from output.file_handlers import OutputHandler
 from continuous_monitor import ContinuousMonitor
 from api.submitter import APIConfig, OrderAPISubmitter

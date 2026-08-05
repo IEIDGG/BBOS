@@ -516,7 +516,7 @@ class OrderAPISubmitter:
 
     def run_interactive_bulk_test(self):
         from core.database import DatabaseManager
-        from config.settings import DB_SETTINGS
+        from order_extraction.config.settings import DB_SETTINGS
         
         print("\n" + "="*60)
         print("          INTERACTIVE BULK SUBMISSION TEST")

@@ -1,6 +1,6 @@
 import csv
 from typing import List, Dict, Optional
-from config.settings import OUTPUT_SETTINGS, COSTCO_OUTPUT_SETTINGS, AMAZON_OUTPUT_SETTINGS
+from order_extraction.config.settings import OUTPUT_SETTINGS, COSTCO_OUTPUT_SETTINGS, AMAZON_OUTPUT_SETTINGS
 from core.database import DatabaseManager
 
 
