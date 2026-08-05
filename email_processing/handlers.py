@@ -7,7 +7,7 @@ import copy
 import email
 from .connector import EmailConnector
 from .processor import EmailProcessor
-from order_extraction.config.settings import SEARCH_CRITERIA, COSTCO_SEARCH_CRITERIA, AMAZON_SEARCH_CRITERIA, WALMART_SEARCH_CRITERIA
+from config.settings import SEARCH_CRITERIA, COSTCO_SEARCH_CRITERIA, AMAZON_SEARCH_CRITERIA, WALMART_SEARCH_CRITERIA
 
 logger = logging.getLogger(__name__)
 

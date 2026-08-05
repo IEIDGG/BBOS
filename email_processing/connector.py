@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, List, Set
 from functools import wraps
-from order_extraction.config.settings import EMAIL_SERVERS
+from config.settings import EMAIL_SERVERS
 
 logger = logging.getLogger(__name__)
 
