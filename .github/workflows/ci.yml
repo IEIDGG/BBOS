@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Import smoke check
+        run: |
+          uv run python -c "
+          import ast
+          ast.parse(open('main.py').read())
+          from core.profile_manager import ProfileManager
+          from core.utils import get_db_settings
+          from core.database import DatabaseManager
+          from core.updater import UpdateManager
+          from email_processing.connector import EmailConnector
+          from email_processing.handlers import OrderEmailHandler, XboxEmailHandler, CostcoEmailHandler
+          from config.settings import SEARCH_CRITERIA, CURRENT_VERSION
+          from output.file_handlers import OutputHandler
+          from continuous_monitor import ContinuousMonitor
+          from api.submitter import APIConfig, OrderAPISubmitter
+          print('all imports OK')
+          "
+
+      # TODO(Phase 4): add `ruff check` and `ruff format --check` here
+      # TODO(Phase 5): add `ty check` here
+
+  install-bat-windows:
+    # End-to-end test of the actual end-user install flow. main.py itself
+    # is an interactive console app that expects real credentials, so it
+    # is intentionally not launched here — only install.bat is exercised.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run install.bat
+        shell: cmd
+        run: install.bat < NUL
+
+      - name: Verify uv and virtual environment
+        shell: cmd
+        run: |
+          where uv >nul 2>nul
+          if errorlevel 1 (
+            "%USERPROFILE%\.local\bin\uv.exe" --version
+          ) else (
+            uv --version
+          )
+          if not exist .venv (
+            echo .venv was not created by install.bat
+            exit /b 1
+          )
+          echo install.bat verification OK

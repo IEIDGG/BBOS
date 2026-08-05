@@ -1,0 +1,13 @@
+[project]
+name = "bbos"
+version = "0.1.0"
+description = "BBOS is a Python program that works with order and email data."
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4~=4.13.0b2",
+    "lxml>=4.9.0",
+    "requests>=2.31.0",
+]
+
+[tool.uv]
+package = false

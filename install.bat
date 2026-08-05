@@ -1,39 +1,36 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
-echo Checking for virtual environment
-if exist venv (
-  echo Virtual environment already exists
-) else (
-  echo Creating virtual environment
-  py -3 -m venv venv
+
+set "UV_EXE=uv"
+where uv >nul 2>nul
+if errorlevel 1 (
+  echo uv not found, installing it now
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
   if errorlevel 1 (
-    echo py command failed, trying python
-    python -m venv venv
-    if errorlevel 1 (
-      echo Could not create a virtual environment. Make sure Python 3 is installed and added to PATH.
-      pause
-      exit /b 1
-    )
+    echo Could not install uv. Check your internet connection and try again.
+    pause
+    exit /b 1
+  )
+  set "UV_EXE=%USERPROFILE%\.local\bin\uv.exe"
+  if not exist "!UV_EXE!" (
+    echo uv was installed but could not be found at the expected location.
+    echo Please close this window, open a new one, and run install.bat again.
+    pause
+    exit /b 1
   )
 )
-echo Installing or updating pip
-venv\Scripts\python -m pip install --upgrade pip
+
+echo Setting up Python and installing required packages
+"!UV_EXE!" sync
 if errorlevel 1 (
-  echo Pip upgrade failed inside the virtual environment.
+  echo Setup failed. Check the error messages above.
   pause
   exit /b 1
 )
-echo Installing required packages from requirements.txt
-venv\Scripts\python -m pip install -r requirements.txt
-if errorlevel 1 (
-  echo Package installation failed. Check the error messages above.
-  pause
-  exit /b 1
-)
+
+echo.
 echo Installation completed successfully.
-echo You can now run the program by activating the virtual environment and running python main.py
+echo You can now run the program by double-clicking run.bat
 pause
 endlocal
-
-

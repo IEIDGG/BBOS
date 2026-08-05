@@ -1,5 +1,7 @@
 .idea
 *.pyc
+venv/
+.venv/
 *.sqlite3
 bestbuy_orders.csv
 bestbuy_orders.sqlite3
