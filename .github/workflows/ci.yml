@@ -43,3 +43,30 @@ jobs:
 
       # TODO(Phase 4): add `ruff check` and `ruff format --check` here
       # TODO(Phase 5): add `ty check` here
+
+  install-bat-windows:
+    # End-to-end test of the actual end-user install flow. main.py itself
+    # is an interactive console app that expects real credentials, so it
+    # is intentionally not launched here — only install.bat is exercised.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run install.bat
+        shell: cmd
+        run: install.bat < NUL
+
+      - name: Verify uv and virtual environment
+        shell: cmd
+        run: |
+          where uv >nul 2>nul
+          if errorlevel 1 (
+            "%USERPROFILE%\.local\bin\uv.exe" --version
+          ) else (
+            uv --version
+          )
+          if not exist .venv (
+            echo .venv was not created by install.bat
+            exit /b 1
+          )
+          echo install.bat verification OK
