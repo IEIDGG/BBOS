@@ -1,9 +1,10 @@
 import csv
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
 from config.settings import (
-    OUTPUT_SETTINGS,
-    COSTCO_OUTPUT_SETTINGS,
     AMAZON_OUTPUT_SETTINGS,
+    COSTCO_OUTPUT_SETTINGS,
+    OUTPUT_SETTINGS,
 )
 from core.database import DatabaseManager
 

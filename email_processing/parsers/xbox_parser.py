@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import re
-from typing import Optional, Dict
+from typing import Dict, Optional
 
 from bs4 import BeautifulSoup
 

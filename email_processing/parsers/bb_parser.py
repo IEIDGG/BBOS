@@ -1,8 +1,9 @@
 import json
 import logging
 import os
+from typing import Dict, List, Tuple
+
 from bs4 import BeautifulSoup
-from typing import Tuple, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ class OrderParser:
 
             if not price_tag and dollar_spans:
                 for span in dollar_spans:
-                    if "$" in span.text and not span.text.strip() in ["$0.00", "$"]:
+                    if "$" in span.text and span.text.strip() not in ["$0.00", "$"]:
                         price_tag = span
                         break
 
@@ -295,7 +296,7 @@ class OrderParser:
         print(f"     Format 2 - Found {len(tracking_tds)} potential tracking TDs")
         for td in tracking_tds:
             if format2_config["container"]["text_contains"] in td.text:
-                print(f"     Format 2 - Text match found in TD")
+                print("     Format 2 - Text match found in TD")
                 tracking_span = td.find(
                     format2_config["target"]["tag"],
                     style=lambda value: (
@@ -318,7 +319,7 @@ class OrderParser:
         print(f"     Format 3 - Found {len(tracking_tds)} potential tracking TDs")
         for td in tracking_tds:
             if format3_config["container"]["text_contains"] in td.text:
-                print(f"     Format 3 - Text match found in TD")
+                print("     Format 3 - Text match found in TD")
                 tracking_span = td.find(
                     format3_config["target"]["tag"],
                     style=lambda value: (

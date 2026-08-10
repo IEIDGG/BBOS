@@ -1,15 +1,16 @@
 import imaplib
-import ssl
-import re
-import time
 import json
-import sys
 import logging
+import re
+import ssl
+import sys
 import threading
-from pathlib import Path
+import time
 from datetime import datetime
-from typing import Optional, Tuple, List, Set
 from functools import wraps
+from pathlib import Path
+from typing import List, Optional, Set, Tuple
+
 from config.settings import EMAIL_SERVERS
 
 logger = logging.getLogger(__name__)
@@ -497,7 +498,7 @@ class EmailConnector:
             try:
                 if spinner:
                     spinner.stop()
-            except:
+            except Exception:
                 pass
             print(f"Error searching emails in {folder}: {str(e)}")
             return False, []
@@ -690,7 +691,7 @@ class EmailConnector:
                 if typ != "OK":
                     return None
                 self.current_folder = folder
-            except Exception as e:
+            except Exception:
                 return None
 
             try:
@@ -704,7 +705,7 @@ class EmailConnector:
                 ):
                     try:
                         self.connection.readline()
-                    except:
+                    except Exception:
                         pass
                     return None
 
@@ -727,10 +728,10 @@ class EmailConnector:
                 try:
                     self.connection.send(b"DONE\r\n")
                     self.connection.readline()
-                except:
+                except Exception:
                     pass
                 return None
-        except Exception as e:
+        except Exception:
             return None
 
     def get_fetch_stats(self) -> dict:

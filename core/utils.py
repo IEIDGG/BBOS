@@ -1,6 +1,6 @@
-from typing import Tuple, Dict
 import os
 from datetime import datetime
+from typing import Dict, Tuple
 
 
 def read_credentials(filename: str) -> Tuple[str, str, str]:
@@ -95,7 +95,7 @@ def format_currency(amount: str) -> str:
 
 
 def get_db_settings(service: str = "bestbuy") -> Dict:
-    from config.settings import DB_SETTINGS, AMAZON_DB_SETTINGS, COSTCO_DB_SETTINGS
+    from config.settings import AMAZON_DB_SETTINGS, COSTCO_DB_SETTINGS, DB_SETTINGS
 
     if service.lower() == "amazon":
         return AMAZON_DB_SETTINGS

@@ -2,11 +2,11 @@
 
 import time
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Set, List
+from typing import Any, Dict, List, Set
 
-from email_processing.handlers import OrderEmailHandler
+from api.submitter import APIConfig, OrderAPISubmitter
 from config.settings import SEARCH_CRITERIA
-from api.submitter import OrderAPISubmitter, APIConfig
+from email_processing.handlers import OrderEmailHandler
 
 
 class MonitoringOrderHandler(OrderEmailHandler):

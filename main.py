@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
 
-import sys
-import os
 import time
-import threading
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Set, List
+from typing import Any, Dict, Optional
 
-from core.profile_manager import ProfileManager
-from core.utils import get_db_settings
+from api.submitter import APIConfig, OrderAPISubmitter
+from config.settings import CURRENT_VERSION
+from continuous_monitor import ContinuousMonitor
 from core.database import DatabaseManager
+from core.profile_manager import ProfileManager
 from core.updater import UpdateManager
 from email_processing.connector import EmailConnector
 from email_processing.handlers import (
+    CostcoEmailHandler,
     OrderEmailHandler,
     XboxEmailHandler,
-    CostcoEmailHandler,
 )
-from config.settings import SEARCH_CRITERIA, CURRENT_VERSION
 from output.file_handlers import OutputHandler
-from continuous_monitor import ContinuousMonitor
-from api.submitter import APIConfig, OrderAPISubmitter
 
 
 class BBOSApplication:
@@ -344,7 +340,7 @@ class BBOSApplication:
                 print("No Xbox codes found")
 
             stats = self.email_connector.get_fetch_stats()
-            print(f"\n=== Email Fetch Statistics ===")
+            print("\n=== Email Fetch Statistics ===")
             print(f"Total fetches: {stats['fetch_count']}")
             print(f"Remaining quota: {stats['remaining']}/{stats['max_fetches']}")
             print(f"Usage: {(stats['fetch_count'] / stats['max_fetches'] * 100):.1f}%")
@@ -445,7 +441,7 @@ class BBOSApplication:
                 while True:
                     custom_date = input("Enter date (YYYY/MM/DD): ").strip()
                     try:
-                        parsed_date = datetime.strptime(custom_date, "%Y/%m/%d")
+                        datetime.strptime(custom_date, "%Y/%m/%d")
                         print(f"📅 Searching emails from: {custom_date}")
                         return custom_date
                     except ValueError:
@@ -642,7 +638,7 @@ class BBOSApplication:
 
                     print("\n" + "-" * 60)
                     if result["success"]:
-                        print(f"✓ Status: SUCCESS")
+                        print("✓ Status: SUCCESS")
                         print(f"✓ Message: {result['message']}")
                         print(f"✓ Submitted: {result['submitted']} tracking number(s)")
 
@@ -654,7 +650,7 @@ class BBOSApplication:
                                     f"  {status_icon} {res['tracking_number']}: {res['status']} - {res['message']}"
                                 )
                     else:
-                        print(f"✗ Status: FAILED")
+                        print("✗ Status: FAILED")
                         print(f"✗ Message: {result['message']}")
                         print(f"✗ Submitted: {result['submitted']} tracking number(s)")
 
@@ -694,7 +690,7 @@ class BBOSApplication:
 
                     print("\n" + "-" * 60)
                     if result["success"]:
-                        print(f"✓ Status: SUCCESS")
+                        print("✓ Status: SUCCESS")
                         print(f"✓ Message: {result['message']}")
                         print(
                             f"✓ Total Submitted: {result['total_submitted']} tracking number(s)"
@@ -714,7 +710,7 @@ class BBOSApplication:
                                 print(f"    Skipped: {group_res['skipped']}")
                                 print(f"    Message: {group_res['message']}")
                     else:
-                        print(f"✗ Status: FAILED")
+                        print("✗ Status: FAILED")
                         print(f"✗ Message: {result['message']}")
                         print(
                             f"✗ Total Submitted: {result['total_submitted']} tracking number(s)"
@@ -820,7 +816,7 @@ class BBOSApplication:
                 if is_avail:
                     print("\n" + "!" * 60)
                     print(f"!!! NEW UPDATE AVAILABLE: v{new_ver} !!!")
-                    print(f"!!! Select 'Check for Updates' in the menu to install !!!")
+                    print("!!! Select 'Check for Updates' in the menu to install !!!")
                     print("!" * 60 + "\n")
                     time.sleep(2)
 

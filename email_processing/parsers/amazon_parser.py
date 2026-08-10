@@ -1,7 +1,8 @@
-import re
 import logging
+import re
+from typing import Dict, List, Optional
+
 from bs4 import BeautifulSoup
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -434,7 +435,6 @@ class AmazonParser:
                 product_row = link.find_parent("table")
 
             if product_row:
-                row_html = str(product_row)
                 row_text = product_row.get_text()
 
                 qty_patterns = [

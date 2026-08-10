@@ -1,8 +1,8 @@
 import sqlite3
-import os
-from typing import List, Dict, Tuple, Optional, Set
 from datetime import datetime
-from config.settings import DB_SETTINGS, AMAZON_DB_SETTINGS
+from typing import Dict, List, Optional, Set, Tuple
+
+from config.settings import DB_SETTINGS
 from core.utils import get_db_filename
 
 

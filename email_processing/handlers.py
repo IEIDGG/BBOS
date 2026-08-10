@@ -1,18 +1,18 @@
+import copy
 import logging
 import re
-from typing import List, Dict, Tuple, Optional
-from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import copy
-import email
-from .connector import EmailConnector
-from .processor import EmailProcessor
+from typing import Dict, List, Optional
+
 from config.settings import (
-    SEARCH_CRITERIA,
-    COSTCO_SEARCH_CRITERIA,
     AMAZON_SEARCH_CRITERIA,
+    COSTCO_SEARCH_CRITERIA,
+    SEARCH_CRITERIA,
     WALMART_SEARCH_CRITERIA,
 )
+
+from .connector import EmailConnector
+from .processor import EmailProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -564,7 +564,7 @@ class OrderEmailHandler(BaseEmailHandler):
 
     def print_fetch_statistics(self) -> None:
         stats = self.connector.get_fetch_stats()
-        print(f"\n=== Email Fetch Statistics ===")
+        print("\n=== Email Fetch Statistics ===")
         print(f"Total fetches: {stats['fetch_count']}")
         print(f"Remaining quota: {stats['remaining']}/{stats['max_fetches']}")
         print(f"Usage: {(stats['fetch_count'] / stats['max_fetches'] * 100):.1f}%")
@@ -969,7 +969,7 @@ class CostcoEmailHandler(BaseEmailHandler):
 
     def print_fetch_statistics(self) -> None:
         stats = self.connector.get_fetch_stats()
-        print(f"\n=== Email Fetch Statistics ===")
+        print("\n=== Email Fetch Statistics ===")
         print(f"Total fetches: {stats['fetch_count']}")
         print(f"Remaining quota: {stats['remaining']}/{stats['max_fetches']}")
         print(f"Usage: {(stats['fetch_count'] / stats['max_fetches'] * 100):.1f}%")
@@ -1338,7 +1338,7 @@ class AmazonEmailHandler(BaseEmailHandler):
 
     def print_fetch_statistics(self) -> None:
         stats = self.connector.get_fetch_stats()
-        print(f"\n=== Email Fetch Statistics ===")
+        print("\n=== Email Fetch Statistics ===")
         print(f"Total fetches: {stats['fetch_count']}")
         print(f"Remaining quota: {stats['remaining']}/{stats['max_fetches']}")
         print(f"Usage: {(stats['fetch_count'] / stats['max_fetches'] * 100):.1f}%")
@@ -1699,7 +1699,7 @@ class WalmartEmailHandler(BaseEmailHandler):
 
     def print_fetch_statistics(self) -> None:
         stats = self.connector.get_fetch_stats()
-        print(f"\n=== Email Fetch Statistics ===")
+        print("\n=== Email Fetch Statistics ===")
         print(f"Total fetches: {stats['fetch_count']}")
         print(f"Remaining quota: {stats['remaining']}/{stats['max_fetches']}")
         print(f"Usage: {(stats['fetch_count'] / stats['max_fetches'] * 100):.1f}%")

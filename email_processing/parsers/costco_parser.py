@@ -1,9 +1,10 @@
 import json
+import logging
 import os
 import re
-import logging
+from typing import Dict, List, Optional, Tuple
+
 from bs4 import BeautifulSoup
-from typing import Tuple, List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -283,9 +284,6 @@ class CostcoParser:
 
     @staticmethod
     def extract_cancellation_date(soup: BeautifulSoup) -> Optional[str]:
-        config = CostcoParser._load_config()
-        costco_config = config.get("costco_parsing", {})
-
         tds = soup.find_all("td")
         for td in tds:
             if "Cancellation Date" in td.get_text():
@@ -630,12 +628,8 @@ class CostcoParser:
 
     @staticmethod
     def parse_product_details(html_content: str) -> Tuple[List[Dict[str, str]], str]:
-        config = CostcoParser._load_config()
         soup = BeautifulSoup(html_content, "lxml")
         products = []
-
-        costco_config = config.get("costco_parsing", {})
-        product_config = costco_config.get("product", {})
 
         item_sections = soup.find_all("div", class_="item-desc-column")
         if not item_sections:

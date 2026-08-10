@@ -1,9 +1,10 @@
 import json
 import os
 import re
-import requests
-from typing import Dict, List, Optional, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import requests
 
 
 class CarrierDetector:
@@ -546,8 +547,8 @@ class OrderAPISubmitter:
         }
 
     def run_interactive_bulk_test(self):
-        from core.database import DatabaseManager
         from config.settings import DB_SETTINGS
+        from core.database import DatabaseManager
 
         print("\n" + "=" * 60)
         print("          INTERACTIVE BULK SUBMISSION TEST")
@@ -590,7 +591,7 @@ class OrderAPISubmitter:
 
             print("\n" + "-" * 60)
             if result["success"]:
-                print(f"✓ Status: SUCCESS")
+                print("✓ Status: SUCCESS")
                 print(f"✓ Message: {result['message']}")
                 print(f"✓ Total Submitted: {result['total_submitted']}")
                 print(f"✓ Buying Groups: {result['buying_groups']}")
@@ -602,7 +603,7 @@ class OrderAPISubmitter:
                             f"  - {group['buying_group']}: {group['successful']} success, {group['failed']} failed"
                         )
             else:
-                print(f"✗ Status: FAILED")
+                print("✗ Status: FAILED")
                 print(f"✗ Message: {result['message']}")
                 print(f"✗ Errors: {result.get('total_failed')} failed")
             print("-" * 60)

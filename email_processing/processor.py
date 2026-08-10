@@ -1,15 +1,17 @@
-import re
 import email
 import importlib
 import logging
-from email.header import decode_header
+import re
 from datetime import datetime
+from email.header import decode_header
+from typing import Any, Dict, Optional, Tuple
+
 from bs4 import BeautifulSoup
-from typing import Dict, Any, Optional, Tuple
-from .parsers.bb_parser import OrderParser
-from .parsers.xbox_parser import XboxParser
-from .parsers.costco_parser import CostcoParser
+
 from .parsers.amazon_parser import AmazonParser
+from .parsers.bb_parser import OrderParser
+from .parsers.costco_parser import CostcoParser
+from .parsers.xbox_parser import XboxParser
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +153,7 @@ class EmailProcessor:
                 if encoding:
                     try:
                         subject_parts.append(content.decode(encoding))
-                    except:
+                    except Exception:
                         subject_parts.append(content.decode("utf-8", errors="ignore"))
                 else:
                     subject_parts.append(content.decode("utf-8", errors="ignore"))
@@ -182,7 +184,7 @@ class EmailProcessor:
                         try:
                             html_content = payload.decode("latin-1")
                         except UnicodeDecodeError:
-                            print(f"Warning: Could not decode email content")
+                            print("Warning: Could not decode email content")
                             continue
                 elif payload is not None:
                     html_content = str(payload)
@@ -650,7 +652,7 @@ class EmailProcessor:
                     if encoding:
                         try:
                             subject_parts.append(content.decode(encoding))
-                        except:
+                        except Exception:
                             subject_parts.append(
                                 content.decode("utf-8", errors="ignore")
                             )

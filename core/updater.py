@@ -1,12 +1,11 @@
-import os
-import sys
-import shutil
-import requests
-import zipfile
 import io
-import logging
+import os
 import re
-from typing import Tuple, Optional
+import shutil
+import zipfile
+from typing import Tuple
+
+import requests
 
 from config.settings import CURRENT_VERSION
 
