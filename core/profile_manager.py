@@ -6,12 +6,12 @@ from pathlib import Path
 
 
 class ProfileManager:
-    def __init__(self, profiles_file: str = 'config/profiles.json'):
+    def __init__(self, profiles_file: str = "config/profiles.json"):
         self.profiles_file = Path(profiles_file)
         self.email_services = {
-            '1': {'name': 'gmail', 'requires_email': True, 'display': 'Gmail'},
-            '2': {'name': 'proton', 'requires_email': True, 'display': 'Proton Mail'},
-            '3': {'name': 'icloud', 'requires_email': False, 'display': 'iCloud'}
+            "1": {"name": "gmail", "requires_email": True, "display": "Gmail"},
+            "2": {"name": "proton", "requires_email": True, "display": "Proton Mail"},
+            "3": {"name": "icloud", "requires_email": False, "display": "iCloud"},
         }
         self.profiles = self._load_profiles()
 
@@ -22,9 +22,9 @@ class ProfileManager:
             return default_profiles
 
         try:
-            with open(self.profiles_file, 'r') as f:
+            with open(self.profiles_file, "r") as f:
                 data = json.load(f)
-                if not isinstance(data, dict) or 'profiles' not in data:
+                if not isinstance(data, dict) or "profiles" not in data:
                     return default_profiles
                 return data
         except (json.JSONDecodeError, IOError) as e:
@@ -35,7 +35,7 @@ class ProfileManager:
         try:
             self.profiles_file.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(self.profiles_file, 'w') as f:
+            with open(self.profiles_file, "w") as f:
                 json.dump(self.profiles, f, indent=4)
             return True
         except IOError as e:
@@ -43,7 +43,7 @@ class ProfileManager:
             return False
 
     def _validate_email(self, email: str) -> bool:
-        pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+        pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
         return bool(re.match(pattern, email))
 
     def _get_email_service(self) -> Optional[Dict[str, Any]]:
@@ -55,7 +55,7 @@ class ProfileManager:
 
             choice = input("\nEnter choice (or 'q' to cancel): ").strip().lower()
 
-            if choice == 'q':
+            if choice == "q":
                 return None
 
             if choice in self.email_services:
@@ -65,7 +65,7 @@ class ProfileManager:
 
     def _get_credentials(self, service: Dict[str, Any]) -> Optional[Dict[str, str]]:
         while True:
-            if service['requires_email']:
+            if service["requires_email"]:
                 prompt = f"Enter {service['display']} email address: "
                 username = input(prompt).strip()
                 if not self._validate_email(username):
@@ -94,16 +94,13 @@ class ProfileManager:
             except KeyboardInterrupt:
                 return None
 
-        return {
-            "username": username,
-            "password": password
-        }
+        return {"username": username, "password": password}
 
     def _get_profile_name(self) -> Optional[str]:
         while True:
             name = input("\nEnter profile name (or 'q' to cancel): ").strip()
 
-            if name.lower() == 'q':
+            if name.lower() == "q":
                 return None
 
             if not name:
@@ -137,7 +134,7 @@ class ProfileManager:
                 "email": creds["username"],
                 "username": creds["username"],
                 "password": creds["password"],
-                "service": service["name"]
+                "service": service["name"],
             }
 
             self.profiles["profiles"][profile_name] = new_profile
@@ -170,7 +167,7 @@ class ProfileManager:
         print("\nAvailable Profiles:")
         print("=" * 20)
         for i, name in enumerate(profiles, 1):
-            profile = self.profiles['profiles'][name]
+            profile = self.profiles["profiles"][name]
             print(f"{i}. {name} ({profile['email']} - {profile['service'].title()})")
 
         print("\na. Add new profile")
@@ -179,10 +176,10 @@ class ProfileManager:
         while True:
             choice = input("\nSelect profile (enter choice): ").strip().lower()
 
-            if choice == 'q':
+            if choice == "q":
                 return None
 
-            if choice == 'a':
+            if choice == "a":
                 if self.add_profile():
                     return self.select_profile()
                 return None
@@ -192,10 +189,7 @@ class ProfileManager:
                 if 1 <= idx <= len(profiles):
                     profile_name = profiles[idx - 1]
                     profile_data = self.profiles["profiles"][profile_name]
-                    return {
-                        "name": profile_name,
-                        **profile_data
-                    }
+                    return {"name": profile_name, **profile_data}
             except ValueError:
                 pass
 
@@ -231,20 +225,22 @@ class ProfileManager:
 
             choice = input("\nEnter choice (1-4): ").strip()
 
-            if choice == '1':
+            if choice == "1":
                 profiles = self.list_profiles()
                 if profiles:
                     print("\nExisting Profiles:")
                     for name in profiles:
-                        profile = self.profiles['profiles'][name]
-                        print(f"- {name} ({profile['email']} - {profile['service'].title()})")
+                        profile = self.profiles["profiles"][name]
+                        print(
+                            f"- {name} ({profile['email']} - {profile['service'].title()})"
+                        )
                 else:
                     print("\nNo profiles found.")
 
-            elif choice == '2':
+            elif choice == "2":
                 self.add_profile()
 
-            elif choice == '3':
+            elif choice == "3":
                 profiles = self.list_profiles()
                 if not profiles:
                     print("\nNo profiles to delete.")
@@ -256,16 +252,20 @@ class ProfileManager:
                 print("q. Cancel")
 
                 while True:
-                    choice = input("\nEnter choice (or 'q' to cancel): ").strip().lower()
-                    if choice == 'q':
+                    choice = (
+                        input("\nEnter choice (or 'q' to cancel): ").strip().lower()
+                    )
+                    if choice == "q":
                         break
 
                     try:
                         idx = int(choice)
                         if 1 <= idx <= len(profiles):
                             profile_name = profiles[idx - 1]
-                            confirm = input(f"Are you sure you want to delete '{profile_name}'? (y/n): ")
-                            if confirm.lower() == 'y':
+                            confirm = input(
+                                f"Are you sure you want to delete '{profile_name}'? (y/n): "
+                            )
+                            if confirm.lower() == "y":
                                 self.delete_profile(profile_name)
                             break
                         else:
@@ -273,7 +273,7 @@ class ProfileManager:
                     except ValueError:
                         print("Invalid input. Please enter a number or 'q'.")
 
-            elif choice == '4':
+            elif choice == "4":
                 break
 
             else:

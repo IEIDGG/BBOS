@@ -162,7 +162,7 @@ Successfully implemented **7 major optimizations** to dramatically speed up Prot
 
 ### ProtonMail Bridge Detection
 ```python
-if self.service_config['server'] == '127.0.0.1':
+if self.service_config["server"] == "127.0.0.1":
     self.fetch_delay = 0.01
     self.batch_delay = 0.05
     self.batch_size = 200
@@ -171,15 +171,14 @@ if self.service_config['server'] == '127.0.0.1':
 
 ### UID Caching
 ```python
-self.processed_uids_file = Path(f'.processed_uids_{email}.json')
+self.processed_uids_file = Path(f".processed_uids_{email}.json")
 self.processed_uids: Set[str] = self._load_processed_uids()
 ```
 
 ### Parallel Processing
 ```python
 with ThreadPoolExecutor(max_workers=4) as executor:
-    future_to_data = {executor.submit(process_func, email): email 
-                      for email in emails}
+    future_to_data = {executor.submit(process_func, email): email for email in emails}
     for future in as_completed(future_to_data):
         result = future.result()
 ```
@@ -261,10 +260,10 @@ Usage: 1.5%
 All settings are auto-detected but can be adjusted in `email_processing/connector.py`:
 
 ```python
-if self.service_config['server'] == '127.0.0.1':
-    self.fetch_delay = 0.01        # Delay between individual fetches
-    self.batch_delay = 0.05        # Delay between batches
-    self.batch_size = 200          # Emails per batch
+if self.service_config["server"] == "127.0.0.1":
+    self.fetch_delay = 0.01  # Delay between individual fetches
+    self.batch_delay = 0.05  # Delay between batches
+    self.batch_size = 200  # Emails per batch
     self.max_fetches_per_session = 5000  # Session limit
 ```
 

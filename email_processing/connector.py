@@ -25,11 +25,15 @@ def retry_with_backoff(max_retries=3, base_delay=1):
                 except Exception as e:
                     if attempt == max_retries - 1:
                         raise
-                    delay = base_delay * (2 ** attempt)
-                    print(f"Retry {attempt + 1}/{max_retries} after {delay}s due to: {str(e)}")
+                    delay = base_delay * (2**attempt)
+                    print(
+                        f"Retry {attempt + 1}/{max_retries} after {delay}s due to: {str(e)}"
+                    )
                     time.sleep(delay)
             return None
+
         return wrapper
+
     return decorator
 
 
@@ -39,29 +43,31 @@ class ProgressSpinner:
         self.spinning = False
         self.thread = None
         self.start_time = None
-        self.spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-        
+        self.spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
     def _spin(self):
         idx = 0
         while self.spinning:
             elapsed = time.time() - self.start_time
-            sys.stdout.write(f'\r{self.spinner_chars[idx]} {self.message} ({elapsed:.1f}s)')
+            sys.stdout.write(
+                f"\r{self.spinner_chars[idx]} {self.message} ({elapsed:.1f}s)"
+            )
             sys.stdout.flush()
             idx = (idx + 1) % len(self.spinner_chars)
             time.sleep(0.1)
-    
+
     def start(self):
         self.spinning = True
         self.start_time = time.time()
         self.thread = threading.Thread(target=self._spin, daemon=True)
         self.thread.start()
-    
+
     def stop(self):
         self.spinning = False
         if self.thread:
             self.thread.join(timeout=0.5)
         elapsed = time.time() - self.start_time if self.start_time else 0
-        sys.stdout.write(f'\r✓ {self.message} completed in {elapsed:.1f}s\n')
+        sys.stdout.write(f"\r✓ {self.message} completed in {elapsed:.1f}s\n")
         sys.stdout.flush()
 
 
@@ -69,23 +75,32 @@ class EmailConnector:
     def __init__(self, email: str, password: str, service_type: str):
         self.email = email
         self.password = password
-        self.service_config = EMAIL_SERVERS.get(service_type, EMAIL_SERVERS['gmail'])
+        self.service_config = EMAIL_SERVERS.get(service_type, EMAIL_SERVERS["gmail"])
         self.connection: Optional[imaplib.IMAP4] = None
         self.fetch_count = 0
         self.current_folder: Optional[str] = None
-        
-        cache_dir = Path('cache')
+
+        cache_dir = Path("cache")
         cache_dir.mkdir(exist_ok=True)
-        self.processed_uids_file = cache_dir / f'processed_uids_{email.replace("@", "_").replace(".", "_")}.json'
+        self.processed_uids_file = (
+            cache_dir
+            / f"processed_uids_{email.replace('@', '_').replace('.', '_')}.json"
+        )
         self.processed_uids: Set[str] = self._load_processed_uids()
-        
-        self.is_proton = service_type == 'proton' or self.service_config['server'] in ['127.0.0.1', 'localhost', 'host.docker.internal']
+
+        self.is_proton = service_type == "proton" or self.service_config["server"] in [
+            "127.0.0.1",
+            "localhost",
+            "host.docker.internal",
+        ]
         if self.is_proton:
             self.fetch_delay = 0.01
             self.batch_delay = 0.05
             self.batch_size = 200
             self.max_fetches_per_session = 5000
-            print(f"⚡ ProtonMail Bridge detected ({self.service_config['server']}): Using optimized settings (200 batch, 0.01s delay)")
+            print(
+                f"⚡ ProtonMail Bridge detected ({self.service_config['server']}): Using optimized settings (200 batch, 0.01s delay)"
+            )
         else:
             self.fetch_delay = 0.1
             self.batch_delay = 0.5
@@ -95,36 +110,38 @@ class EmailConnector:
     def _load_processed_uids(self) -> Set[str]:
         if self.processed_uids_file.exists():
             try:
-                with open(self.processed_uids_file, 'r') as f:
+                with open(self.processed_uids_file, "r") as f:
                     data = json.load(f)
                     print(f"📋 Loaded {len(data)} processed email UIDs from cache")
                     return set(data)
             except Exception as e:
                 print(f"Warning: Could not load processed UIDs: {e}")
         return set()
-    
+
     def _save_processed_uids(self) -> None:
         try:
-            with open(self.processed_uids_file, 'w') as f:
+            with open(self.processed_uids_file, "w") as f:
                 json.dump(list(self.processed_uids), f)
         except Exception as e:
             print(f"Warning: Could not save processed UIDs: {e}")
-    
+
     def mark_uid_processed(self, uid: bytes) -> None:
         uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
         self.processed_uids.add(uid_str)
-    
+
     def save_progress(self) -> None:
         self._save_processed_uids()
         print(f"💾 Saved {len(self.processed_uids)} processed UIDs to cache")
 
     def _refresh_session(self) -> bool:
         try:
-            print(f"\n🔄 Session limit reached ({self.max_fetches_per_session} fetches). Refreshing connection...")
+            print(
+                f"\n🔄 Session limit reached ({self.max_fetches_per_session} fetches). Refreshing connection..."
+            )
             self.save_progress()
-            
+
             saved_folder = self.current_folder
-            
+
             if self.connection:
                 try:
                     self.connection.logout()
@@ -132,35 +149,41 @@ class EmailConnector:
                     pass
                 finally:
                     self.connection = None
-            
+
             time.sleep(1)
-            
+
             self.connect()
             old_count = self.fetch_count
             self.fetch_count = 0
-            
+
             if saved_folder:
                 try:
                     folder_variants = []
-                    if ' ' in saved_folder or '/' in saved_folder:
+                    if " " in saved_folder or "/" in saved_folder:
                         folder_variants = [f'"{saved_folder}"', saved_folder]
                     else:
                         folder_variants = [saved_folder]
-                    
+
                     for folder_variant in folder_variants:
                         try:
                             status, _ = self.connection.select(folder_variant)
-                            if status == 'OK':
-                                print(f"✓ Session refreshed. Reset fetch count from {old_count} to 0. Re-selected folder: {saved_folder}")
+                            if status == "OK":
+                                print(
+                                    f"✓ Session refreshed. Reset fetch count from {old_count} to 0. Re-selected folder: {saved_folder}"
+                                )
                                 return True
                         except Exception:
                             continue
-                    print(f"⚠ Session refreshed but could not re-select folder: {saved_folder}")
+                    print(
+                        f"⚠ Session refreshed but could not re-select folder: {saved_folder}"
+                    )
                 except Exception as e:
-                    print(f"⚠ Session refreshed but error re-selecting folder: {str(e)}")
+                    print(
+                        f"⚠ Session refreshed but error re-selecting folder: {str(e)}"
+                    )
             else:
                 print(f"✓ Session refreshed. Reset fetch count from {old_count} to 0")
-            
+
             return True
         except Exception as e:
             print(f"✗ Error refreshing session: {str(e)}")
@@ -168,23 +191,20 @@ class EmailConnector:
 
     def connect(self) -> None:
         try:
-            if self.service_config['use_ssl']:
+            if self.service_config["use_ssl"]:
                 self.connection = imaplib.IMAP4_SSL(
-                    self.service_config['server'],
-                    self.service_config['port']
+                    self.service_config["server"], self.service_config["port"]
                 )
-            elif self.service_config['server'] == '127.0.0.1':
+            elif self.service_config["server"] == "127.0.0.1":
                 self.connection = imaplib.IMAP4(
-                    self.service_config['server'],
-                    self.service_config['port']
+                    self.service_config["server"], self.service_config["port"]
                 )
             else:
                 context = ssl.create_default_context()
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
                 self.connection = imaplib.IMAP4(
-                    self.service_config['server'],
-                    self.service_config['port']
+                    self.service_config["server"], self.service_config["port"]
                 )
                 self.connection.starttls(ssl_context=context)
 
@@ -199,13 +219,13 @@ class EmailConnector:
             return ""
 
         try:
-            clean_date = date_str.replace('after:', '').strip()
+            clean_date = date_str.replace("after:", "").strip()
             try:
-                date_obj = datetime.strptime(clean_date, '%Y/%m/%d')
+                date_obj = datetime.strptime(clean_date, "%Y/%m/%d")
             except ValueError:
-                date_obj = datetime.strptime(clean_date, '%Y-%m-%d')
-            
-            return date_obj.strftime('%d-%b-%Y')
+                date_obj = datetime.strptime(clean_date, "%Y-%m-%d")
+
+            return date_obj.strftime("%d-%b-%Y")
         except ValueError as e:
             print(f"Error formatting date: {str(e)}")
             return ""
@@ -213,21 +233,21 @@ class EmailConnector:
     def _format_search_criteria(self, criteria_parts: dict) -> str:
         formatted_parts = []
 
-        if 'date' in criteria_parts:
-            imap_date = self._format_date_for_imap(criteria_parts['date'])
+        if "date" in criteria_parts:
+            imap_date = self._format_date_for_imap(criteria_parts["date"])
             if imap_date:
-                formatted_parts.append(f'SINCE {imap_date}')
+                formatted_parts.append(f"SINCE {imap_date}")
 
-        if 'from' in criteria_parts:
-            from_criteria = criteria_parts['from']
-            if '(OR' in from_criteria:
+        if "from" in criteria_parts:
+            from_criteria = criteria_parts["from"]
+            if "(OR" in from_criteria:
                 addresses = re.findall(r'"([^"]+)"', from_criteria)
                 if addresses:
                     if len(addresses) > 1:
                         or_chain = f'FROM "{addresses[0]}"'
                         for address in addresses[1:]:
                             or_chain = f'OR {or_chain} FROM "{address}"'
-                        formatted_parts.append(f'({or_chain})')
+                        formatted_parts.append(f"({or_chain})")
                     else:
                         formatted_parts.append(f'FROM "{addresses[0]}"')
             else:
@@ -235,43 +255,43 @@ class EmailConnector:
                 if address:
                     formatted_parts.append(f'FROM "{address.group(1)}"')
 
-        if 'subject' in criteria_parts:
-            subjects = re.findall(r'"([^"]+)"', criteria_parts['subject'])
+        if "subject" in criteria_parts:
+            subjects = re.findall(r'"([^"]+)"', criteria_parts["subject"])
             if subjects:
                 expr = f'SUBJECT "{subjects[0]}"'
                 for subject in subjects[1:]:
                     expr = f'OR ({expr}) (SUBJECT "{subject}")'
-                formatted_parts.append(f'({expr})' if len(subjects) > 1 else expr)
+                formatted_parts.append(f"({expr})" if len(subjects) > 1 else expr)
 
-        return ' '.join(formatted_parts)
+        return " ".join(formatted_parts)
 
     def _encode_q_subject(self, text: str) -> str:
-        bytes_data = text.encode('utf-8')
+        bytes_data = text.encode("utf-8")
         encoded_parts = []
         for b in bytes_data:
             if 33 <= b <= 126 and b != 61:
                 encoded_parts.append(chr(b))
             elif b == 32:
-                encoded_parts.append('_')
+                encoded_parts.append("_")
             else:
-                encoded_parts.append(f'={b:02X}')
+                encoded_parts.append(f"={b:02X}")
         return "".join(encoded_parts)
 
     def _ascii_subject(self, text: str) -> str:
-        ascii_only = text.encode('ascii', 'ignore').decode('ascii')
-        return re.sub(r'\s+', ' ', ascii_only).strip()
+        ascii_only = text.encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"\s+", " ", ascii_only).strip()
 
     def _subject_search_variants(self, subject: str) -> List[str]:
         variants = []
         seen = set()
 
         def _add(value: str):
-            cleaned = (value or '').strip()
+            cleaned = (value or "").strip()
             if cleaned and cleaned not in seen:
                 seen.add(cleaned)
                 variants.append(cleaned)
 
-        original = (subject or '').strip()
+        original = (subject or "").strip()
         ascii_subject = self._ascii_subject(original)
 
         if self.is_proton and any(ord(c) > 127 for c in original):
@@ -279,8 +299,8 @@ class EmailConnector:
 
         _add(ascii_subject)
 
-        if ascii_subject and ' ' in ascii_subject:
-            _add(ascii_subject.replace(' ', '_'))
+        if ascii_subject and " " in ascii_subject:
+            _add(ascii_subject.replace(" ", "_"))
 
         if original and any(ord(c) > 127 for c in original):
             _add(self._encode_q_subject(original))
@@ -294,7 +314,7 @@ class EmailConnector:
 
     def _expand_subject_criteria(self, search_criteria: dict) -> dict:
         new_criteria = search_criteria.copy()
-        subject_criteria = new_criteria.get('subject')
+        subject_criteria = new_criteria.get("subject")
         if not subject_criteria:
             return new_criteria
 
@@ -314,44 +334,46 @@ class EmailConnector:
             return new_criteria
 
         if len(expanded) == 1:
-            new_criteria['subject'] = f'SUBJECT "{expanded[0]}"'
+            new_criteria["subject"] = f'SUBJECT "{expanded[0]}"'
         else:
-            parts = ' '.join(f'(SUBJECT "{subject}")' for subject in expanded)
-            new_criteria['subject'] = f'(OR {parts})'
+            parts = " ".join(f'(SUBJECT "{subject}")' for subject in expanded)
+            new_criteria["subject"] = f"(OR {parts})"
 
         logger.info(
             "Expanded %s subject criteria into %s variant(s)",
-            'Proton' if self.is_proton else 'IMAP',
+            "Proton" if self.is_proton else "IMAP",
             len(expanded),
         )
         return new_criteria
 
     def _to_ascii_criteria(self, formatted_criteria: str) -> str:
-        ascii_only = formatted_criteria.encode('ascii', 'ignore').decode('ascii')
+        ascii_only = formatted_criteria.encode("ascii", "ignore").decode("ascii")
 
         def _trim_quoted(match):
-            inner = re.sub(r'\s+', ' ', match.group(1)).strip()
+            inner = re.sub(r"\s+", " ", match.group(1)).strip()
             return f'"{inner}"'
 
         ascii_only = re.sub(r'"([^"]*)"', _trim_quoted, ascii_only)
-        ascii_only = re.sub(r'\s+', ' ', ascii_only).strip()
+        ascii_only = re.sub(r"\s+", " ", ascii_only).strip()
         return ascii_only
 
     def _run_search(self, formatted_criteria: str, use_uid: bool):
         if not formatted_criteria.strip():
             logger.warning("Empty search criteria; defaulting to ALL")
-            formatted_criteria = 'ALL'
+            formatted_criteria = "ALL"
 
         def _search(criteria: str, charset: Optional[str]):
-            criteria_bytes = criteria.encode('ascii' if charset is None else 'utf-8')
+            criteria_bytes = criteria.encode("ascii" if charset is None else "utf-8")
             if use_uid:
                 if charset is None:
-                    typ, data = self.connection.uid('search', criteria_bytes)
+                    typ, data = self.connection.uid("search", criteria_bytes)
                 else:
-                    typ, data = self.connection.uid('search', 'CHARSET', charset, criteria_bytes)
+                    typ, data = self.connection.uid(
+                        "search", "CHARSET", charset, criteria_bytes
+                    )
             else:
                 typ, data = self.connection.search(charset, criteria_bytes)
-            if typ != 'OK':
+            if typ != "OK":
                 raise imaplib.IMAP4.error(f"SEARCH returned {typ}: {data}")
             return data
 
@@ -359,38 +381,43 @@ class EmailConnector:
             return _search(formatted_criteria, None)
 
         try:
-            return _search(formatted_criteria, 'UTF-8')
+            return _search(formatted_criteria, "UTF-8")
         except imaplib.IMAP4.error as e:
-            ascii_criteria = self._to_ascii_criteria(formatted_criteria) or 'ALL'
+            ascii_criteria = self._to_ascii_criteria(formatted_criteria) or "ALL"
             logger.warning(
                 "UTF-8 search failed (%s); retrying with ASCII criteria: %s",
-                e, ascii_criteria,
+                e,
+                ascii_criteria,
             )
             return _search(ascii_criteria, None)
 
-    def search_emails(self, folder: str, search_criteria: dict, use_uid_filter: bool = True) -> Tuple[bool, list]:
+    def search_emails(
+        self, folder: str, search_criteria: dict, use_uid_filter: bool = True
+    ) -> Tuple[bool, list]:
         spinner = None
         try:
             folder_variants = []
-            if ' ' in folder or '/' in folder:
+            if " " in folder or "/" in folder:
                 folder_variants = [f'"{folder}"', folder]
             else:
                 folder_variants = [folder]
-            
+
             selected = False
             for folder_variant in folder_variants:
                 try:
                     status, response = self.connection.select(folder_variant)
-                    if status == 'OK':
+                    if status == "OK":
                         selected = True
                         self.current_folder = folder
                         break
                 except Exception:
                     continue
-            
+
             if not selected:
-                raise Exception(f"Could not select folder '{folder}' (tried: {', '.join(folder_variants)})")
-            
+                raise Exception(
+                    f"Could not select folder '{folder}' (tried: {', '.join(folder_variants)})"
+                )
+
             search_criteria = self._expand_subject_criteria(search_criteria)
 
             formatted_criteria = self._format_search_criteria(search_criteria)
@@ -403,50 +430,65 @@ class EmailConnector:
                 formatted_criteria = ascii_fallback
             print(f"Using IMAP search criteria: {formatted_criteria}")
             logger.info("IMAP search criteria: %s", formatted_criteria)
-            
+
             spinner = ProgressSpinner(f"Searching folder '{folder}'")
             spinner.start()
-            
+
             try:
                 if use_uid_filter:
                     uid_data = self._run_search(formatted_criteria, use_uid=True)
-                    
+
                     spinner.stop()
-                    
+
                     if uid_data[0]:
                         all_uids = uid_data[0].split()
-                        
+
                         if len(all_uids) > 100:
-                            print(f"🔄 Filtering {len(all_uids)} emails against processed cache...")
+                            print(
+                                f"🔄 Filtering {len(all_uids)} emails against processed cache..."
+                            )
                             filter_start = time.time()
                             new_uids = []
                             for i, uid in enumerate(all_uids):
                                 if uid.decode() not in self.processed_uids:
                                     new_uids.append(uid)
                                 if i % 500 == 0 and i > 0:
-                                    sys.stdout.write(f'\r  Filtered {i}/{len(all_uids)} emails...')
+                                    sys.stdout.write(
+                                        f"\r  Filtered {i}/{len(all_uids)} emails..."
+                                    )
                                     sys.stdout.flush()
                             filter_time = time.time() - filter_start
-                            sys.stdout.write(f'\r✓ Filtered {len(all_uids)} emails in {filter_time:.1f}s\n')
+                            sys.stdout.write(
+                                f"\r✓ Filtered {len(all_uids)} emails in {filter_time:.1f}s\n"
+                            )
                             sys.stdout.flush()
                         else:
-                            new_uids = [uid for uid in all_uids if uid.decode() not in self.processed_uids]
-                        
-                        print(f"📊 Found {len(all_uids)} total emails, {len(new_uids)} new (skipping {len(all_uids) - len(new_uids)} already processed)")
+                            new_uids = [
+                                uid
+                                for uid in all_uids
+                                if uid.decode() not in self.processed_uids
+                            ]
+
+                        print(
+                            f"📊 Found {len(all_uids)} total emails, {len(new_uids)} new (skipping {len(all_uids) - len(new_uids)} already processed)"
+                        )
                         return True, new_uids
-                    
+
                     return True, []
                 else:
-                    message_numbers = self._run_search(formatted_criteria, use_uid=False)
+                    message_numbers = self._run_search(
+                        formatted_criteria, use_uid=False
+                    )
 
                     spinner.stop()
-                    
+
                     if message_numbers[0]:
                         return True, message_numbers[0].split()
                     return True, []
 
             except imaplib.IMAP4.error as e:
-                if spinner: spinner.stop()
+                if spinner:
+                    spinner.stop()
                 logger.error("IMAP search failed in folder '%s': %s", folder, e)
                 print(f"⚠ Search failed: {e}")
                 return False, []
@@ -461,70 +503,86 @@ class EmailConnector:
             return False, []
 
     @retry_with_backoff(max_retries=3, base_delay=1)
-    def fetch_email(self, message_id: bytes, protocol: str = 'BODY.PEEK[]', use_uid: bool = True) -> Tuple[bool, Optional[tuple]]:
+    def fetch_email(
+        self, message_id: bytes, protocol: str = "BODY.PEEK[]", use_uid: bool = True
+    ) -> Tuple[bool, Optional[tuple]]:
         try:
             if self.fetch_count >= self.max_fetches_per_session:
                 if not self._refresh_session():
                     return False, None
-            
-            fetch_protocol = 'BODY.PEEK[]' if self.service_config['server'] == 'imap.mail.me.com' else protocol
-            
+
+            fetch_protocol = (
+                "BODY.PEEK[]"
+                if self.service_config["server"] == "imap.mail.me.com"
+                else protocol
+            )
+
             if use_uid:
-                _, msg_data = self.connection.uid('fetch', message_id, f'({fetch_protocol})')
+                _, msg_data = self.connection.uid(
+                    "fetch", message_id, f"({fetch_protocol})"
+                )
             else:
-                _, msg_data = self.connection.fetch(message_id, f'({fetch_protocol})')
-            
+                _, msg_data = self.connection.fetch(message_id, f"({fetch_protocol})")
+
             if not msg_data or not msg_data[0]:
                 return False, None
-            
+
             self.fetch_count += 1
             time.sleep(self.fetch_delay)
             return True, msg_data[0]
         except imaplib.IMAP4.error as e:
             error_str = str(e).lower()
-            if 'no such message' in error_str or 'invalid message' in error_str:
+            if "no such message" in error_str or "invalid message" in error_str:
                 return False, None
             raise
         except Exception as e:
             error_str = str(e).lower()
-            if 'no such message' in error_str or 'invalid message' in error_str:
+            if "no such message" in error_str or "invalid message" in error_str:
                 return False, None
             print(f"Error fetching email {message_id}: {str(e)}")
             raise
 
     @retry_with_backoff(max_retries=3, base_delay=1)
-    def fetch_emails_batch(self, message_ids: List[bytes], use_uid: bool = True) -> List[tuple]:
+    def fetch_emails_batch(
+        self, message_ids: List[bytes], use_uid: bool = True
+    ) -> List[tuple]:
         results = []
         total_batches = (len(message_ids) + self.batch_size - 1) // self.batch_size
-        
+
         for i in range(0, len(message_ids), self.batch_size):
-            batch = message_ids[i:i + self.batch_size]
+            batch = message_ids[i : i + self.batch_size]
             batch_num = (i // self.batch_size) + 1
-            
+
             if self.fetch_count >= self.max_fetches_per_session:
                 if not self._refresh_session():
                     break
-            
+
             try:
-                id_range = b','.join(batch)
-                print(f"Fetching batch {batch_num}/{total_batches} ({len(batch)} emails)...")
-                
+                id_range = b",".join(batch)
+                print(
+                    f"Fetching batch {batch_num}/{total_batches} ({len(batch)} emails)..."
+                )
+
                 if use_uid:
-                    _, msg_data = self.connection.uid('fetch', id_range, '(BODY.PEEK[])')
+                    _, msg_data = self.connection.uid(
+                        "fetch", id_range, "(BODY.PEEK[])"
+                    )
                 else:
-                    _, msg_data = self.connection.fetch(id_range, '(BODY.PEEK[])')
-                
+                    _, msg_data = self.connection.fetch(id_range, "(BODY.PEEK[])")
+
                 for item in msg_data:
                     if isinstance(item, tuple) and len(item) >= 2:
                         results.append(item)
-                
+
                 self.fetch_count += len(batch)
                 time.sleep(self.batch_delay)
-                
+
             except imaplib.IMAP4.error as e:
                 error_str = str(e).lower()
-                if 'no such message' in error_str or 'invalid message' in error_str:
-                    print(f"Some messages in batch {batch_num} no longer exist, fetching individually...")
+                if "no such message" in error_str or "invalid message" in error_str:
+                    print(
+                        f"Some messages in batch {batch_num} no longer exist, fetching individually..."
+                    )
                     for msg_id in batch:
                         success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
                         if success and email_data:
@@ -537,8 +595,10 @@ class EmailConnector:
                             results.append(email_data)
             except Exception as e:
                 error_str = str(e).lower()
-                if 'no such message' in error_str or 'invalid message' in error_str:
-                    print(f"Some messages in batch {batch_num} no longer exist, fetching individually...")
+                if "no such message" in error_str or "invalid message" in error_str:
+                    print(
+                        f"Some messages in batch {batch_num} no longer exist, fetching individually..."
+                    )
                     for msg_id in batch:
                         success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
                         if success and email_data:
@@ -549,58 +609,72 @@ class EmailConnector:
                         success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
                         if success and email_data:
                             results.append(email_data)
-        
+
         return results
 
     @retry_with_backoff(max_retries=3, base_delay=1)
-    def fetch_email_headers(self, message_id: bytes, use_uid: bool = True) -> Tuple[bool, Optional[dict]]:
+    def fetch_email_headers(
+        self, message_id: bytes, use_uid: bool = True
+    ) -> Tuple[bool, Optional[dict]]:
         try:
             if self.fetch_count >= self.max_fetches_per_session:
                 if not self._refresh_session():
                     return False, None
-            
+
             if use_uid:
-                _, msg_data = self.connection.uid('fetch', message_id, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
+                _, msg_data = self.connection.uid(
+                    "fetch",
+                    message_id,
+                    "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])",
+                )
             else:
-                _, msg_data = self.connection.fetch(message_id, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
-            
+                _, msg_data = self.connection.fetch(
+                    message_id, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])"
+                )
+
             self.fetch_count += 1
             time.sleep(self.fetch_delay / 2)
-            
+
             if msg_data and msg_data[0]:
-                header_data = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
+                header_data = (
+                    msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
+                )
                 if isinstance(header_data, bytes):
-                    header_text = header_data.decode('utf-8', errors='ignore')
+                    header_text = header_data.decode("utf-8", errors="ignore")
                     headers = {}
-                    for line in header_text.split('\n'):
-                        if ':' in line:
-                            key, value = line.split(':', 1)
+                    for line in header_text.split("\n"):
+                        if ":" in line:
+                            key, value = line.split(":", 1)
                             headers[key.strip().lower()] = value.strip()
                     return True, headers
-            
+
             return False, None
         except Exception as e:
             print(f"Error fetching email headers {message_id}: {str(e)}")
             return False, None
-    
-    def fetch_headers_batch(self, message_ids: List[bytes], use_uid: bool = True) -> List[Tuple[bytes, dict]]:
+
+    def fetch_headers_batch(
+        self, message_ids: List[bytes], use_uid: bool = True
+    ) -> List[Tuple[bytes, dict]]:
         results = []
         for msg_id in message_ids:
             success, headers = self.fetch_email_headers(msg_id, use_uid=use_uid)
             if success and headers:
                 results.append((msg_id, headers))
         return results
-    
-    def filter_by_subject_keywords(self, message_ids: List[bytes], keywords: List[str], use_uid: bool = True) -> List[bytes]:
+
+    def filter_by_subject_keywords(
+        self, message_ids: List[bytes], keywords: List[str], use_uid: bool = True
+    ) -> List[bytes]:
         print(f"🔍 Pre-filtering {len(message_ids)} emails by subject keywords...")
         headers_data = self.fetch_headers_batch(message_ids, use_uid=use_uid)
-        
+
         filtered = []
         for msg_id, headers in headers_data:
-            subject = headers.get('subject', '').lower()
+            subject = headers.get("subject", "").lower()
             if any(keyword.lower() in subject for keyword in keywords):
                 filtered.append(msg_id)
-        
+
         print(f"✓ Filtered to {len(filtered)}/{len(message_ids)} relevant emails")
         return filtered
 
@@ -608,47 +682,50 @@ class EmailConnector:
         try:
             if not self.connection:
                 return None
-            
-            quoted_folder = f'"{folder}"' if ' ' in folder or '/' in folder else folder
-            
+
+            quoted_folder = f'"{folder}"' if " " in folder or "/" in folder else folder
+
             try:
                 typ, data = self.connection.select(quoted_folder)
-                if typ != 'OK':
+                if typ != "OK":
                     return None
                 self.current_folder = folder
             except Exception as e:
                 return None
-            
+
             try:
                 tag = self.connection._new_tag()
-                self.connection.send(f'{tag.decode()} IDLE\r\n'.encode())
-                
+                self.connection.send(f"{tag.decode()} IDLE\r\n".encode())
+
                 response = self.connection.readline()
-                if b'+ idling' not in response.lower() and b'+ waiting' not in response.lower():
+                if (
+                    b"+ idling" not in response.lower()
+                    and b"+ waiting" not in response.lower()
+                ):
                     try:
                         self.connection.readline()
                     except:
                         pass
                     return None
-                
+
                 start_time = time.time()
                 while time.time() - start_time < timeout:
                     try:
                         self.connection.socket().settimeout(1)
                         data = self.connection.readline()
-                        if data and (b'EXISTS' in data or b'RECENT' in data):
-                            self.connection.send(b'DONE\r\n')
+                        if data and (b"EXISTS" in data or b"RECENT" in data):
+                            self.connection.send(b"DONE\r\n")
                             self.connection.readline()
                             return True
                     except Exception:
                         continue
-                
-                self.connection.send(b'DONE\r\n')
+
+                self.connection.send(b"DONE\r\n")
                 self.connection.readline()
                 return False
             except Exception:
                 try:
-                    self.connection.send(b'DONE\r\n')
+                    self.connection.send(b"DONE\r\n")
                     self.connection.readline()
                 except:
                     pass
@@ -658,9 +735,9 @@ class EmailConnector:
 
     def get_fetch_stats(self) -> dict:
         return {
-            'fetch_count': self.fetch_count,
-            'max_fetches': self.max_fetches_per_session,
-            'remaining': self.max_fetches_per_session - self.fetch_count
+            "fetch_count": self.fetch_count,
+            "max_fetches": self.max_fetches_per_session,
+            "remaining": self.max_fetches_per_session - self.fetch_count,
         }
 
     def get_folders(self) -> list:
@@ -674,9 +751,9 @@ class EmailConnector:
                     if len(parts) >= 3:
                         folder_names.append(parts[-2])
                 else:
-                    parts = folder_str.split(' ')
+                    parts = folder_str.split(" ")
                     if len(parts) >= 3:
-                        folder_names.append(' '.join(parts[2:]))
+                        folder_names.append(" ".join(parts[2:]))
             return folder_names
         except Exception as e:
             print(f"Error getting folders: {str(e)}")

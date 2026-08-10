@@ -42,7 +42,7 @@ from typing import Set
 
 **New Instance Variables:**
 ```python
-self.processed_uids_file = Path(f'.processed_uids_{email}.json')
+self.processed_uids_file = Path(f".processed_uids_{email}.json")
 self.processed_uids: Set[str] = self._load_processed_uids()
 self.batch_delay = 0.05  # For ProtonMail Bridge
 ```
@@ -65,10 +65,10 @@ self.batch_delay = 0.05  # For ProtonMail Bridge
 
 **ProtonMail Bridge Detection:**
 ```python
-if self.service_config['server'] == '127.0.0.1':
-    self.fetch_delay = 0.01        # 10x faster
-    self.batch_delay = 0.05        # 10x faster
-    self.batch_size = 200          # 4x larger
+if self.service_config["server"] == "127.0.0.1":
+    self.fetch_delay = 0.01  # 10x faster
+    self.batch_delay = 0.05  # 10x faster
+    self.batch_size = 200  # 4x larger
     self.max_fetches_per_session = 5000  # 5x more
 ```
 
@@ -90,9 +90,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 **Parallel Processing Pattern:**
 ```python
 with ThreadPoolExecutor(max_workers=4) as executor:
-    future_to_data = {executor.submit(self.processor.process_email, data): (data, idx) 
-                      for idx, data in enumerate(email_data_list) if data}
-    
+    future_to_data = {
+        executor.submit(self.processor.process_email, data): (data, idx)
+        for idx, data in enumerate(email_data_list)
+        if data
+    }
+
     for future in as_completed(future_to_data):
         email_data, idx = future_to_data[future]
         result = future.result()
@@ -107,10 +110,10 @@ with ThreadPoolExecutor(max_workers=4) as executor:
 **Changed:**
 ```python
 # Before:
-soup = BeautifulSoup(html_content, 'html.parser')
+soup = BeautifulSoup(html_content, "html.parser")
 
 # After:
-soup = BeautifulSoup(html_content, 'lxml')
+soup = BeautifulSoup(html_content, "lxml")
 ```
 
 **Affected Methods:**
@@ -125,10 +128,10 @@ soup = BeautifulSoup(html_content, 'lxml')
 **Changed:**
 ```python
 # Before:
-soup = BeautifulSoup(html_content, 'html.parser')
+soup = BeautifulSoup(html_content, "html.parser")
 
 # After:
-soup = BeautifulSoup(html_content, 'lxml')
+soup = BeautifulSoup(html_content, "lxml")
 ```
 
 **Affected Methods:**
@@ -141,10 +144,10 @@ soup = BeautifulSoup(html_content, 'lxml')
 **Changed:**
 ```python
 # Before:
-soup = BeautifulSoup(html_content, 'html.parser')
+soup = BeautifulSoup(html_content, "html.parser")
 
 # After:
-soup = BeautifulSoup(html_content, 'lxml')
+soup = BeautifulSoup(html_content, "lxml")
 ```
 
 **Affected Methods:**

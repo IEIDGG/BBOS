@@ -144,10 +144,10 @@ rm .processed_uids_*.json
 If you need to adjust settings, edit `email_processing/connector.py`:
 
 ```python
-if self.service_config['server'] == '127.0.0.1':
-    self.fetch_delay = 0.01        # Delay between fetches (default: 0.01s)
-    self.batch_delay = 0.05        # Delay between batches (default: 0.05s)
-    self.batch_size = 200          # Emails per batch (default: 200)
+if self.service_config["server"] == "127.0.0.1":
+    self.fetch_delay = 0.01  # Delay between fetches (default: 0.01s)
+    self.batch_delay = 0.05  # Delay between batches (default: 0.05s)
+    self.batch_size = 200  # Emails per batch (default: 200)
     self.max_fetches_per_session = 5000  # Session limit (default: 5000)
 ```
 
