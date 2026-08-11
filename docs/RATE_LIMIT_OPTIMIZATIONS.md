@@ -85,10 +85,10 @@ Usage: 4.7%
 You can adjust these settings in `EmailConnector.__init__()`:
 
 ```python
-self.fetch_count = 0              # Current session count
+self.fetch_count = 0  # Current session count
 self.max_fetches_per_session = 1000  # Maximum fetches allowed
-self.batch_size = 50              # Emails per batch
-self.fetch_delay = 0.1            # Delay between fetches (seconds)
+self.batch_size = 50  # Emails per batch
+self.fetch_delay = 0.1  # Delay between fetches (seconds)
 ```
 
 ## Gmail IMAP Limits (Reference)

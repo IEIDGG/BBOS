@@ -41,7 +41,12 @@ jobs:
           print('all imports OK')
           "
 
-      # TODO(Phase 4): add `ruff check` and `ruff format --check` here
+      - name: Ruff lint
+        run: uvx --from ruff==0.16.2 ruff check .
+
+      - name: Ruff format check
+        run: uvx --from ruff==0.16.2 ruff format --check .
+
       # TODO(Phase 5): add `ty check` here
 
   install-bat-windows:
