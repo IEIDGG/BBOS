@@ -48,7 +48,7 @@ jobs:
         run: uvx --from ruff==0.16.2 ruff format --check .
 
       - name: ty type check
-        run: uvx --from ty==0.0.70 ty check --force-exclude --output-format github .
+        run: uvx --from ty==0.0.70 ty check --output-format github .
 
   install-bat-windows:
     # End-to-end test of the actual end-user install flow. main.py itself
