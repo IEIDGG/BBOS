@@ -155,6 +155,12 @@
       }
     }
   },
+  "details_link": {
+    "confirmation": {
+      "tag": "a",
+      "text_contains": "View order details"
+    }
+  },
   "costco_parsing": {
     "order_number": {
       "confirmation": {
