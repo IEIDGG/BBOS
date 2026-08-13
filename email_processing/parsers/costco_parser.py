@@ -2,6 +2,7 @@ import json
 import os
 import re
 import logging
+from datetime import datetime
 from bs4 import BeautifulSoup
 from typing import Tuple, List, Dict, Any, Optional
 
@@ -96,6 +97,7 @@ class CostcoParser:
         text = text.replace('&zwnj;', '')
         text = text.replace('\u200b', '')
         text = text.replace('\xad', '')
+        text = text.replace('\u00ad', '')
         text = text.replace('\xa0', ' ')
         text = text.replace('&nbsp;', ' ')
         text = re.sub(r'\s+', ' ', text)
@@ -204,6 +206,19 @@ class CostcoParser:
         return None
 
     @staticmethod
+    def _convert_date_to_iso(date_str: str) -> Optional[str]:
+        try:
+            dt = datetime.strptime(date_str, '%b %d, %Y')
+            return dt.strftime('%Y-%m-%d')
+        except ValueError:
+            try:
+                dt = datetime.strptime(date_str, '%B %d, %Y')
+                return dt.strftime('%Y-%m-%d')
+            except ValueError:
+                logger.warning(f"Failed to parse date: {date_str}")
+                return None
+
+    @staticmethod
     def extract_order_date(soup: BeautifulSoup) -> Optional[str]:
         tds = soup.find_all('td', class_='order-placed-text')
         for td in tds:
@@ -216,8 +231,11 @@ class CostcoParser:
                         if text and 'Order Placed' not in text:
                             date_match = re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}', text)
                             if date_match:
-                                logger.debug(f"Extracted order date: {date_match.group()}")
-                                return date_match.group()
+                                date_str = date_match.group()
+                                iso_date = CostcoParser._convert_date_to_iso(date_str)
+                                if iso_date:
+                                    logger.debug(f"Extracted order date: {iso_date}")
+                                    return iso_date
         
         all_tds = soup.find_all('td')
         for td in all_tds:
@@ -225,8 +243,11 @@ class CostcoParser:
             if 'Order Placed' in text and 'Order Number' not in text:
                 date_match = re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}', text)
                 if date_match:
-                    logger.debug(f"Extracted order date from text: {date_match.group()}")
-                    return date_match.group()
+                    date_str = date_match.group()
+                    iso_date = CostcoParser._convert_date_to_iso(date_str)
+                    if iso_date:
+                        logger.debug(f"Extracted order date from text: {iso_date}")
+                        return iso_date
         
         page_text = soup.get_text()
         date_match = re.search(r'Order Placed\s*[:\s]*\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}', page_text)
@@ -234,8 +255,11 @@ class CostcoParser:
             full_match = date_match.group()
             date_part = re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}', full_match)
             if date_part:
-                logger.debug(f"Extracted order date from page text: {date_part.group()}")
-                return date_part.group()
+                date_str = date_part.group()
+                iso_date = CostcoParser._convert_date_to_iso(date_str)
+                if iso_date:
+                    logger.debug(f"Extracted order date from page text: {iso_date}")
+                    return iso_date
         
         return None
 
@@ -285,10 +309,12 @@ class CostcoParser:
             spans = shipping_table.find_all('span')
             address_parts = []
             for span in spans:
-                text = CostcoParser._clean_text(span.get_text())
-                if text and 'Shipping Address' not in text:
-                    lines = [line.strip() for line in text.split('\n') if line.strip()]
-                    address_parts.extend(lines)
+                raw_text = span.get_text(separator='\n')
+                if 'Shipping Address' in raw_text:
+                    continue
+                lines = [CostcoParser._clean_text(line) for line in raw_text.split('\n')]
+                lines = [line for line in lines if line]
+                address_parts.extend(lines)
             
             if address_parts:
                 CostcoParser._populate_address_from_parts(address, address_parts)
@@ -350,6 +376,8 @@ class CostcoParser:
         if len(text) == 10 and text.isdigit() and text.startswith('12'):
             return False
         if CostcoParser._is_valid_membership_number(text):
+            return False
+        if "COSTCOGROCERY" in text:
             return False
         if re.match(r'^1Z[A-Z0-9]{16}$', text):
             return True

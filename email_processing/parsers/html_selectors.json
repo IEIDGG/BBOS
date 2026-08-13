@@ -60,7 +60,10 @@
       "target": {
         "tag": "span",
         "attributes": {
-          "style_contains_all": ["font-weight: 700", "font-size: 14px"]
+          "style_contains_all": [
+            "font-weight: 700",
+            "font-size: 14px"
+          ]
         }
       }
     },
@@ -75,7 +78,11 @@
       "target": {
         "tag": "span",
         "attributes": {
-          "style_contains_all": ["font-weight: 700", "font-size: 14px", "line-height: 18px"]
+          "style_contains_all": [
+            "font-weight: 700",
+            "font-size: 14px",
+            "line-height: 18px"
+          ]
         }
       }
     }
@@ -104,7 +111,10 @@
       "target": {
         "tag": "span",
         "attributes": {
-          "style_contains_all": ["font-weight: 700", "font-size: 14px"]
+          "style_contains_all": [
+            "font-weight: 700",
+            "font-size: 14px"
+          ]
         }
       }
     },
@@ -119,7 +129,10 @@
       "target": {
         "tag": "span",
         "attributes": {
-          "style_contains_all": ["font-weight: 700", "font-size: 14px"]
+          "style_contains_all": [
+            "font-weight: 700",
+            "font-size: 14px"
+          ]
         }
       }
     }
@@ -128,7 +141,12 @@
     "title": {
       "tag": "span",
       "attributes": {
-        "style_contains_all": ["font-weight: 700", "font-size: 14px", "line-height: 18px", "font-family: Arial"]
+        "style_contains_all": [
+          "font-weight: 700",
+          "font-size: 14px",
+          "line-height: 18px",
+          "font-family: Arial"
+        ]
       }
     },
     "code_extraction": {
@@ -151,8 +169,17 @@
     "address_span": {
       "tag": "span",
       "attributes": {
-        "style_contains_all": ["font-size: 20px", "font-weight: 700"]
+        "style_contains_all": [
+          "font-size: 20px",
+          "font-weight: 700"
+        ]
       }
+    }
+  },
+  "details_link": {
+    "confirmation": {
+      "tag": "a",
+      "text_contains": "View order details"
     }
   },
   "costco_parsing": {
@@ -329,4 +356,4 @@
       }
     }
   }
-} 
+}

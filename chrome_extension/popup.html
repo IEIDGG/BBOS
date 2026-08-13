@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { width: 360px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 16px; }
+    h1 { font-size: 16px; margin-bottom: 12px; color: #fff; display: flex; align-items: center; gap: 8px; }
+    h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .version-badge { margin-left: auto; color: #888; font-size: 11px; font-weight: 600; background: #16213e; border: 1px solid #333; border-radius: 999px; padding: 2px 7px; -webkit-text-fill-color: #888; }
+
+    /* Auth section */
+    .auth-section { text-align: center; padding: 20px 0; }
+    .auth-section p { font-size: 13px; color: #888; margin-bottom: 14px; }
+    .user-info { display: flex; align-items: center; justify-content: space-between; background: #16213e; border: 1px solid #333; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+    .user-email { font-size: 13px; color: #a0d2db; font-weight: 500; }
+    .sign-out-btn { width: auto; background: none; border: 1px solid #555; color: #aaa; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; line-height: 1.2; cursor: pointer; flex-shrink: 0; }
+    .sign-out-btn:hover { border-color: #f85149; color: #f85149; }
+    #signInBtn { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; border: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; }
+    #signInBtn:hover { opacity: 0.9; }
+
+    /* Scrape controls */
+    .scrape-section { display: none; }
+    .field { margin-bottom: 12px; }
+    label { display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; font-weight: 500; }
+    input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid #333; border-radius: 6px; background: #16213e; color: #e0e0e0; font-size: 13px; }
+    textarea { min-height: 58px; resize: vertical; font-family: inherit; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: #667eea; }
+    .field-hint { font-size: 11px; color: #888; margin-top: 4px; line-height: 1.35; }
+    .amazon-account { background: #101a33; border: 1px solid #2b3758; border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; font-size: 12px; color: #aaa; }
+    .amazon-account strong { color: #a0d2db; font-weight: 600; }
+    .row { display: flex; gap: 8px; }
+    .row .field { flex: 1; }
+    button { width: 100%; padding: 10px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    #startBtn { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; margin-bottom: 8px; }
+    #startBtn:hover { opacity: 0.9; }
+    #startBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #viewLogBtn { background: #16213e; color: #79c0ff; border: 1px solid #333; margin-bottom: 8px; }
+    #viewLogBtn:hover { border-color: #667eea; }
+    #stopBtn { background: #dc3545; color: #fff; display: none; margin-bottom: 8px; }
+    #stopBtn:hover { opacity: 0.9; }
+    .progress { background: #16213e; border: 1px solid #333; border-radius: 6px; padding: 10px; margin-bottom: 8px; display: none; }
+    .progress-bar { height: 4px; background: #333; border-radius: 2px; margin-bottom: 6px; overflow: hidden; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 2px; transition: width 0.3s; width: 0%; }
+    .progress-text { font-size: 11px; color: #aaa; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; display: none; }
+    .stat { background: #16213e; border: 1px solid #333; border-radius: 6px; padding: 8px; text-align: center; }
+    .stat-num { font-size: 18px; font-weight: 700; color: #667eea; }
+    .stat-label { font-size: 10px; color: #888; margin-top: 2px; }
+    .log { max-height: 120px; overflow-y: auto; background: #0d1117; border: 1px solid #333; border-radius: 6px; padding: 8px; font-family: 'SF Mono', Monaco, monospace; font-size: 11px; line-height: 1.5; display: none; }
+    .log-entry { color: #8b949e; }
+    .log-entry.success { color: #56d364; }
+    .log-entry.error { color: #f85149; }
+    .log-entry.info { color: #79c0ff; }
+    .checkbox-field { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+    .checkbox-field input { width: auto; }
+    .checkbox-field label { margin-bottom: 0; }
+    .zip-field-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+    .zip-field-header label { margin-bottom: 0; }
+    #importZipMappingsBtn { width: auto; padding: 4px 8px; font-size: 11px; font-weight: 600; background: #16213e; color: #79c0ff; border: 1px solid #333; border-radius: 6px; cursor: pointer; }
+    #importZipMappingsBtn:hover { border-color: #667eea; }
+    #importZipMappingsBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .zip-import-status { font-size: 11px; margin-top: 4px; min-height: 16px; }
+    .zip-import-status.success { color: #56d364; }
+    .zip-import-status.error { color: #f85149; }
+    .hidden { display: none !important; }
+    .single-order-section { background: #101a33; border: 1px solid #667eea; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    .single-order-title { font-size: 13px; color: #e0e0e0; margin-bottom: 4px; font-weight: 600; }
+    .single-order-id { font-size: 12px; color: #a0d2db; margin-bottom: 10px; font-family: 'SF Mono', Monaco, monospace; }
+    #scanSingleOrderBtn { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; margin-bottom: 6px; }
+    .dismiss-single-order { background: none; border: none; color: #888; font-size: 11px; cursor: pointer; padding: 0; width: auto; font-weight: 500; }
+    .dismiss-single-order:hover { color: #aaa; }
+    .section-divider { border: none; border-top: 1px solid #333; margin: 12px 0; }
+    .section-label { font-size: 11px; color: #888; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .update-banner { background: #2a2414; border: 1px solid #7a6520; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+    .update-banner-text { font-size: 12px; color: #f0d78c; line-height: 1.4; margin-bottom: 8px; }
+    .update-banner-actions { display: flex; align-items: center; gap: 8px; }
+    .update-download-link { flex: 1; text-align: center; background: #7a6520; color: #fff; text-decoration: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+    .update-download-link:hover { opacity: 0.9; }
+    .update-dismiss { width: auto; background: none; border: none; color: #888; font-size: 11px; font-weight: 500; padding: 0; cursor: pointer; }
+    .update-dismiss:hover { color: #aaa; }
+  </style>
+</head>
+<body>
+  <h1><span>IEID</span> Order Scraper <small class="version-badge" id="extensionVersion">v1.1.6</small></h1>
+
+  <div class="update-banner hidden" id="updateBanner">
+    <div class="update-banner-text">v<span id="updateLatestVersion"></span> is available. Download the update, unzip it, and reload the extension on <code>chrome://extensions</code>.</div>
+    <div class="update-banner-actions">
+      <a class="update-download-link" id="updateDownloadLink" href="#" target="_blank" rel="noopener noreferrer">Get update</a>
+      <button type="button" class="update-dismiss" id="dismissUpdateBtn">Dismiss</button>
+    </div>
+  </div>
+
+  <!-- Auth: Not signed in -->
+  <div class="auth-section" id="authSection">
+    <p>Sign in to your IEID account to start scraping orders.</p>
+    <button id="signInBtn">Sign in with IEID</button>
+  </div>
+
+  <!-- Auth: Signed in -->
+  <div class="user-info hidden" id="userInfo">
+    <span class="user-email" id="userEmail"></span>
+    <button class="sign-out-btn" id="signOutBtn">Sign out</button>
+  </div>
+
+  <!-- Scrape controls (shown after auth) -->
+  <div class="scrape-section" id="scrapeSection">
+    <div class="amazon-account">
+      Amazon account: <strong id="amazonAccountEmail">Detected when scraping</strong>
+    </div>
+
+    <div class="single-order-section hidden" id="singleOrderSection">
+      <div class="single-order-title">Scan current order</div>
+      <div class="single-order-id" id="pendingOrderId"></div>
+      <button id="scanSingleOrderBtn">Scan This Order</button>
+      <button class="dismiss-single-order" id="dismissSingleOrderBtn" type="button">Dismiss</button>
+    </div>
+
+    <hr class="section-divider hidden" id="bulkScrapeDivider">
+    <div class="section-label hidden" id="bulkScrapeLabel">Bulk scrape</div>
+
+    <div class="row">
+      <div class="field">
+        <label>Year Filter</label>
+        <select id="yearFilter">
+          <option value="year-2026" selected>2026</option>
+          <option value="year-2025">2025</option>
+          <option value="year-2024">2024</option>
+          <option value="year-2023">2023</option>
+          <option value="year-2022">2022</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Max Pages (0 = all)</label>
+        <input type="number" id="maxPages" value="2" min="0" max="100" />
+      </div>
+    </div>
+
+    <div class="checkbox-field">
+      <input type="checkbox" id="fetchTracking" checked />
+      <label for="fetchTracking">Fetch tracking details</label>
+    </div>
+
+    <div class="checkbox-field">
+      <input type="checkbox" id="useDbCache" />
+      <label for="useDbCache">Skip tracked shipments already in IEID</label>
+    </div>
+    <div class="field-hint" style="margin-top: -8px; margin-bottom: 12px;">Only skips tracking-page tabs. Amazon list scrape and upload still run.</div>
+
+    <div class="field">
+      <div class="zip-field-header">
+        <label for="zipFilters">Keep orders for ZIP codes</label>
+        <button type="button" id="importZipMappingsBtn">Import from IEID</button>
+      </div>
+      <textarea id="zipFilters" placeholder="Example: 10001, 11201, 07030"></textarea>
+      <div class="field-hint">Leave blank to import all scraped orders. Separate multiple ZIPs with commas, spaces, or new lines.</div>
+      <div class="zip-import-status" id="zipImportStatus"></div>
+    </div>
+
+    <button id="startBtn">Start Scraping</button>
+    <button id="viewLogBtn" type="button">View Live Log</button>
+    <button id="stopBtn">Stop</button>
+
+    <div class="progress" id="progress">
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-text" id="progressText">Initializing...</div>
+    </div>
+
+    <div class="stats" id="stats">
+      <div class="stat"><div class="stat-num" id="statOrders">0</div><div class="stat-label">Orders</div></div>
+      <div class="stat"><div class="stat-num" id="statShipments">0</div><div class="stat-label">Shipments</div></div>
+      <div class="stat"><div class="stat-num" id="statTracking">0</div><div class="stat-label">Tracked</div></div>
+      <div class="stat"><div class="stat-num" id="statSent">0</div><div class="stat-label">Sent</div></div>
+      <div class="stat"><div class="stat-num" id="statCancelled">0</div><div class="stat-label">Cancelled</div></div>
+      <div class="stat"><div class="stat-num" id="statSkipped">0</div><div class="stat-label">Skipped</div></div>
+    </div>
+
+    <div class="log" id="log"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

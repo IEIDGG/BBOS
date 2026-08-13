@@ -3,3 +3,4 @@
 from .bb_parser import OrderParser
 from .xbox_parser import XboxParser
 from .costco_parser import CostcoParser
+from .amazon_parser import AmazonParser
