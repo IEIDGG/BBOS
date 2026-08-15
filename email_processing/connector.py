@@ -1,6 +1,7 @@
 import imaplib
 import ssl
 import re
+import socket
 import time
 import json
 import sys
@@ -14,18 +15,60 @@ from order_extraction.config.settings import EMAIL_SERVERS
 
 logger = logging.getLogger(__name__)
 
+SOCKET_TIMEOUT = 120
+RECONNECT_ATTEMPTS = 3
+RECONNECT_BASE_DELAY = 2
+
+CONNECTION_ERROR_MARKERS = (
+    'socket error',
+    'eof occurred',
+    'connection reset',
+    'connection closed',
+    'connection aborted',
+    'broken pipe',
+    'not connected',
+    'timed out',
+    'timeout',
+    'bad file descriptor',
+    'server not connected',
+    'terminating connection',
+)
+
+
+def is_connection_error(error: BaseException) -> bool:
+    if isinstance(error, (imaplib.IMAP4.abort, ssl.SSLError, socket.error, OSError)):
+        return True
+    message = str(error).lower()
+    return any(marker in message for marker in CONNECTION_ERROR_MARKERS)
+
 
 def retry_with_backoff(max_retries=3, base_delay=1):
     def decorator(func):
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(self, *args, **kwargs):
             for attempt in range(max_retries):
                 try:
-                    return func(*args, **kwargs)
+                    return func(self, *args, **kwargs)
                 except Exception as e:
                     if attempt == max_retries - 1:
+                        logger.error(
+                            "%s failed after %s attempts: %s",
+                            func.__name__, max_retries, e,
+                        )
                         raise
+                    if is_connection_error(e):
+                        logger.warning(
+                            "%s lost the IMAP connection (%s); reconnecting",
+                            func.__name__, e,
+                        )
+                        if not self.reconnect(f"{func.__name__}: {e}"):
+                            raise
+                        continue
                     delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        "Retry %s/%s for %s after %ss due to: %s",
+                        attempt + 1, max_retries, func.__name__, delay, e,
+                    )
                     print(f"Retry {attempt + 1}/{max_retries} after {delay}s due to: {str(e)}")
                     time.sleep(delay)
             return None
@@ -119,64 +162,106 @@ class EmailConnector:
         print(f"💾 Saved {len(self.processed_uids)} processed UIDs to cache")
 
     def _refresh_session(self) -> bool:
-        try:
-            print(f"\n🔄 Session limit reached ({self.max_fetches_per_session} fetches). Refreshing connection...")
-            self.save_progress()
-            
-            saved_folder = self.current_folder
-            
-            if self.connection:
-                try:
-                    self.connection.logout()
-                except Exception:
-                    pass
-                finally:
-                    self.connection = None
-            
-            time.sleep(1)
-            
-            self.connect()
-            old_count = self.fetch_count
-            self.fetch_count = 0
-            
-            if saved_folder:
-                try:
-                    folder_variants = []
-                    if ' ' in saved_folder or '/' in saved_folder:
-                        folder_variants = [f'"{saved_folder}"', saved_folder]
-                    else:
-                        folder_variants = [saved_folder]
-                    
-                    for folder_variant in folder_variants:
-                        try:
-                            status, _ = self.connection.select(folder_variant)
-                            if status == 'OK':
-                                print(f"✓ Session refreshed. Reset fetch count from {old_count} to 0. Re-selected folder: {saved_folder}")
-                                return True
-                        except Exception:
-                            continue
-                    print(f"⚠ Session refreshed but could not re-select folder: {saved_folder}")
-                except Exception as e:
-                    print(f"⚠ Session refreshed but error re-selecting folder: {str(e)}")
-            else:
-                print(f"✓ Session refreshed. Reset fetch count from {old_count} to 0")
-            
-            return True
-        except Exception as e:
-            print(f"✗ Error refreshing session: {str(e)}")
+        print(f"\n🔄 Session limit reached ({self.max_fetches_per_session} fetches). Refreshing connection...")
+        logger.info(
+            "Session fetch limit reached (%s); refreshing IMAP connection",
+            self.max_fetches_per_session,
+        )
+        self.save_progress()
+
+        old_count = self.fetch_count
+        if not self.reconnect('session fetch limit reached'):
             return False
+
+        self.fetch_count = 0
+        print(f"✓ Session refreshed. Reset fetch count from {old_count} to 0")
+        return True
+
+    def _close_quietly(self) -> None:
+        if not self.connection:
+            return
+        try:
+            self.connection.logout()
+        except Exception as e:
+            logger.debug("Ignoring error while closing IMAP connection: %s", e)
+        finally:
+            self.connection = None
+
+    def _select_folder(self, folder: str) -> bool:
+        if not folder or not self.connection:
+            return False
+
+        if ' ' in folder or '/' in folder:
+            folder_variants = [f'"{folder}"', folder]
+        else:
+            folder_variants = [folder]
+
+        for folder_variant in folder_variants:
+            try:
+                status, _ = self.connection.select(folder_variant)
+                if status == 'OK':
+                    self.current_folder = folder
+                    return True
+            except Exception as e:
+                logger.debug("Select failed for %s: %s", folder_variant, e)
+        return False
+
+    def reconnect(self, reason: str = '') -> bool:
+        logger.warning("Reconnecting to %s (%s)", self.service_config['server'], reason or 'no reason given')
+        saved_folder = self.current_folder
+        self._close_quietly()
+
+        for attempt in range(1, RECONNECT_ATTEMPTS + 1):
+            try:
+                time.sleep(RECONNECT_BASE_DELAY * attempt)
+                self.connect()
+                if saved_folder and not self._select_folder(saved_folder):
+                    raise imaplib.IMAP4.error(f"Could not re-select folder '{saved_folder}'")
+                logger.info(
+                    "Reconnected to %s on attempt %s (folder=%s)",
+                    self.service_config['server'], attempt, saved_folder or 'none',
+                )
+                print(f"✓ Reconnected to {self.service_config['server']}")
+                return True
+            except Exception as e:
+                logger.error(
+                    "Reconnect attempt %s/%s failed: %s",
+                    attempt, RECONNECT_ATTEMPTS, e,
+                )
+                self._close_quietly()
+
+        print(f"✗ Could not reconnect to {self.service_config['server']}")
+        return False
+
+    def ensure_connection(self) -> bool:
+        if not self.connection:
+            return self.reconnect('no active connection')
+
+        try:
+            status, _ = self.connection.noop()
+            if status == 'OK':
+                return True
+            logger.warning("NOOP returned %s; reconnecting", status)
+        except Exception as e:
+            logger.warning("NOOP failed (%s); reconnecting", e)
+
+        return self.reconnect('failed health check')
 
     def connect(self) -> None:
         try:
             if self.service_config['use_ssl']:
+                context = ssl.create_default_context()
                 self.connection = imaplib.IMAP4_SSL(
                     self.service_config['server'],
-                    self.service_config['port']
+                    self.service_config['port'],
+                    ssl_context=context,
+                    timeout=SOCKET_TIMEOUT
                 )
             elif self.service_config['server'] == '127.0.0.1':
                 self.connection = imaplib.IMAP4(
                     self.service_config['server'],
-                    self.service_config['port']
+                    self.service_config['port'],
+                    timeout=SOCKET_TIMEOUT
                 )
             else:
                 context = ssl.create_default_context()
@@ -184,14 +269,21 @@ class EmailConnector:
                 context.verify_mode = ssl.CERT_NONE
                 self.connection = imaplib.IMAP4(
                     self.service_config['server'],
-                    self.service_config['port']
+                    self.service_config['port'],
+                    timeout=SOCKET_TIMEOUT
                 )
                 self.connection.starttls(ssl_context=context)
 
             self.connection.login(self.email, self.password)
+            logger.info(
+                "Connected to %s as %s",
+                self.service_config['server'], self.email,
+            )
             print(f"Successfully connected to {self.service_config['server']}")
         except Exception as e:
+            logger.error("Error connecting to %s: %s", self.service_config['server'], e)
             print(f"Error connecting to email server: {str(e)}")
+            self.connection = None
             raise
 
     def _format_date_for_imap(self, date_str: str) -> str:
@@ -343,6 +435,17 @@ class EmailConnector:
             formatted_criteria = 'ALL'
 
         def _search(criteria: str, charset: Optional[str]):
+            try:
+                return _send_search(criteria, charset)
+            except Exception as e:
+                if not is_connection_error(e):
+                    raise
+                logger.warning("SEARCH lost the connection (%s); reconnecting", e)
+                if not self.reconnect(f"search: {e}"):
+                    raise
+                return _send_search(criteria, charset)
+
+        def _send_search(criteria: str, charset: Optional[str]):
             criteria_bytes = criteria.encode('ascii' if charset is None else 'utf-8')
             if use_uid:
                 if charset is None:
@@ -371,25 +474,11 @@ class EmailConnector:
     def search_emails(self, folder: str, search_criteria: dict, use_uid_filter: bool = True) -> Tuple[bool, list]:
         spinner = None
         try:
-            folder_variants = []
-            if ' ' in folder or '/' in folder:
-                folder_variants = [f'"{folder}"', folder]
-            else:
-                folder_variants = [folder]
-            
-            selected = False
-            for folder_variant in folder_variants:
-                try:
-                    status, response = self.connection.select(folder_variant)
-                    if status == 'OK':
-                        selected = True
-                        self.current_folder = folder
-                        break
-                except Exception:
-                    continue
-            
-            if not selected:
-                raise Exception(f"Could not select folder '{folder}' (tried: {', '.join(folder_variants)})")
+            if not self._select_folder(folder):
+                logger.warning("Could not select folder '%s'; reconnecting", folder)
+                self.current_folder = folder
+                if not self.reconnect(f"select folder '{folder}'"):
+                    raise Exception(f"Could not select folder '{folder}' after reconnect")
             
             search_criteria = self._expand_subject_criteria(search_criteria)
 
@@ -505,51 +594,71 @@ class EmailConnector:
                 if not self._refresh_session():
                     break
             
+            id_range = b','.join(batch)
+            print(f"Fetching batch {batch_num}/{total_batches} ({len(batch)} emails)...")
+
             try:
-                id_range = b','.join(batch)
-                print(f"Fetching batch {batch_num}/{total_batches} ({len(batch)} emails)...")
-                
-                if use_uid:
-                    _, msg_data = self.connection.uid('fetch', id_range, '(BODY.PEEK[])')
-                else:
-                    _, msg_data = self.connection.fetch(id_range, '(BODY.PEEK[])')
-                
-                for item in msg_data:
-                    if isinstance(item, tuple) and len(item) >= 2:
-                        results.append(item)
-                
-                self.fetch_count += len(batch)
-                time.sleep(self.batch_delay)
-                
-            except imaplib.IMAP4.error as e:
-                error_str = str(e).lower()
-                if 'no such message' in error_str or 'invalid message' in error_str:
-                    print(f"Some messages in batch {batch_num} no longer exist, fetching individually...")
-                    for msg_id in batch:
-                        success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
-                        if success and email_data:
-                            results.append(email_data)
-                else:
-                    print(f"Batch fetch error for batch {batch_num}: {e}")
-                    for msg_id in batch:
-                        success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
-                        if success and email_data:
-                            results.append(email_data)
+                msg_data = self._fetch_range(id_range, use_uid)
             except Exception as e:
-                error_str = str(e).lower()
-                if 'no such message' in error_str or 'invalid message' in error_str:
-                    print(f"Some messages in batch {batch_num} no longer exist, fetching individually...")
-                    for msg_id in batch:
-                        success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
-                        if success and email_data:
-                            results.append(email_data)
+                if is_connection_error(e):
+                    logger.warning(
+                        "Batch %s/%s lost the connection (%s); reconnecting",
+                        batch_num, total_batches, e,
+                    )
+                    if not self.reconnect(f"batch fetch {batch_num}: {e}"):
+                        logger.error(
+                            "Reconnect failed; stopping batch fetch at batch %s/%s",
+                            batch_num, total_batches,
+                        )
+                        break
+                    try:
+                        msg_data = self._fetch_range(id_range, use_uid)
+                    except Exception as retry_error:
+                        logger.error(
+                            "Batch %s/%s failed after reconnect: %s",
+                            batch_num, total_batches, retry_error,
+                        )
+                        results.extend(self._fetch_individually(batch, use_uid))
+                        continue
                 else:
-                    print(f"Batch fetch error for batch {batch_num}: {e}")
-                    for msg_id in batch:
-                        success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
-                        if success and email_data:
-                            results.append(email_data)
-        
+                    error_str = str(e).lower()
+                    if 'no such message' in error_str or 'invalid message' in error_str:
+                        print(f"Some messages in batch {batch_num} no longer exist, fetching individually...")
+                    else:
+                        logger.warning("Batch fetch error for batch %s: %s", batch_num, e)
+                        print(f"Batch fetch error for batch {batch_num}: {e}")
+                    results.extend(self._fetch_individually(batch, use_uid))
+                    continue
+
+            for item in msg_data:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    results.append(item)
+
+            self.fetch_count += len(batch)
+            time.sleep(self.batch_delay)
+
+        return results
+
+    def _fetch_range(self, id_range: bytes, use_uid: bool):
+        if use_uid:
+            _, msg_data = self.connection.uid('fetch', id_range, '(BODY.PEEK[])')
+        else:
+            _, msg_data = self.connection.fetch(id_range, '(BODY.PEEK[])')
+        return msg_data or []
+
+    def _fetch_individually(self, batch: List[bytes], use_uid: bool) -> List[tuple]:
+        results = []
+        for msg_id in batch:
+            try:
+                success, email_data = self.fetch_email(msg_id, use_uid=use_uid)
+            except Exception as e:
+                logger.error("Skipping message %s after fetch failure: %s", msg_id, e)
+                if not self.connection:
+                    logger.error("Connection is down; aborting individual fetches")
+                    break
+                continue
+            if success and email_data:
+                results.append(email_data)
         return results
 
     @retry_with_backoff(max_retries=3, base_delay=1)
@@ -580,13 +689,23 @@ class EmailConnector:
             
             return False, None
         except Exception as e:
+            if is_connection_error(e):
+                raise
+            logger.error("Error fetching email headers %s: %s", message_id, e)
             print(f"Error fetching email headers {message_id}: {str(e)}")
             return False, None
     
     def fetch_headers_batch(self, message_ids: List[bytes], use_uid: bool = True) -> List[Tuple[bytes, dict]]:
         results = []
         for msg_id in message_ids:
-            success, headers = self.fetch_email_headers(msg_id, use_uid=use_uid)
+            try:
+                success, headers = self.fetch_email_headers(msg_id, use_uid=use_uid)
+            except Exception as e:
+                logger.error("Header fetch failed for %s: %s", msg_id, e)
+                if not self.connection:
+                    logger.error("Connection is down; aborting header fetches")
+                    break
+                continue
             if success and headers:
                 results.append((msg_id, headers))
         return results
@@ -627,7 +746,7 @@ class EmailConnector:
                 if b'+ idling' not in response.lower() and b'+ waiting' not in response.lower():
                     try:
                         self.connection.readline()
-                    except:
+                    except Exception:
                         pass
                     return None
                 
@@ -640,20 +759,36 @@ class EmailConnector:
                             self.connection.send(b'DONE\r\n')
                             self.connection.readline()
                             return True
-                    except Exception:
+                    except socket.timeout:
+                        continue
+                    except Exception as e:
+                        logger.warning("IDLE read failed: %s", e)
+                        if is_connection_error(e):
+                            self.reconnect(f"idle: {e}")
+                            return None
                         continue
                 
                 self.connection.send(b'DONE\r\n')
                 self.connection.readline()
                 return False
-            except Exception:
+            except Exception as e:
+                logger.warning("IDLE failed on folder '%s': %s", folder, e)
                 try:
                     self.connection.send(b'DONE\r\n')
                     self.connection.readline()
-                except:
+                except Exception:
                     pass
+                if is_connection_error(e):
+                    self.reconnect(f"idle: {e}")
                 return None
+            finally:
+                try:
+                    if self.connection:
+                        self.connection.socket().settimeout(SOCKET_TIMEOUT)
+                except Exception as e:
+                    logger.debug("Could not restore socket timeout: %s", e)
         except Exception as e:
+            logger.warning("idle_wait error on folder '%s': %s", folder, e)
             return None
 
     def get_fetch_stats(self) -> dict:
