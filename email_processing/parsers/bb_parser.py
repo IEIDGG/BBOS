@@ -361,6 +361,27 @@ class OrderParser:
         return tracking_numbers
 
     @staticmethod
+    def _location_line(text: str) -> str:
+        if not text:
+            return ""
+        try:
+            from services.location import location_found, parse_location
+
+            parsed = parse_location(text)
+            if location_found(parsed):
+                logger.debug(
+                    "Extracted location state=%s zip=%s",
+                    parsed["state"],
+                    parsed["zip"],
+                )
+                return parsed["zip_and_state"] or text
+        except ImportError:
+            if ", " in text and any(char.isdigit() for char in text):
+                logger.debug("Extracted location with local city/state/zip heuristic")
+                return text
+        return ""
+
+    @staticmethod
     def extract_shipping_address(soup: BeautifulSoup) -> str:
         logger.debug("Starting shipping address extraction")
         shipping_tds = soup.find_all("td")
@@ -407,9 +428,9 @@ class OrderParser:
 
                     last_line = lines[-1] if lines else ""
                     logger.debug(f"Old format - Last line: '{last_line}'")
-                    if ", " in last_line and any(char.isdigit() for char in last_line):
-                        logger.info("Old format - Extracted location: '%s'", last_line)
-                        return last_line
+                    location = OrderParser._location_line(last_line)
+                    if location:
+                        return location
 
         new_format_tds = [
             td
@@ -432,13 +453,9 @@ class OrderParser:
                     if address_span:
                         address_text = address_span.get_text(separator="\n").strip()
                         logger.debug(f"New format - Address text: '{address_text}'")
-                        if ", " in address_text and any(
-                            char.isdigit() for char in address_text
-                        ):
-                            logger.info(
-                                "New format - Extracted location: '%s'", address_text
-                            )
-                            return address_text
+                        location = OrderParser._location_line(address_text)
+                        if location:
+                            return location
 
         logger.warning("No state/zip found in shipping address")
         return ""

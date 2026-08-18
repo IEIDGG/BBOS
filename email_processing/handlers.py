@@ -70,42 +70,59 @@ class OrderEmailHandler(BaseEmailHandler):
     def _apply_shipped_location(
         self, order: Dict, result: Dict, db_manager=None
     ) -> None:
-        state = (result.get("state") or "").strip()
-        zip_code = (result.get("zip") or "").strip()
-        zip_and_state = (result.get("zip_and_state") or "").strip()
-        address_info = (result.get("address_info") or "").strip()
+        incoming = {
+            "state": str(result.get("state") or ""),
+            "zip": str(result.get("zip") or ""),
+            "zip_and_state": str(
+                result.get("zip_and_state") or result.get("address_info") or ""
+            ),
+            "address_info": str(result.get("address_info") or ""),
+        }
+        try:
+            from services.location import location_found, normalize_location_fields
 
-        if not zip_and_state and address_info:
-            zip_and_state = address_info
+            fields = normalize_location_fields(incoming)
+            found = location_found(fields)
+        except ImportError:
+            logger.debug(
+                "services.location unavailable; using local shipped-location regex"
+            )
+            state = incoming["state"].strip()
+            zip_code = incoming["zip"].strip()
+            zip_and_state = incoming["zip_and_state"].strip()
+            if not state and zip_and_state:
+                match = re.search(r"\b([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b", zip_and_state)
+                if match:
+                    state = match.group(1)
+                    if not zip_code:
+                        zip_code = match.group(2)
+            fields = {
+                "state": state,
+                "zip": zip_code,
+                "zip_and_state": zip_and_state
+                or (f"{state} {zip_code}".strip() if state or zip_code else ""),
+            }
+            found = bool(fields["state"] or fields["zip"] or fields["zip_and_state"])
 
-        if not state and zip_and_state:
-            match = re.search(r"\b([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b", zip_and_state)
-            if match:
-                state = match.group(1)
-                if not zip_code:
-                    zip_code = match.group(2)
+        if fields["state"]:
+            order["state"] = fields["state"]
+        if fields["zip"]:
+            order["zip"] = fields["zip"]
+        if fields["zip_and_state"]:
+            order["zip_and_state"] = fields["zip_and_state"]
 
-        if state:
-            order["state"] = state
-        if zip_code:
-            order["zip"] = zip_code
-        if zip_and_state:
-            order["zip_and_state"] = zip_and_state
-
-        location = zip_and_state or (
-            f"{state} {zip_code}".strip() if state or zip_code else ""
-        )
-        if location:
-            print(f"  Location: {location}")
-            logger.info(
-                "Shipped location for %s: %s",
+        if found:
+            print(f"  Location: {fields['zip_and_state']}")
+            logger.debug(
+                "Shipped location for %s: state=%s zip=%s",
                 result.get("order_number"),
-                location,
+                fields["state"] or "-",
+                fields["zip"] or "-",
             )
             if db_manager:
                 db_manager.update_order_address(
                     result["order_number"],
-                    zip_and_state or state,
+                    fields["zip_and_state"] or fields["state"],
                 )
 
     def _is_empty_value(self, value, key: str = "") -> bool:
@@ -1288,9 +1305,12 @@ class AmazonEmailHandler(BaseEmailHandler):
                     order["shipped_quantity"] = str(shipped_qty)
                     shipped_asins[order_asin] = 0
 
-                if result.get("state") and db_manager:
+                if result.get("state"):
                     order["state"] = result["state"]
-                    db_manager.update_order_address(order["number"], result["state"])
+                    if db_manager:
+                        db_manager.update_order_address(
+                            order["number"], result["state"]
+                        )
 
                 matched_count += 1
                 logger.debug(
@@ -1303,9 +1323,12 @@ class AmazonEmailHandler(BaseEmailHandler):
                 if not order.get("products") and shipped_products:
                     order["products"] = shipped_products
 
-                if result.get("state") and db_manager:
+                if result.get("state"):
                     order["state"] = result["state"]
-                    db_manager.update_order_address(order["number"], result["state"])
+                    if db_manager:
+                        db_manager.update_order_address(
+                            order["number"], result["state"]
+                        )
 
                 matched_count += 1
 

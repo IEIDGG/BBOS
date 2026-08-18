@@ -42,7 +42,7 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
 
 
-def _location_from_text(value: str) -> Dict[str, str]:
+def _location_from_regex(value: str) -> Dict[str, str]:
     text = _normalize_text(value)
     match = _BESTBUY_LOCATION_RE.search(text)
     if match:
@@ -68,6 +68,27 @@ def _location_from_text(value: str) -> Dict[str, str]:
     return {}
 
 
+def _location_from_text(value: str) -> dict:
+    try:
+        from services.location import (
+            copy_location_fields,
+            location_found,
+            parse_location,
+        )
+
+        parsed = parse_location(value)
+        if not location_found(parsed):
+            return {}
+        details = {}
+        details.update(copy_location_fields(parsed))
+        return details
+    except ImportError:
+        logger.debug(
+            "services.location unavailable; using local Best Buy location regex"
+        )
+        return _location_from_regex(value)
+
+
 def _fallback_bestbuy_fulfillment(
     html_content: str, soup: BeautifulSoup, order_parser: OrderParser
 ) -> Dict[str, str]:
@@ -84,7 +105,7 @@ def _fallback_bestbuy_fulfillment(
         if soup is not None
         else BeautifulSoup(html_content or "", "html.parser").get_text(" ")
     )
-    if not details.get("state"):
+    if not (details.get("state") or details.get("zip")):
         details.update(_location_from_text(text))
 
     delivery_match = _BESTBUY_DELIVERY_RE.search(text)
@@ -265,12 +286,17 @@ class EmailProcessor:
             fulfillment = _extract_bestbuy_fulfillment(
                 html_content, soup, self.order_parser
             )
-            if fulfillment.get("state"):
+            if fulfillment.get("state") or fulfillment.get("zip"):
                 logger.info(
                     "Best Buy confirmation %s: state=%s zip=%s",
                     order_number,
-                    fulfillment.get("state"),
-                    fulfillment.get("zip"),
+                    fulfillment.get("state") or "-",
+                    fulfillment.get("zip") or "-",
+                )
+                logger.debug(
+                    "Best Buy confirmation %s: zip_and_state=%s",
+                    order_number,
+                    fulfillment.get("zip_and_state"),
                 )
             elif fulfillment.get("estimated_delivery"):
                 logger.info(
@@ -370,9 +396,19 @@ class EmailProcessor:
             address_info = catalog.get(
                 "zip_and_state"
             ) or self.order_parser.extract_shipping_address(soup)
-            if catalog.get("zip_and_state"):
+            if (
+                catalog.get("state")
+                or catalog.get("zip")
+                or catalog.get("zip_and_state")
+            ):
                 logger.info(
-                    "Best Buy shipped %s: location=%s",
+                    "Best Buy shipped %s: state=%s zip=%s",
+                    order_number,
+                    catalog.get("state") or "-",
+                    catalog.get("zip") or "-",
+                )
+                logger.debug(
+                    "Best Buy shipped %s: zip_and_state=%s",
                     order_number,
                     catalog.get("zip_and_state"),
                 )
