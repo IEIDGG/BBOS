@@ -70,43 +70,126 @@ class OrderEmailHandler(BaseEmailHandler):
     def _apply_shipped_location(
         self, order: Dict, result: Dict, db_manager=None
     ) -> None:
-        state = (result.get("state") or "").strip()
-        zip_code = (result.get("zip") or "").strip()
-        zip_and_state = (result.get("zip_and_state") or "").strip()
-        address_info = (result.get("address_info") or "").strip()
+        incoming = {
+            "state": str(result.get("state") or ""),
+            "zip": str(result.get("zip") or ""),
+            "zip_and_state": str(
+                result.get("zip_and_state") or result.get("address_info") or ""
+            ),
+            "address_info": str(result.get("address_info") or ""),
+        }
+        try:
+            from services.location import location_found, normalize_location_fields
 
-        if not zip_and_state and address_info:
-            zip_and_state = address_info
+            fields = normalize_location_fields(incoming)
+            found = location_found(fields)
+        except ImportError:
+            logger.debug(
+                "services.location unavailable; using local shipped-location regex"
+            )
+            state = incoming["state"].strip()
+            zip_code = incoming["zip"].strip()
+            zip_and_state = incoming["zip_and_state"].strip()
+            if not state and zip_and_state:
+                match = re.search(r"\b([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b", zip_and_state)
+                if match:
+                    state = match.group(1)
+                    if not zip_code:
+                        zip_code = match.group(2)
+            fields = {
+                "state": state,
+                "zip": zip_code,
+                "zip_and_state": zip_and_state
+                or (f"{state} {zip_code}".strip() if state or zip_code else ""),
+            }
+            found = bool(fields["state"] or fields["zip"] or fields["zip_and_state"])
 
-        if not state and zip_and_state:
-            match = re.search(r"\b([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b", zip_and_state)
-            if match:
-                state = match.group(1)
-                if not zip_code:
-                    zip_code = match.group(2)
+        if fields["state"]:
+            order["state"] = fields["state"]
+        if fields["zip"]:
+            order["zip"] = fields["zip"]
+        if fields["zip_and_state"]:
+            order["zip_and_state"] = fields["zip_and_state"]
 
-        if state:
-            order["state"] = state
-        if zip_code:
-            order["zip"] = zip_code
-        if zip_and_state:
-            order["zip_and_state"] = zip_and_state
-
-        location = zip_and_state or (
-            f"{state} {zip_code}".strip() if state or zip_code else ""
-        )
-        if location:
-            print(f"  Location: {location}")
-            logger.info(
-                "Shipped location for %s: %s",
+        if found:
+            print(f"  Location: {fields['zip_and_state']}")
+            logger.debug(
+                "Shipped location for %s: state=%s zip=%s",
                 result.get("order_number"),
-                location,
+                fields["state"] or "-",
+                fields["zip"] or "-",
             )
             if db_manager:
                 db_manager.update_order_address(
                     result["order_number"],
-                    zip_and_state or state,
+                    fields["zip_and_state"] or fields["state"],
                 )
+
+    def _is_empty_value(self, value, key: str = "") -> bool:
+        if value in (None, "", "N/A", "Unknown", []):
+            return True
+        if key == "total_price":
+            compact = str(value).replace(",", "").replace(" ", "").lstrip("$")
+            return compact in ("0", "0.00")
+        return False
+
+    def _fill_if_empty(self, order: Dict, key: str, value) -> None:
+        if self._is_empty_value(value, key):
+            return
+        current = order.get(key)
+        if self._is_empty_value(current, key):
+            order[key] = value
+
+    def _merge_shipped_details(self, order: Dict, result: Dict) -> None:
+        products = result.get("products") or []
+        xbox_items = result.get("xbox_items") or []
+        existing_title = "; ".join(
+            p.get("title", "") for p in (order.get("products") or []) if p.get("title")
+        )
+        incoming_title = "; ".join(
+            p.get("title", "") for p in products if p.get("title")
+        )
+        if existing_title and incoming_title and existing_title != incoming_title:
+            logger.info(
+                "Keeping existing products for %s; incoming title differs",
+                result.get("order_number"),
+            )
+        else:
+            self._fill_if_empty(order, "products", products)
+        self._fill_if_empty(order, "xbox_items", xbox_items)
+        self._fill_if_empty(order, "item_image", result.get("item_image", ""))
+        self._fill_if_empty(order, "total_price", result.get("total_price", ""))
+        self._fill_if_empty(order, "email_address", result.get("email_address", ""))
+        self._fill_if_empty(order, "date", result.get("date", ""))
+        self._fill_if_empty(
+            order, "order_details_link", result.get("order_details_link", "")
+        )
+        self._fill_if_empty(order, "state", result.get("state", ""))
+        self._fill_if_empty(order, "zip", result.get("zip", ""))
+        self._fill_if_empty(order, "zip_and_state", result.get("zip_and_state", ""))
+        self._fill_if_empty(
+            order, "estimated_delivery", result.get("estimated_delivery", "")
+        )
+        order["website"] = order.get("website") or "BestBuy"
+        logger.info(
+            "Merged catalog details for %s products=%s xbox=%s details_link=%s",
+            result.get("order_number"),
+            bool(order.get("products")),
+            len(order.get("xbox_items") or []),
+            bool(order.get("order_details_link")),
+        )
+
+    def _new_shipped_order(self, result: Dict) -> Dict:
+        order = {
+            "number": result["order_number"],
+            "status": "Shipped",
+            "tracking": result.get("tracking_numbers") or [],
+            "products": [],
+            "xbox_items": [],
+            "website": "BestBuy",
+        }
+        self._merge_shipped_details(order, result)
+        return order
 
     def _apply_cancellation_result(
         self, result: Dict, orders: List[Dict], mark_payment_declined_as_cancelled: bool
@@ -118,7 +201,7 @@ class OrderEmailHandler(BaseEmailHandler):
         status = self._get_cancellation_status(
             result, mark_payment_declined_as_cancelled
         )
-        matched = False
+        matched_order = None
         for order in orders:
             if order["number"] == order_number:
                 if not (
@@ -127,27 +210,27 @@ class OrderEmailHandler(BaseEmailHandler):
                     and order.get("status") == "Cancelled"
                 ):
                     order["status"] = status
-                matched = True
+                matched_order = order
                 break
 
-        if not matched:
-            orders.append(
-                {
-                    "date": result.get("date", ""),
-                    "number": order_number,
-                    "status": status,
-                    "status_reason": result.get("cancellation_type", ""),
-                    "tracking": [],
-                    "products": [],
-                    "email_address": result.get("email_address", ""),
-                    "website": "BestBuy",
-                }
-            )
-        elif result.get("cancellation_type") == "payment_declined":
-            for order in orders:
-                if order["number"] == order_number:
-                    order["status_reason"] = "payment_declined"
-                    break
+        if matched_order is None:
+            new_order = {
+                "date": result.get("date", ""),
+                "number": order_number,
+                "status": status,
+                "status_reason": result.get("cancellation_type", ""),
+                "tracking": [],
+                "products": [],
+                "xbox_items": [],
+                "email_address": result.get("email_address", ""),
+                "website": "BestBuy",
+            }
+            self._merge_shipped_details(new_order, result)
+            orders.append(new_order)
+        else:
+            self._merge_shipped_details(matched_order, result)
+            if result.get("cancellation_type") == "payment_declined":
+                matched_order["status_reason"] = "payment_declined"
 
         if result.get("cancellation_type") == "payment_declined":
             self.statistics["payment_declined"] += 1
@@ -401,6 +484,7 @@ class OrderEmailHandler(BaseEmailHandler):
                                     self._apply_shipped_location(
                                         order, result, db_manager
                                     )
+                                    self._merge_shipped_details(order, result)
 
                                     self.statistics["shipped"] += 1
                                     self.statistics["tracking_numbers"] += len(
@@ -413,11 +497,7 @@ class OrderEmailHandler(BaseEmailHandler):
                                     break
 
                             if not matched and result.get("tracking_numbers"):
-                                new_order = {
-                                    "number": result["order_number"],
-                                    "status": "Shipped",
-                                    "tracking": result["tracking_numbers"],
-                                }
+                                new_order = self._new_shipped_order(result)
                                 self._apply_shipped_location(
                                     new_order, result, db_manager
                                 )
@@ -459,6 +539,7 @@ class OrderEmailHandler(BaseEmailHandler):
                             )
                             order["tracking"] = combined_tracking
                             self._apply_shipped_location(order, result, db_manager)
+                            self._merge_shipped_details(order, result)
 
                             self.statistics["shipped"] += 1
                             self.statistics["tracking_numbers"] += len(
@@ -470,11 +551,7 @@ class OrderEmailHandler(BaseEmailHandler):
                             break
 
                     if not matched and result.get("tracking_numbers"):
-                        new_order = {
-                            "number": result["order_number"],
-                            "status": "Shipped",
-                            "tracking": result["tracking_numbers"],
-                        }
+                        new_order = self._new_shipped_order(result)
                         self._apply_shipped_location(new_order, result, db_manager)
                         orders.append(new_order)
                         self.statistics["shipped"] += 1
@@ -1228,9 +1305,12 @@ class AmazonEmailHandler(BaseEmailHandler):
                     order["shipped_quantity"] = str(shipped_qty)
                     shipped_asins[order_asin] = 0
 
-                if result.get("state") and db_manager:
+                if result.get("state"):
                     order["state"] = result["state"]
-                    db_manager.update_order_address(order["number"], result["state"])
+                    if db_manager:
+                        db_manager.update_order_address(
+                            order["number"], result["state"]
+                        )
 
                 matched_count += 1
                 logger.debug(
@@ -1243,9 +1323,12 @@ class AmazonEmailHandler(BaseEmailHandler):
                 if not order.get("products") and shipped_products:
                     order["products"] = shipped_products
 
-                if result.get("state") and db_manager:
+                if result.get("state"):
                     order["state"] = result["state"]
-                    db_manager.update_order_address(order["number"], result["state"])
+                    if db_manager:
+                        db_manager.update_order_address(
+                            order["number"], result["state"]
+                        )
 
                 matched_count += 1
 
