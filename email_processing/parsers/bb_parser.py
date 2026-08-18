@@ -189,18 +189,17 @@ class OrderParser:
                 logger.info("Scraped Xbox item from confirmation: %s", title[:80])
                 continue
 
-            if price != "N/A":
-                products.append(
-                    {
-                        "title": title,
-                        "quantity": qty,
-                        "price": price,
-                        "model_number": model_number,
-                        "item_image": item_image,
-                    }
-                )
-                if item_image:
-                    logger.info("Scraped product image for: %s", title[:80])
+            products.append(
+                {
+                    "title": title,
+                    "quantity": qty if qty != "N/A" else "1",
+                    "price": "" if price == "N/A" else price,
+                    "model_number": model_number,
+                    "item_image": item_image,
+                }
+            )
+            if item_image:
+                logger.info("Scraped product image for: %s", title[:80])
 
         total_td = OrderParser._find_element(soup, product_config["total"])
         total_price = total_td.text.strip() if total_td else "N/A"

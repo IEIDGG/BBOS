@@ -198,6 +198,37 @@ class EmailProcessor:
 
         return email_address, email_date, html_content
 
+    def _bestbuy_catalog_fields(self, html_content: str, soup: BeautifulSoup) -> Dict:
+        products, total_price, xbox_items = self.order_parser.parse_product_details(
+            html_content
+        )
+        order_details_link = self.order_parser.extract_order_details_link(soup)
+        item_image = next(
+            (p.get("item_image") for p in products if p.get("item_image")),
+            "",
+        )
+        if xbox_items and not item_image:
+            item_image = next(
+                (p.get("item_image") for p in xbox_items if p.get("item_image")),
+                "",
+            )
+        fulfillment = _extract_bestbuy_fulfillment(
+            html_content, soup, self.order_parser
+        )
+        return {
+            "products": products,
+            "xbox_items": xbox_items,
+            "item_image": item_image,
+            "total_price": total_price,
+            "order_details_link": order_details_link,
+            "state": fulfillment.get("state", ""),
+            "zip": fulfillment.get("zip", ""),
+            "zip_and_state": fulfillment.get("zip_and_state", ""),
+            "shipping_city": fulfillment.get("shipping_city", ""),
+            "estimated_delivery": fulfillment.get("estimated_delivery", ""),
+            "address_info": fulfillment.get("zip_and_state", ""),
+        }
+
     def process_confirmation_email(self, email_data: tuple) -> Dict[str, Any]:
         try:
             email_address, email_date, html_content = self._parse_email_metadata(
@@ -287,12 +318,26 @@ class EmailProcessor:
                 if self._is_bestbuy_payment_update(subject, html_content)
                 else "cancelled"
             )
+            catalog = self._bestbuy_catalog_fields(html_content, soup)
+            if catalog.get("products"):
+                logger.info(
+                    "Best Buy cancellation %s: scraped %s product(s)",
+                    order_number,
+                    len(catalog["products"]),
+                )
+            else:
+                logger.warning(
+                    "Best Buy cancellation %s: no product details found",
+                    order_number,
+                )
 
             return {
                 "date": email_date,
                 "order_number": order_number,
                 "cancellation_type": cancellation_type,
                 "subject": subject,
+                "email_address": email_address,
+                **catalog,
             }
         except Exception as e:
             print(f"Error processing cancellation email: {str(e)}")
@@ -321,32 +366,44 @@ class EmailProcessor:
                 return {}
 
             tracking_numbers = self.order_parser.extract_tracking_numbers(soup)
-            fulfillment = _extract_bestbuy_fulfillment(
-                html_content, soup, self.order_parser
-            )
-            address_info = fulfillment.get(
+            catalog = self._bestbuy_catalog_fields(html_content, soup)
+            address_info = catalog.get(
                 "zip_and_state"
             ) or self.order_parser.extract_shipping_address(soup)
-            if fulfillment.get("zip_and_state"):
+            if catalog.get("zip_and_state"):
                 logger.info(
                     "Best Buy shipped %s: location=%s",
                     order_number,
-                    fulfillment.get("zip_and_state"),
+                    catalog.get("zip_and_state"),
                 )
             else:
                 logger.warning(
                     "Best Buy shipped %s: no city/state/zip found", order_number
                 )
+            if catalog.get("products"):
+                logger.info(
+                    "Best Buy shipped %s: scraped %s product(s)",
+                    order_number,
+                    len(catalog["products"]),
+                )
+            elif catalog.get("xbox_items"):
+                logger.info(
+                    "Best Buy shipped %s: scraped %s Xbox item(s)",
+                    order_number,
+                    len(catalog["xbox_items"]),
+                )
+            else:
+                logger.warning(
+                    "Best Buy shipped %s: no product details found", order_number
+                )
 
             return {
                 "date": email_date,
                 "order_number": order_number,
+                "email_address": email_address,
+                **catalog,
                 "tracking_numbers": tracking_numbers,
                 "address_info": address_info,
-                "state": fulfillment.get("state", ""),
-                "zip": fulfillment.get("zip", ""),
-                "zip_and_state": fulfillment.get("zip_and_state", ""),
-                "shipping_city": fulfillment.get("shipping_city", ""),
             }
         except Exception as e:
             print(f"Error processing shipped email: {str(e)}")

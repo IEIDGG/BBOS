@@ -108,6 +108,72 @@ class OrderEmailHandler(BaseEmailHandler):
                     zip_and_state or state,
                 )
 
+    def _is_empty_value(self, value, key: str = "") -> bool:
+        if value in (None, "", "N/A", "Unknown", []):
+            return True
+        if key == "total_price":
+            compact = str(value).replace(",", "").replace(" ", "").lstrip("$")
+            return compact in ("0", "0.00")
+        return False
+
+    def _fill_if_empty(self, order: Dict, key: str, value) -> None:
+        if self._is_empty_value(value, key):
+            return
+        current = order.get(key)
+        if self._is_empty_value(current, key):
+            order[key] = value
+
+    def _merge_shipped_details(self, order: Dict, result: Dict) -> None:
+        products = result.get("products") or []
+        xbox_items = result.get("xbox_items") or []
+        existing_title = "; ".join(
+            p.get("title", "") for p in (order.get("products") or []) if p.get("title")
+        )
+        incoming_title = "; ".join(
+            p.get("title", "") for p in products if p.get("title")
+        )
+        if existing_title and incoming_title and existing_title != incoming_title:
+            logger.info(
+                "Keeping existing products for %s; incoming title differs",
+                result.get("order_number"),
+            )
+        else:
+            self._fill_if_empty(order, "products", products)
+        self._fill_if_empty(order, "xbox_items", xbox_items)
+        self._fill_if_empty(order, "item_image", result.get("item_image", ""))
+        self._fill_if_empty(order, "total_price", result.get("total_price", ""))
+        self._fill_if_empty(order, "email_address", result.get("email_address", ""))
+        self._fill_if_empty(order, "date", result.get("date", ""))
+        self._fill_if_empty(
+            order, "order_details_link", result.get("order_details_link", "")
+        )
+        self._fill_if_empty(order, "state", result.get("state", ""))
+        self._fill_if_empty(order, "zip", result.get("zip", ""))
+        self._fill_if_empty(order, "zip_and_state", result.get("zip_and_state", ""))
+        self._fill_if_empty(
+            order, "estimated_delivery", result.get("estimated_delivery", "")
+        )
+        order["website"] = order.get("website") or "BestBuy"
+        logger.info(
+            "Merged catalog details for %s products=%s xbox=%s details_link=%s",
+            result.get("order_number"),
+            bool(order.get("products")),
+            len(order.get("xbox_items") or []),
+            bool(order.get("order_details_link")),
+        )
+
+    def _new_shipped_order(self, result: Dict) -> Dict:
+        order = {
+            "number": result["order_number"],
+            "status": "Shipped",
+            "tracking": result.get("tracking_numbers") or [],
+            "products": [],
+            "xbox_items": [],
+            "website": "BestBuy",
+        }
+        self._merge_shipped_details(order, result)
+        return order
+
     def _apply_cancellation_result(
         self, result: Dict, orders: List[Dict], mark_payment_declined_as_cancelled: bool
     ) -> None:
@@ -118,7 +184,7 @@ class OrderEmailHandler(BaseEmailHandler):
         status = self._get_cancellation_status(
             result, mark_payment_declined_as_cancelled
         )
-        matched = False
+        matched_order = None
         for order in orders:
             if order["number"] == order_number:
                 if not (
@@ -127,27 +193,27 @@ class OrderEmailHandler(BaseEmailHandler):
                     and order.get("status") == "Cancelled"
                 ):
                     order["status"] = status
-                matched = True
+                matched_order = order
                 break
 
-        if not matched:
-            orders.append(
-                {
-                    "date": result.get("date", ""),
-                    "number": order_number,
-                    "status": status,
-                    "status_reason": result.get("cancellation_type", ""),
-                    "tracking": [],
-                    "products": [],
-                    "email_address": result.get("email_address", ""),
-                    "website": "BestBuy",
-                }
-            )
-        elif result.get("cancellation_type") == "payment_declined":
-            for order in orders:
-                if order["number"] == order_number:
-                    order["status_reason"] = "payment_declined"
-                    break
+        if matched_order is None:
+            new_order = {
+                "date": result.get("date", ""),
+                "number": order_number,
+                "status": status,
+                "status_reason": result.get("cancellation_type", ""),
+                "tracking": [],
+                "products": [],
+                "xbox_items": [],
+                "email_address": result.get("email_address", ""),
+                "website": "BestBuy",
+            }
+            self._merge_shipped_details(new_order, result)
+            orders.append(new_order)
+        else:
+            self._merge_shipped_details(matched_order, result)
+            if result.get("cancellation_type") == "payment_declined":
+                matched_order["status_reason"] = "payment_declined"
 
         if result.get("cancellation_type") == "payment_declined":
             self.statistics["payment_declined"] += 1
@@ -401,6 +467,7 @@ class OrderEmailHandler(BaseEmailHandler):
                                     self._apply_shipped_location(
                                         order, result, db_manager
                                     )
+                                    self._merge_shipped_details(order, result)
 
                                     self.statistics["shipped"] += 1
                                     self.statistics["tracking_numbers"] += len(
@@ -413,11 +480,7 @@ class OrderEmailHandler(BaseEmailHandler):
                                     break
 
                             if not matched and result.get("tracking_numbers"):
-                                new_order = {
-                                    "number": result["order_number"],
-                                    "status": "Shipped",
-                                    "tracking": result["tracking_numbers"],
-                                }
+                                new_order = self._new_shipped_order(result)
                                 self._apply_shipped_location(
                                     new_order, result, db_manager
                                 )
@@ -459,6 +522,7 @@ class OrderEmailHandler(BaseEmailHandler):
                             )
                             order["tracking"] = combined_tracking
                             self._apply_shipped_location(order, result, db_manager)
+                            self._merge_shipped_details(order, result)
 
                             self.statistics["shipped"] += 1
                             self.statistics["tracking_numbers"] += len(
@@ -470,11 +534,7 @@ class OrderEmailHandler(BaseEmailHandler):
                             break
 
                     if not matched and result.get("tracking_numbers"):
-                        new_order = {
-                            "number": result["order_number"],
-                            "status": "Shipped",
-                            "tracking": result["tracking_numbers"],
-                        }
+                        new_order = self._new_shipped_order(result)
                         self._apply_shipped_location(new_order, result, db_manager)
                         orders.append(new_order)
                         self.statistics["shipped"] += 1
