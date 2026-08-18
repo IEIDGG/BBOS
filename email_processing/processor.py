@@ -28,10 +28,6 @@ def _load_optional_parser(module_name: str, class_name: str):
         return None
 
 
-_BESTBUY_LOCATION_RE = re.compile(
-    r"\b(?P<city>[A-Za-z][A-Za-z .'-]*?),\s*(?P<state>[A-Z]{2})\s+(?P<zip>\d{5}(?:-\d{4})?)\b"
-)
-_BESTBUY_STATE_ZIP_RE = re.compile(r"^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$")
 _BESTBUY_DELIVERY_RE = re.compile(
     r"Estimated\s+delivery\s*:?\s*(?P<delivery>(?:[A-Za-z]+,\s*)?[A-Za-z]+\s+\d{1,2}(?:,\s*\d{4})?)",
     re.IGNORECASE,
@@ -42,36 +38,22 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
 
 
-def _location_from_text(value: str) -> Dict[str, str]:
-    text = _normalize_text(value)
-    match = _BESTBUY_LOCATION_RE.search(text)
-    if match:
-        city = _normalize_text(match.group("city"))
-        state = match.group("state")
-        zip_code = match.group("zip")
-        return {
-            "shipping_city": city,
-            "state": state,
-            "zip": zip_code,
-            "zip_and_state": f"{city}, {state} {zip_code}",
-        }
+def _location_from_text(value: str) -> dict:
+    from services.location import copy_location_fields, location_found, parse_location
+    from services.order_types import BestBuyFulfillment
 
-    match = _BESTBUY_STATE_ZIP_RE.match(text)
-    if match:
-        state = match.group(1)
-        zip_code = match.group(2)
-        return {
-            "state": state,
-            "zip": zip_code,
-            "zip_and_state": f"{state} {zip_code}",
-        }
-    return {}
+    parsed = parse_location(value)
+    if not location_found(parsed):
+        return {}
+    details: BestBuyFulfillment = {}
+    details.update(copy_location_fields(parsed))
+    return details
 
 
 def _fallback_bestbuy_fulfillment(
     html_content: str, soup: BeautifulSoup, order_parser: OrderParser
-) -> Dict[str, str]:
-    details: Dict[str, str] = {}
+) -> dict:
+    details: dict = {}
 
     try:
         address_info = order_parser.extract_shipping_address(soup)
@@ -98,7 +80,7 @@ def _fallback_bestbuy_fulfillment(
 
 def _extract_bestbuy_fulfillment(
     html_content: str, soup: BeautifulSoup, order_parser: OrderParser
-) -> Dict[str, str]:
+) -> dict:
     try:
         bestbuy_parser = importlib.import_module("services.bestbuy_email_parser")
         extractor = getattr(
@@ -198,6 +180,37 @@ class EmailProcessor:
 
         return email_address, email_date, html_content
 
+    def _bestbuy_catalog_fields(self, html_content: str, soup: BeautifulSoup) -> Dict:
+        products, total_price, xbox_items = self.order_parser.parse_product_details(
+            html_content
+        )
+        order_details_link = self.order_parser.extract_order_details_link(soup)
+        item_image = next(
+            (p.get("item_image") for p in products if p.get("item_image")),
+            "",
+        )
+        if xbox_items and not item_image:
+            item_image = next(
+                (p.get("item_image") for p in xbox_items if p.get("item_image")),
+                "",
+            )
+        fulfillment = _extract_bestbuy_fulfillment(
+            html_content, soup, self.order_parser
+        )
+        return {
+            "products": products,
+            "xbox_items": xbox_items,
+            "item_image": item_image,
+            "total_price": total_price,
+            "order_details_link": order_details_link,
+            "state": fulfillment.get("state", ""),
+            "zip": fulfillment.get("zip", ""),
+            "zip_and_state": fulfillment.get("zip_and_state", ""),
+            "shipping_city": fulfillment.get("shipping_city", ""),
+            "estimated_delivery": fulfillment.get("estimated_delivery", ""),
+            "address_info": fulfillment.get("zip_and_state", ""),
+        }
+
     def process_confirmation_email(self, email_data: tuple) -> Dict[str, Any]:
         try:
             email_address, email_date, html_content = self._parse_email_metadata(
@@ -240,6 +253,11 @@ class EmailProcessor:
                     order_number,
                     fulfillment.get("state"),
                     fulfillment.get("zip"),
+                )
+                logger.debug(
+                    "Best Buy confirmation %s: zip_and_state=%s",
+                    order_number,
+                    fulfillment.get("zip_and_state"),
                 )
             elif fulfillment.get("estimated_delivery"):
                 logger.info(
@@ -287,12 +305,26 @@ class EmailProcessor:
                 if self._is_bestbuy_payment_update(subject, html_content)
                 else "cancelled"
             )
+            catalog = self._bestbuy_catalog_fields(html_content, soup)
+            if catalog.get("products"):
+                logger.info(
+                    "Best Buy cancellation %s: scraped %s product(s)",
+                    order_number,
+                    len(catalog["products"]),
+                )
+            else:
+                logger.warning(
+                    "Best Buy cancellation %s: no product details found",
+                    order_number,
+                )
 
             return {
                 "date": email_date,
                 "order_number": order_number,
                 "cancellation_type": cancellation_type,
                 "subject": subject,
+                "email_address": email_address,
+                **catalog,
             }
         except Exception as e:
             print(f"Error processing cancellation email: {str(e)}")
@@ -321,32 +353,50 @@ class EmailProcessor:
                 return {}
 
             tracking_numbers = self.order_parser.extract_tracking_numbers(soup)
-            fulfillment = _extract_bestbuy_fulfillment(
-                html_content, soup, self.order_parser
-            )
-            address_info = fulfillment.get(
+            catalog = self._bestbuy_catalog_fields(html_content, soup)
+            address_info = catalog.get(
                 "zip_and_state"
             ) or self.order_parser.extract_shipping_address(soup)
-            if fulfillment.get("zip_and_state"):
+            if catalog.get("zip_and_state"):
                 logger.info(
-                    "Best Buy shipped %s: location=%s",
+                    "Best Buy shipped %s: state=%s zip=%s",
                     order_number,
-                    fulfillment.get("zip_and_state"),
+                    catalog.get("state"),
+                    catalog.get("zip"),
+                )
+                logger.debug(
+                    "Best Buy shipped %s: zip_and_state=%s",
+                    order_number,
+                    catalog.get("zip_and_state"),
                 )
             else:
                 logger.warning(
                     "Best Buy shipped %s: no city/state/zip found", order_number
                 )
+            if catalog.get("products"):
+                logger.info(
+                    "Best Buy shipped %s: scraped %s product(s)",
+                    order_number,
+                    len(catalog["products"]),
+                )
+            elif catalog.get("xbox_items"):
+                logger.info(
+                    "Best Buy shipped %s: scraped %s Xbox item(s)",
+                    order_number,
+                    len(catalog["xbox_items"]),
+                )
+            else:
+                logger.warning(
+                    "Best Buy shipped %s: no product details found", order_number
+                )
 
             return {
                 "date": email_date,
                 "order_number": order_number,
+                "email_address": email_address,
+                **catalog,
                 "tracking_numbers": tracking_numbers,
                 "address_info": address_info,
-                "state": fulfillment.get("state", ""),
-                "zip": fulfillment.get("zip", ""),
-                "zip_and_state": fulfillment.get("zip_and_state", ""),
-                "shipping_city": fulfillment.get("shipping_city", ""),
             }
         except Exception as e:
             print(f"Error processing shipped email: {str(e)}")

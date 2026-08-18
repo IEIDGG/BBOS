@@ -4,6 +4,7 @@ import os
 from typing import Dict, List, Tuple
 
 from bs4 import BeautifulSoup
+from services.location import location_found, parse_location
 
 logger = logging.getLogger(__name__)
 
@@ -189,18 +190,17 @@ class OrderParser:
                 logger.info("Scraped Xbox item from confirmation: %s", title[:80])
                 continue
 
-            if price != "N/A":
-                products.append(
-                    {
-                        "title": title,
-                        "quantity": qty,
-                        "price": price,
-                        "model_number": model_number,
-                        "item_image": item_image,
-                    }
-                )
-                if item_image:
-                    logger.info("Scraped product image for: %s", title[:80])
+            products.append(
+                {
+                    "title": title,
+                    "quantity": qty if qty != "N/A" else "1",
+                    "price": "" if price == "N/A" else price,
+                    "model_number": model_number,
+                    "item_image": item_image,
+                }
+            )
+            if item_image:
+                logger.info("Scraped product image for: %s", title[:80])
 
         total_td = OrderParser._find_element(soup, product_config["total"])
         total_price = total_td.text.strip() if total_td else "N/A"
@@ -408,8 +408,10 @@ class OrderParser:
 
                     last_line = lines[-1] if lines else ""
                     logger.debug(f"Old format - Last line: '{last_line}'")
-                    if ", " in last_line and any(char.isdigit() for char in last_line):
-                        logger.info("Old format - Extracted location: '%s'", last_line)
+                    if location_found(parse_location(last_line)):
+                        logger.debug(
+                            "Old format - Extracted location state/zip from last line"
+                        )
                         return last_line
 
         new_format_tds = [
@@ -433,13 +435,14 @@ class OrderParser:
                     if address_span:
                         address_text = address_span.get_text(separator="\n").strip()
                         logger.debug(f"New format - Address text: '{address_text}'")
-                        if ", " in address_text and any(
-                            char.isdigit() for char in address_text
-                        ):
-                            logger.info(
-                                "New format - Extracted location: '%s'", address_text
+                        parsed = parse_location(address_text)
+                        if location_found(parsed):
+                            logger.debug(
+                                "New format - Extracted location state=%s zip=%s",
+                                parsed["state"],
+                                parsed["zip"],
                             )
-                            return address_text
+                            return parsed["zip_and_state"] or address_text
 
         logger.warning("No state/zip found in shipping address")
         return ""
