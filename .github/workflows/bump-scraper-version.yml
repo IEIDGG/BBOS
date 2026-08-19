@@ -16,12 +16,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Detect changed files
         id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
-          git diff --name-only HEAD~1 HEAD > /tmp/changed.txt
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            git diff --name-only HEAD~1 HEAD > /tmp/changed.txt || git diff --name-only HEAD > /tmp/changed.txt
+          else
+            git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/changed.txt
+          fi
           cat /tmp/changed.txt
 
       - name: Bump patch version when needed
