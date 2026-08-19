@@ -1,0 +1,46 @@
+name: Bump scraper version
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "chrome_extension/**"
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed files
+        id: changed
+        run: |
+          git diff --name-only HEAD~1 HEAD > /tmp/changed.txt
+          cat /tmp/changed.txt
+
+      - name: Bump patch version when needed
+        run: |
+          mapfile -t files < /tmp/changed.txt
+          args=()
+          for file in "${files[@]}"; do
+            args+=(--changed-file "$file")
+          done
+          python scripts/bump_scraper_version.py --manifest chrome_extension/manifest.json "${args[@]}"
+
+      - name: Commit bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chrome_extension/manifest.json
+          if git diff --staged --quiet; then
+            echo "No manifest bump to commit"
+            exit 0
+          fi
+          git commit -m "Bump Order Scraper patch version."
+          git push
