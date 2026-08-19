@@ -31,13 +31,19 @@ jobs:
           cat /tmp/changed.txt
 
       - name: Bump patch version when needed
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
           mapfile -t files < /tmp/changed.txt
           args=()
           for file in "${files[@]}"; do
             args+=(--changed-file "$file")
           done
-          python scripts/bump_scraper_version.py --manifest chrome_extension/manifest.json "${args[@]}"
+          base_ref="$BEFORE"
+          if [ -z "$base_ref" ] || [ "$base_ref" = "0000000000000000000000000000000000000000" ]; then
+            base_ref="HEAD~1"
+          fi
+          python scripts/bump_scraper_version.py --manifest chrome_extension/manifest.json --base-ref "$base_ref" "${args[@]}"
 
       - name: Commit bump
         run: |

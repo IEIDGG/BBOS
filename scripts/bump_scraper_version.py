@@ -38,13 +38,18 @@ def should_bump_extension(
             old_manifest = json.loads(old_manifest_text)
             new_manifest = json.loads(new_manifest_text)
         except json.JSONDecodeError:
-            logger.warning("Scraper version bump skipped: unable to parse manifest diff")
+            logger.warning(
+                "Scraper version bump skipped: unable to parse manifest diff"
+            )
             return False
-        old_manifest.pop("version", None)
-        new_manifest.pop("version", None)
-        if old_manifest != new_manifest:
+        old_without_version = dict(old_manifest)
+        new_without_version = dict(new_manifest)
+        old_without_version.pop("version", None)
+        new_without_version.pop("version", None)
+        if old_without_version != new_without_version:
             return True
-    logger.info("Scraper version bump skipped: manifest-only change")
+    if not non_manifest:
+        logger.info("Scraper version bump skipped: manifest-only change")
     return False
 
 
@@ -59,30 +64,41 @@ def bump_manifest_version(manifest_path: Path) -> tuple[str, str]:
     return old_version, new_version
 
 
+def load_manifest_texts(
+    manifest_path: Path, changed_files: list[str], base_ref: str
+) -> tuple[Optional[str], Optional[str]]:
+    normalized_files = [path.replace("\\", "/") for path in changed_files]
+    relevant = [
+        path for path in normalized_files if path.startswith("chrome_extension/")
+    ]
+    non_manifest = [
+        path for path in relevant if path != "chrome_extension/manifest.json"
+    ]
+    if "chrome_extension/manifest.json" not in relevant or non_manifest:
+        return None, None
+    try:
+        old_manifest_text = subprocess.run(
+            ["git", "show", f"{base_ref}:chrome_extension/manifest.json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        new_manifest_text = manifest_path.read_text(encoding="utf-8")
+        return old_manifest_text, new_manifest_text
+    except (OSError, subprocess.CalledProcessError):
+        logger.warning("Unable to load previous scraper manifest from %s", base_ref)
+        return None, None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--changed-file", action="append", default=[])
+    parser.add_argument("--base-ref", default="HEAD~1")
     args = parser.parse_args(argv)
-    normalized_files = [path.replace("\\", "/") for path in args.changed_file]
-    old_manifest_text = None
-    new_manifest_text = None
-    if normalized_files == ["chrome_extension/manifest.json"]:
-        try:
-            old_manifest_text = subprocess.run(
-                [
-                    "git",
-                    "show",
-                    "HEAD~1:chrome_extension/manifest.json",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout
-            new_manifest_text = Path(args.manifest).read_text(encoding="utf-8")
-        except (OSError, subprocess.CalledProcessError):
-            old_manifest_text = None
-            new_manifest_text = None
+    old_manifest_text, new_manifest_text = load_manifest_texts(
+        Path(args.manifest), args.changed_file, args.base_ref
+    )
     if not should_bump_extension(
         args.changed_file,
         old_manifest_text=old_manifest_text,

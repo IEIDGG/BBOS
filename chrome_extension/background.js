@@ -18,7 +18,30 @@ async function checkExtensionVersion() {
   }
 }
 
+async function findExistingUpdateTab() {
+  const base = chrome.runtime.getURL('update.html');
+  const tabs = await chrome.tabs.query({});
+  return tabs.find((tab) => tab.url && tab.url.startsWith(base)) || null;
+}
+
+async function folderPermissionGranted() {
+  try {
+    const handle = await idbGet('handles', 'extensionDir');
+    if (!handle) return false;
+    const query = await handle.queryPermission({ mode: 'readwrite' });
+    return query === 'granted';
+  } catch (err) {
+    console.info('[IEID update] folder permission query failed', err);
+    return false;
+  }
+}
+
 async function maybeAutoApplyUpdate() {
+  try {
+    await settleUpdateAfterReload();
+  } catch (err) {
+    console.info('[IEID update] reload settle failed', err);
+  }
   const latest = await checkExtensionVersion();
   const current = chrome.runtime.getManifest().version;
   if (!latest || !isVersionNewer(latest, current)) {
@@ -38,6 +61,14 @@ async function maybeAutoApplyUpdate() {
   }
   if (!stored.folderGranted || stored.updateInProgress) return;
   if (stored.lastAttemptedVersion === latest) return;
+  if (!(await folderPermissionGranted())) {
+    console.info('[IEID update] skipping auto apply: folder permission not granted');
+    return;
+  }
+  if (await findExistingUpdateTab()) {
+    console.info('[IEID update] updater tab already open');
+    return;
+  }
   console.info('[IEID update] opening auto apply tab', latest);
   chrome.tabs.create({ url: chrome.runtime.getURL('update.html?auto=1'), active: false });
 }

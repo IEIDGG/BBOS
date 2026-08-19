@@ -1,47 +1,9 @@
 const API_BASE = 'https://ieidgg.com';
-const DB_NAME = 'ieid-order-scraper-updates';
 const STAGING_DIR = '.ieid-update-staging';
 
 function logUpdate(message, extra) {
   if (extra) console.info('[IEID update]', message, extra);
   else console.info('[IEID update]', message);
-}
-
-function openDb() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains('handles')) db.createObjectStore('handles');
-      if (!db.objectStoreNames.contains('state')) db.createObjectStore('state');
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-function idbGet(store, key) {
-  return openDb().then((db) => new Promise((resolve, reject) => {
-    const request = db.transaction(store, 'readonly').objectStore(store).get(key);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  }));
-}
-
-function idbSet(store, key, value) {
-  return openDb().then((db) => new Promise((resolve, reject) => {
-    const request = db.transaction(store, 'readwrite').objectStore(store).put(value, key);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  }));
-}
-
-function idbDelete(store, key) {
-  return openDb().then((db) => new Promise((resolve, reject) => {
-    const request = db.transaction(store, 'readwrite').objectStore(store).delete(key);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  }));
 }
 
 function setStatus(text, isError) {
@@ -88,21 +50,57 @@ async function pickFolder() {
   }
   await idbSet('handles', 'extensionDir', handle);
   await chrome.storage.local.set({ folderGranted: true });
+  await chrome.storage.local.remove('lastAttemptedVersion');
   logUpdate('folder granted');
   return handle;
 }
 
-async function getUsableHandle() {
+async function getUsableHandle(options = {}) {
+  const allowPrompt = options.allowPrompt !== false;
   const handle = await idbGet('handles', 'extensionDir');
   if (!handle) return null;
   try {
+    const query = await handle.queryPermission({ mode: 'readwrite' });
+    if (query === 'granted') return handle;
+    if (query === 'denied') {
+      await idbDelete('handles', 'extensionDir');
+      await chrome.storage.local.set({ folderGranted: false });
+      return null;
+    }
+    if (!allowPrompt) {
+      logUpdate('handle needs user gesture');
+      return null;
+    }
     if (await ensurePermission(handle)) return handle;
+    const after = await handle.queryPermission({ mode: 'readwrite' });
+    if (after === 'denied') {
+      await idbDelete('handles', 'extensionDir');
+      await chrome.storage.local.set({ folderGranted: false });
+    }
   } catch (err) {
     logUpdate('handle permission failed', err);
   }
-  await idbDelete('handles', 'extensionDir');
-  await chrome.storage.local.set({ folderGranted: false });
   return null;
+}
+
+function parsePackagedManifest(payload) {
+  const entry = payload.files['manifest.json'];
+  if (!entry || entry.encoding !== 'utf-8' || typeof entry.content !== 'string') {
+    throw new Error('Package is missing manifest.json');
+  }
+  let packagedManifest;
+  try {
+    packagedManifest = JSON.parse(entry.content);
+  } catch {
+    throw new Error('Package manifest is invalid');
+  }
+  if (!isIeidExtensionManifest(packagedManifest)) {
+    throw new Error('Package is not IEID Order Scraper');
+  }
+  if (String(packagedManifest.version) !== String(payload.version)) {
+    throw new Error('Package version does not match manifest');
+  }
+  return packagedManifest;
 }
 
 async function fetchPackage(token) {
@@ -123,6 +121,7 @@ async function fetchPackage(token) {
   for (const relative of Object.keys(payload.files)) {
     if (!isSafeRelativePath(relative)) throw new Error(`Unsafe package path ${relative}`);
   }
+  parsePackagedManifest(payload);
   return payload;
 }
 
@@ -224,23 +223,21 @@ async function applyPackage(handle, payload) {
   await chrome.storage.local.set({
     updateInProgress: true,
     updateTargetVersion: payload.version,
+    updateReloadPending: false,
   });
   const staging = await writeStaging(handle, payload.files);
   const lastPackageFiles = (await idbGet('state', 'lastPackageFiles')) || [];
   await copyStagingToLive(handle, staging, payload.files, lastPackageFiles);
   await idbSet('state', 'lastPackageFiles', Object.keys(payload.files));
-  await chrome.storage.local.set({
-    updateInProgress: false,
-    lastAttemptedVersion: payload.version,
-  });
+  await chrome.storage.local.set({ updateReloadPending: true });
   logUpdate('reload', payload.version);
   chrome.runtime.reload();
   return true;
 }
 
 async function recoverIfNeeded(handle) {
-  const local = await chrome.storage.local.get(['updateInProgress', 'updateTargetVersion']);
-  if (!local.updateInProgress) return false;
+  const local = await chrome.storage.local.get(['updateInProgress', 'updateReloadPending']);
+  if (!local.updateInProgress || local.updateReloadPending) return false;
   const pending = await idbGet('state', 'pendingPackage');
   if (!pending) {
     await chrome.storage.local.set({ updateInProgress: false });
@@ -251,37 +248,24 @@ async function recoverIfNeeded(handle) {
 }
 
 async function verifyAfterReload() {
-  const local = await chrome.storage.local.get(['updateTargetVersion', 'lastAttemptedVersion']);
-  if (!local.updateTargetVersion) return;
-  const installed = chrome.runtime.getManifest().version;
-  if (installed === local.updateTargetVersion) {
-    await chrome.storage.local.remove('updateTargetVersion');
-    await idbDelete('state', 'pendingPackage');
-    logUpdate('update verified', installed);
-    setStatus(`Updated to v${installed}. You can close this tab.`);
+  const result = await settleUpdateAfterReload();
+  if (result.status === 'verified') {
+    setStatus(`Updated to v${result.installed}. You can close this tab.`);
     return true;
   }
-  if (local.lastAttemptedVersion !== local.updateTargetVersion) {
-    logUpdate('post-reload verification skipped: no matching attempted version', {
-      installed,
-      target: local.updateTargetVersion,
-      lastAttempted: local.lastAttemptedVersion,
-    });
-    return false;
+  if (result.status === 'mismatch') {
+    setStatus('The selected folder is not the loaded extension folder. On chrome://extensions, find IEID Order Scraper and select that folder.', true);
+    document.getElementById('pickFolderBtn').hidden = false;
+    return true;
   }
-  logUpdate('post-reload version mismatch', { installed, target: local.updateTargetVersion });
-  await idbDelete('handles', 'extensionDir');
-  await chrome.storage.local.set({ folderGranted: false });
-  setStatus('The selected folder is not the loaded extension folder. On chrome://extensions, find IEID Order Scraper and select that folder.', true);
-  document.getElementById('pickFolderBtn').hidden = false;
-  return true;
+  return false;
 }
 
 async function start() {
   logUpdate('starting', { auto: isAuto() });
   const pickBtn = document.getElementById('pickFolderBtn');
   if (await verifyAfterReload()) return;
-  let handle = await getUsableHandle();
+  let handle = await getUsableHandle({ allowPrompt: !isAuto() });
   if (!handle) {
     if (isAuto()) {
       logUpdate('auto apply skipped: no folder grant');
@@ -291,7 +275,8 @@ async function start() {
     pickBtn.hidden = false;
     pickBtn.addEventListener('click', async () => {
       try {
-        handle = await pickFolder();
+        handle = await getUsableHandle({ allowPrompt: true });
+        if (!handle) handle = await pickFolder();
         pickBtn.hidden = true;
         await runApply(handle);
       } catch (err) {
@@ -305,15 +290,32 @@ async function start() {
   await runApply(handle);
 }
 
+async function ownerTabIsAlive(ownerId) {
+  if (!ownerId) return false;
+  try {
+    await chrome.tabs.get(ownerId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function runApply(handle) {
   const tab = await chrome.tabs.getCurrent();
-  const local = await chrome.storage.local.get(['updateInProgress']);
+  const local = await chrome.storage.local.get(['updateInProgress', 'updateReloadPending']);
   const session = await chrome.storage.session.get('updateOwner');
   if (local.updateInProgress && session.updateOwner && session.updateOwner !== tab?.id) {
+    if (await ownerTabIsAlive(session.updateOwner)) {
+      setStatus('Updating…');
+      return;
+    }
+    logUpdate('stale update owner, taking over', session.updateOwner);
+  }
+  if (tab?.id) await chrome.storage.session.set({ updateOwner: tab.id });
+  if (local.updateReloadPending) {
     setStatus('Updating…');
     return;
   }
-  if (tab?.id) await chrome.storage.session.set({ updateOwner: tab.id });
   if (local.updateInProgress) {
     setStatus('Updating…');
     const recovered = await recoverIfNeeded(handle);
@@ -339,7 +341,7 @@ async function runApply(handle) {
       logUpdate('pending package lookup failed', stateErr);
     }
     await chrome.storage.local.remove('updateTargetVersion');
-    if (!pending) await chrome.storage.local.set({ updateInProgress: false });
+    if (!pending) await chrome.storage.local.set({ updateInProgress: false, updateReloadPending: false });
     setStatus(err.message || String(err), true);
   }
 }
