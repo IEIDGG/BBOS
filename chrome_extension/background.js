@@ -88,6 +88,8 @@ function log(text, level = '') {
 function scrapeDone(text, success) {
   log(text, success ? 'success' : 'error');
   notify('scrape_done', { text, success });
+  stopScrapeKeepAlive();
+  scrapeState.running = false;
   maybeAutoApplyUpdate();
 }
 
