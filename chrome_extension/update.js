@@ -217,6 +217,17 @@ async function applyPackage(handle, payload) {
   const installed = chrome.runtime.getManifest().version;
   if (!isVersionNewer(payload.version, installed)) {
     logUpdate('package is not newer', payload.version);
+    await chrome.storage.local.set({
+      updateInProgress: false,
+      updateReloadPending: false,
+      updateReloadAttempts: 0,
+    });
+    await chrome.storage.local.remove(['updateTargetVersion', 'updateReloadRequestedAt']);
+    try {
+      await idbDelete('state', 'pendingPackage');
+    } catch (err) {
+      logUpdate('pending package clear failed', err);
+    }
     return false;
   }
   const lastPackageFiles = (await idbGet('state', 'lastPackageFiles')) || [];
@@ -354,7 +365,7 @@ async function runApply(handle) {
     } catch (stateErr) {
       logUpdate('pending package lookup failed', stateErr);
     }
-    await chrome.storage.local.remove('updateTargetVersion');
+    await chrome.storage.local.remove(['updateTargetVersion', 'updateReloadRequestedAt']);
     if (!pending) await chrome.storage.local.set({ updateInProgress: false, updateReloadPending: false });
     setStatus(err.message || String(err), true);
     if (isAuto()) window.close();

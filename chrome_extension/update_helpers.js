@@ -62,12 +62,21 @@ function idbDelete(store, key) {
 }
 
 async function requestExtensionReload() {
-  const local = await chrome.storage.local.get(['updateReloadAttempts']);
+  const local = await chrome.storage.local.get([
+    'updateReloadAttempts',
+    'updateReloadRequestedAt',
+  ]);
+  const now = Date.now();
+  if (local.updateReloadRequestedAt && now - local.updateReloadRequestedAt < 3000) {
+    console.info('[IEID update] reload already requested');
+    return;
+  }
   const attempts = (local.updateReloadAttempts || 0) + 1;
   await chrome.storage.session.set({ expectingReload: true });
   await chrome.storage.local.set({
     updateReloadPending: true,
     updateReloadAttempts: attempts,
+    updateReloadRequestedAt: now,
   });
   console.info('[IEID update] runtime reload', attempts);
   chrome.runtime.reload();
@@ -91,7 +100,7 @@ async function settleUpdateAfterReload() {
       updateReloadAttempts: 0,
       lastAttemptedVersion: installed,
     });
-    await chrome.storage.local.remove('updateTargetVersion');
+    await chrome.storage.local.remove(['updateTargetVersion', 'updateReloadRequestedAt']);
     try {
       await idbDelete('state', 'pendingPackage');
     } catch (err) {
@@ -133,7 +142,7 @@ async function settleUpdateAfterReload() {
     updateReloadAttempts: 0,
     lastAttemptedVersion: target,
   });
-  await chrome.storage.local.remove('updateTargetVersion');
+  await chrome.storage.local.remove(['updateTargetVersion', 'updateReloadRequestedAt']);
   try {
     await chrome.storage.session.remove('expectingReload');
   } catch (err) {
