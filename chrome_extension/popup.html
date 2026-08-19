@@ -75,7 +75,7 @@
     .update-banner { background: #2a2414; border: 1px solid #7a6520; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
     .update-banner-text { font-size: 12px; color: #f0d78c; line-height: 1.4; margin-bottom: 8px; }
     .update-banner-actions { display: flex; align-items: center; gap: 8px; }
-    .update-download-link { flex: 1; text-align: center; background: #7a6520; color: #fff; text-decoration: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+    .update-download-link { flex: 1; text-align: center; background: #7a6520; color: #fff; text-decoration: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; border: 0; cursor: pointer; width: 100%; }
     .update-download-link:hover { opacity: 0.9; }
     .update-dismiss { width: auto; background: none; border: none; color: #888; font-size: 11px; font-weight: 500; padding: 0; cursor: pointer; }
     .update-dismiss:hover { color: #aaa; }
@@ -85,9 +85,9 @@
   <h1><span>IEID</span> Order Scraper <small class="version-badge" id="extensionVersion">v1.1.6</small></h1>
 
   <div class="update-banner hidden" id="updateBanner">
-    <div class="update-banner-text">v<span id="updateLatestVersion"></span> is available. Download the update, unzip it, and reload the extension on <code>chrome://extensions</code>.</div>
+    <div class="update-banner-text">v<span id="updateLatestVersion"></span> is available. One click installs it from IEID. The first time, you will pick the folder you loaded this extension from.</div>
     <div class="update-banner-actions">
-      <a class="update-download-link" id="updateDownloadLink" href="#" target="_blank" rel="noopener noreferrer">Get update</a>
+      <button type="button" class="update-download-link" id="updateBtn">Update</button>
       <button type="button" class="update-dismiss" id="dismissUpdateBtn">Dismiss</button>
     </div>
   </div>
@@ -179,6 +179,7 @@
     <div class="log" id="log"></div>
   </div>
 
+  <script src="update_helpers.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

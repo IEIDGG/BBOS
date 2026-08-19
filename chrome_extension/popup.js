@@ -8,23 +8,6 @@ function showExtensionVersion() {
   if (versionEl && version) versionEl.textContent = `v${version}`;
 }
 
-function parseVersion(version) {
-  return String(version || '0').replace(/^v/, '').split('.').map((part) => parseInt(part, 10) || 0);
-}
-
-function isVersionNewer(latest, current) {
-  const a = parseVersion(latest);
-  const b = parseVersion(current);
-  const len = Math.max(a.length, b.length);
-  for (let i = 0; i < len; i += 1) {
-    const av = a[i] || 0;
-    const bv = b[i] || 0;
-    if (av > bv) return true;
-    if (av < bv) return false;
-  }
-  return false;
-}
-
 async function checkForExtensionUpdate() {
   const currentVersion = chrome.runtime.getManifest()?.version;
   if (!currentVersion) return;
@@ -42,11 +25,9 @@ async function checkForExtensionUpdate() {
 
     const banner = $('updateBanner');
     const versionEl = $('updateLatestVersion');
-    const linkEl = $('updateDownloadLink');
-    if (!banner || !versionEl || !linkEl) return;
+    if (!banner || !versionEl) return;
 
     versionEl.textContent = latestVersion;
-    linkEl.href = data.tool_url || `${API_BASE}/tools/order-scraper`;
     banner.classList.remove('hidden');
   } catch (err) {
     console.error('Extension update check failed:', err);
@@ -381,6 +362,10 @@ $('importZipMappingsBtn').addEventListener('click', () => {
 $('stopBtn').addEventListener('click', () => {
   chrome.runtime.sendMessage({ action: 'stop_scrape' });
   setScrapingUi(false);
+});
+
+$('updateBtn').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('update.html') });
 });
 
 $('dismissUpdateBtn').addEventListener('click', async () => {
