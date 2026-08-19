@@ -150,4 +150,3 @@ async function settleUpdateAfterReload() {
   }
   return { status: 'mismatch', installed, target };
 }
-
