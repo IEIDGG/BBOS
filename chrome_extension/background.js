@@ -1,4 +1,47 @@
+importScripts('update_helpers.js');
+
 const API_BASE = 'https://ieidgg.com';
+const UPDATE_CHECK_ALARM = 'extensionUpdateCheck';
+
+async function checkExtensionVersion() {
+  try {
+    const response = await fetch(`${API_BASE}/api/order-scraper/version`, { cache: 'no-store' });
+    if (!response.ok) {
+      console.info('[IEID update] version check skipped', response.status);
+      return null;
+    }
+    const data = await response.json();
+    return data.version || null;
+  } catch (err) {
+    console.info('[IEID update] version check failed', err);
+    return null;
+  }
+}
+
+async function maybeAutoApplyUpdate() {
+  const latest = await checkExtensionVersion();
+  const current = chrome.runtime.getManifest().version;
+  if (!latest || !isVersionNewer(latest, current)) {
+    await chrome.action.setBadgeText({ text: '' });
+    return;
+  }
+  await chrome.action.setBadgeText({ text: '1' });
+  await chrome.action.setBadgeBackgroundColor({ color: '#7a6520' });
+  const stored = await chrome.storage.local.get([
+    'folderGranted',
+    'updateInProgress',
+    'lastAttemptedVersion',
+  ]);
+  if (scrapeState.running) {
+    console.info('[IEID update] deferring apply while scrape running');
+    return;
+  }
+  if (!stored.folderGranted || stored.updateInProgress) return;
+  if (stored.lastAttemptedVersion === latest) return;
+  console.info('[IEID update] opening auto apply tab', latest);
+  chrome.tabs.create({ url: chrome.runtime.getURL('update.html?auto=1'), active: false });
+}
+
 const MAX_SCRAPE_LOGS = 500;
 const TRACKING_TAB_CONCURRENCY = 4;
 const TRACKING_TAB_CONCURRENCY_REDUCED = 2;
@@ -45,6 +88,7 @@ function log(text, level = '') {
 function scrapeDone(text, success) {
   log(text, success ? 'success' : 'error');
   notify('scrape_done', { text, success });
+  maybeAutoApplyUpdate();
 }
 
 function progress(pct, text) {
@@ -1295,6 +1339,19 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === KEEP_ALIVE_ALARM && scrapeState.running) {
     console.log('[IEID] scrape keep-alive');
   }
+  if (alarm.name === UPDATE_CHECK_ALARM) {
+    maybeAutoApplyUpdate();
+  }
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create(UPDATE_CHECK_ALARM, { periodInMinutes: 60 });
+  maybeAutoApplyUpdate();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  chrome.alarms.create(UPDATE_CHECK_ALARM, { periodInMinutes: 60 });
+  maybeAutoApplyUpdate();
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -1342,3 +1399,5 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   return true;
 });
+
+chrome.alarms.create(UPDATE_CHECK_ALARM, { periodInMinutes: 60 });
