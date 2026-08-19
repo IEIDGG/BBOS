@@ -55,6 +55,21 @@ const LOG_PAGE = 'log.html';
 let scrapeState = { running: false, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0 };
 let scrapeLogs = [];
 let logTabId = null;
+async function ensureUpdateCheckAlarm() {
+  try {
+    const alarm = await chrome.alarms.get(UPDATE_CHECK_ALARM);
+    if (!alarm) {
+      await chrome.alarms.create(UPDATE_CHECK_ALARM, { periodInMinutes: 60 });
+      console.info('[IEID update] update check alarm created');
+    }
+  } catch (err) {
+    console.info('[IEID update] update check alarm setup failed', err);
+  }
+}
+
+ensureUpdateCheckAlarm();
+maybeAutoApplyUpdate();
+
 const scrapeLogsReady = chrome.storage.session.get('scrapeLogs').then((data) => {
   scrapeLogs = data.scrapeLogs || [];
 });
@@ -1347,12 +1362,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create(UPDATE_CHECK_ALARM, { periodInMinutes: 60 });
+  ensureUpdateCheckAlarm();
   maybeAutoApplyUpdate();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  chrome.alarms.create(UPDATE_CHECK_ALARM, { periodInMinutes: 60 });
+  ensureUpdateCheckAlarm();
   maybeAutoApplyUpdate();
 });
 
@@ -1401,5 +1416,3 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   return true;
 });
-
-chrome.alarms.create(UPDATE_CHECK_ALARM, { periodInMinutes: 60 });

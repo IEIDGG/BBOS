@@ -251,7 +251,7 @@ async function recoverIfNeeded(handle) {
 }
 
 async function verifyAfterReload() {
-  const local = await chrome.storage.local.get(['updateTargetVersion']);
+  const local = await chrome.storage.local.get(['updateTargetVersion', 'lastAttemptedVersion']);
   if (!local.updateTargetVersion) return;
   const installed = chrome.runtime.getManifest().version;
   if (installed === local.updateTargetVersion) {
@@ -259,19 +259,28 @@ async function verifyAfterReload() {
     await idbDelete('state', 'pendingPackage');
     logUpdate('update verified', installed);
     setStatus(`Updated to v${installed}. You can close this tab.`);
-    return;
+    return true;
+  }
+  if (local.lastAttemptedVersion !== local.updateTargetVersion) {
+    logUpdate('post-reload verification skipped: no matching attempted version', {
+      installed,
+      target: local.updateTargetVersion,
+      lastAttempted: local.lastAttemptedVersion,
+    });
+    return false;
   }
   logUpdate('post-reload version mismatch', { installed, target: local.updateTargetVersion });
   await idbDelete('handles', 'extensionDir');
   await chrome.storage.local.set({ folderGranted: false });
   setStatus('The selected folder is not the loaded extension folder. On chrome://extensions, find IEID Order Scraper and select that folder.', true);
   document.getElementById('pickFolderBtn').hidden = false;
+  return true;
 }
 
 async function start() {
   logUpdate('starting', { auto: isAuto() });
   const pickBtn = document.getElementById('pickFolderBtn');
-  await verifyAfterReload();
+  if (await verifyAfterReload()) return;
   let handle = await getUsableHandle();
   if (!handle) {
     if (isAuto()) {
@@ -319,10 +328,18 @@ async function runApply(handle) {
     const payload = await fetchPackage(token);
     logUpdate('package fetched', payload.version);
     setStatus(`Installing v${payload.version}…`);
-    await applyPackage(handle, payload);
+    const applied = await applyPackage(handle, payload);
+    if (!applied) setStatus('Already up to date.');
   } catch (err) {
     logUpdate('apply failed', err);
-    await chrome.storage.local.set({ updateInProgress: false });
+    let pending = null;
+    try {
+      pending = await idbGet('state', 'pendingPackage');
+    } catch (stateErr) {
+      logUpdate('pending package lookup failed', stateErr);
+    }
+    await chrome.storage.local.remove('updateTargetVersion');
+    if (!pending) await chrome.storage.local.set({ updateInProgress: false });
     setStatus(err.message || String(err), true);
   }
 }
