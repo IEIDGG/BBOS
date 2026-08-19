@@ -36,9 +36,26 @@ async function folderPermissionGranted() {
   }
 }
 
+async function hasIeidSession() {
+  try {
+    const access = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
+    if (access?.value) return true;
+    const refresh = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
+    return Boolean(refresh?.value);
+  } catch (err) {
+    console.info('[IEID update] session cookie lookup failed', err);
+    return false;
+  }
+}
+
 async function maybeAutoApplyUpdate() {
   try {
-    await settleUpdateAfterReload();
+    const settled = await settleUpdateAfterReload();
+    if (settled.status === 'reload-pending') {
+      console.info('[IEID update] retrying extension reload');
+      await requestExtensionReload();
+      return;
+    }
   } catch (err) {
     console.info('[IEID update] reload settle failed', err);
   }
@@ -59,10 +76,14 @@ async function maybeAutoApplyUpdate() {
     console.info('[IEID update] deferring apply while scrape running');
     return;
   }
-  if (!stored.folderGranted || stored.updateInProgress) return;
-  if (stored.lastAttemptedVersion === latest) return;
+  if (!stored.folderGranted) return;
+  if (stored.lastAttemptedVersion === latest && !stored.updateInProgress) return;
   if (!(await folderPermissionGranted())) {
     console.info('[IEID update] skipping auto apply: folder permission not granted');
+    return;
+  }
+  if (!(await hasIeidSession())) {
+    console.info('[IEID update] skipping auto apply: not signed in');
     return;
   }
   if (await findExistingUpdateTab()) {

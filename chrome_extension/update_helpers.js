@@ -61,11 +61,24 @@ function idbDelete(store, key) {
   }));
 }
 
+async function requestExtensionReload() {
+  const local = await chrome.storage.local.get(['updateReloadAttempts']);
+  const attempts = (local.updateReloadAttempts || 0) + 1;
+  await chrome.storage.session.set({ expectingReload: true });
+  await chrome.storage.local.set({
+    updateReloadPending: true,
+    updateReloadAttempts: attempts,
+  });
+  console.info('[IEID update] runtime reload', attempts);
+  chrome.runtime.reload();
+}
+
 async function settleUpdateAfterReload() {
   const local = await chrome.storage.local.get([
     'updateTargetVersion',
     'updateInProgress',
     'updateReloadPending',
+    'updateReloadAttempts',
     'lastAttemptedVersion',
   ]);
   const target = local.updateTargetVersion;
@@ -75,6 +88,7 @@ async function settleUpdateAfterReload() {
     await chrome.storage.local.set({
       updateInProgress: false,
       updateReloadPending: false,
+      updateReloadAttempts: 0,
       lastAttemptedVersion: installed,
     });
     await chrome.storage.local.remove('updateTargetVersion');
@@ -84,13 +98,29 @@ async function settleUpdateAfterReload() {
       console.info('[IEID update] pending package clear failed', err);
     }
     console.info('[IEID update] update verified', installed);
+    try {
+      await chrome.storage.session.remove('expectingReload');
+    } catch (err) {
+      console.info('[IEID update] expectingReload clear failed', err);
+    }
     return { status: 'verified', installed };
   }
-  const reloaded = Boolean(local.updateReloadPending);
-  if (!reloaded) {
+  if (!local.updateReloadPending) {
     return { status: 'in-progress', installed, target };
   }
-  console.info('[IEID update] post-reload version mismatch', { installed, target });
+  let expectingReload = false;
+  try {
+    const session = await chrome.storage.session.get('expectingReload');
+    expectingReload = Boolean(session.expectingReload);
+  } catch (err) {
+    console.info('[IEID update] expectingReload lookup failed', err);
+  }
+  const attempts = local.updateReloadAttempts || 0;
+  if (expectingReload && attempts < 2) {
+    console.info('[IEID update] reload still pending', { installed, target, attempts });
+    return { status: 'reload-pending', installed, target };
+  }
+  console.info('[IEID update] post-reload version mismatch', { installed, target, attempts });
   try {
     await idbDelete('handles', 'extensionDir');
   } catch (err) {
@@ -100,7 +130,15 @@ async function settleUpdateAfterReload() {
     folderGranted: false,
     updateInProgress: false,
     updateReloadPending: false,
+    updateReloadAttempts: 0,
     lastAttemptedVersion: target,
   });
+  await chrome.storage.local.remove('updateTargetVersion');
+  try {
+    await chrome.storage.session.remove('expectingReload');
+  } catch (err) {
+    console.info('[IEID update] expectingReload clear failed', err);
+  }
   return { status: 'mismatch', installed, target };
 }
+

@@ -219,25 +219,37 @@ async function applyPackage(handle, payload) {
     logUpdate('package is not newer', payload.version);
     return false;
   }
+  const lastPackageFiles = (await idbGet('state', 'lastPackageFiles')) || [];
+  const previousPending = await idbGet('state', 'pendingPackage');
+  const previousPendingFiles = previousPending?.files ? Object.keys(previousPending.files) : [];
   await idbSet('state', 'pendingPackage', payload);
   await chrome.storage.local.set({
     updateInProgress: true,
     updateTargetVersion: payload.version,
     updateReloadPending: false,
+    updateReloadAttempts: 0,
   });
   const staging = await writeStaging(handle, payload.files);
-  const lastPackageFiles = (await idbGet('state', 'lastPackageFiles')) || [];
-  await copyStagingToLive(handle, staging, payload.files, lastPackageFiles);
+  const knownFiles = [...new Set([...lastPackageFiles, ...previousPendingFiles])];
+  await copyStagingToLive(handle, staging, payload.files, knownFiles);
   await idbSet('state', 'lastPackageFiles', Object.keys(payload.files));
-  await chrome.storage.local.set({ updateReloadPending: true });
   logUpdate('reload', payload.version);
-  chrome.runtime.reload();
+  await requestExtensionReload();
   return true;
 }
 
 async function recoverIfNeeded(handle) {
   const local = await chrome.storage.local.get(['updateInProgress', 'updateReloadPending']);
-  if (!local.updateInProgress || local.updateReloadPending) return false;
+  if (local.updateReloadPending) {
+    const session = await chrome.storage.session.get('expectingReload');
+    if (session.expectingReload) {
+      logUpdate('retrying extension reload');
+      await requestExtensionReload();
+      return true;
+    }
+    return false;
+  }
+  if (!local.updateInProgress) return false;
   const pending = await idbGet('state', 'pendingPackage');
   if (!pending) {
     await chrome.storage.local.set({ updateInProgress: false });
@@ -256,6 +268,11 @@ async function verifyAfterReload() {
   if (result.status === 'mismatch') {
     setStatus('The selected folder is not the loaded extension folder. On chrome://extensions, find IEID Order Scraper and select that folder.', true);
     document.getElementById('pickFolderBtn').hidden = false;
+    return true;
+  }
+  if (result.status === 'reload-pending') {
+    setStatus('Updating…');
+    await requestExtensionReload();
     return true;
   }
   return false;
@@ -312,11 +329,7 @@ async function runApply(handle) {
     logUpdate('stale update owner, taking over', session.updateOwner);
   }
   if (tab?.id) await chrome.storage.session.set({ updateOwner: tab.id });
-  if (local.updateReloadPending) {
-    setStatus('Updating…');
-    return;
-  }
-  if (local.updateInProgress) {
+  if (local.updateReloadPending || local.updateInProgress) {
     setStatus('Updating…');
     const recovered = await recoverIfNeeded(handle);
     if (recovered) return;
@@ -325,6 +338,7 @@ async function runApply(handle) {
     const token = await getAuthToken();
     if (!token) {
       setStatus('Sign in to IEID to update: https://ieidgg.com', true);
+      if (isAuto()) window.close();
       return;
     }
     const payload = await fetchPackage(token);
@@ -343,6 +357,7 @@ async function runApply(handle) {
     await chrome.storage.local.remove('updateTargetVersion');
     if (!pending) await chrome.storage.local.set({ updateInProgress: false, updateReloadPending: false });
     setStatus(err.message || String(err), true);
+    if (isAuto()) window.close();
   }
 }
 
