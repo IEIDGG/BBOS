@@ -266,9 +266,14 @@
 
   function isShipTrackHref(href) {
     try {
-      const url = new URL(href, location.href);
+      const absolute = new URL(href, location.href).href;
+      if (typeof isShipTrackUrl === 'function') return isShipTrackUrl(absolute);
+      const url = new URL(absolute);
+      if (url.protocol !== 'https:') return false;
+      const host = url.hostname.replace(/\.$/, '').toLowerCase();
+      if (!/(?:^|\.)amazon\.com$/i.test(host)) return false;
       if (url.pathname.includes('/your-orders/pop')) return false;
-      return url.pathname.includes('ship-track');
+      return url.pathname.includes('/gp/your-account/ship-track') || url.pathname.includes('ship-track');
     } catch {
       return false;
     }
@@ -314,6 +319,11 @@
 
       try {
         const url = new URL(link.href, location.href);
+        const absolute = url.href;
+        if (typeof isApprovedAmazonUrl === 'function' && !isApprovedAmazonUrl(absolute)) continue;
+        if (typeof isApprovedAmazonUrl !== 'function') {
+          if (url.protocol !== 'https:' || !/(?:^|\.)amazon\.com$/i.test(url.hostname.replace(/\.$/, ''))) continue;
+        }
         ids.shipmentId = ids.shipmentId || url.searchParams.get('shipmentId') || '';
         ids.itemId = ids.itemId || url.searchParams.get('itemId') || '';
         ids.lineItemId = ids.lineItemId || url.searchParams.get('lineItemId') || ids.itemId || '';
@@ -504,6 +514,20 @@
     return ids;
   }
 
+  function shipmentIdentityKey(shipment) {
+    if (typeof getShipmentIdentity === 'function') {
+      return getShipmentIdentity({ orderId: '' }, shipment);
+    }
+    return [
+      shipment.shipmentId || '',
+      shipment.packageId || '',
+      shipment.itemId || '',
+      shipment.lineItemId || '',
+      shipment.asin || '',
+      shipment.productTitle || '',
+    ].join('|');
+  }
+
   function extractSingleItemShipment(itemRoot, container, inheritedStatus) {
     const link = itemRoot.querySelector('a[href*="/dp/"][aria-hidden="false"], a[href*="/gp/product/"][aria-hidden="false"], a[href*="/gp/aw/d/"][aria-hidden="false"]')
       || itemRoot.querySelector('a[href*="/dp/"], a[href*="/gp/product/"], a[href*="/gp/aw/d/"]');
@@ -539,12 +563,14 @@
       : Array.from(container.querySelectorAll('li .a-list-item > .a-fixed-left-grid'));
     if (fallbackItemBoxes.length) {
       const shipments = [];
-      const seenAsins = new Set();
+      const seen = new Set();
 
       for (const itemRoot of fallbackItemBoxes) {
         const shipment = extractSingleItemShipment(itemRoot, container, inheritedStatus);
-        if (!shipment || seenAsins.has(shipment.asin)) continue;
-        seenAsins.add(shipment.asin);
+        if (!shipment) continue;
+        const key = shipmentIdentityKey(shipment);
+        if (seen.has(key)) continue;
+        seen.add(key);
         shipments.push(shipment);
       }
 
@@ -555,7 +581,7 @@
       .sort((a, b) => cleanText(b.textContent).length - cleanText(a.textContent).length);
     const shipments = [];
     const seen = new Set();
-    const seenAsins = new Map();
+    const byIdentity = new Map();
 
     for (const link of productLinks) {
       const href = link.href || '';
@@ -567,18 +593,6 @@
       const quantity = extractQuantity(productRoot);
       const unitPrice = extractUnitPrice(productRoot);
       const imageUrl = extractProductImage(productRoot, link, container, asin);
-      const dedupeKey = `${asin}|${title}`;
-      if (seen.has(dedupeKey)) continue;
-      if (seenAsins.has(asin)) {
-        const existing = seenAsins.get(asin);
-        if (title && (!existing.productTitle || existing.productTitle === asin)) existing.productTitle = title;
-        if ((!existing.quantity || existing.quantity === 1) && quantity > 1) existing.quantity = quantity;
-        if (!existing.unitPrice && unitPrice) existing.unitPrice = unitPrice;
-        if (!existing.itemImage && imageUrl) existing.itemImage = imageUrl;
-        continue;
-      }
-      seen.add(dedupeKey);
-
       const ids = mergeShipmentIds(extractShipmentIds(container), extractShipmentIds(productRoot));
       const shipment = {
         status: inheritedStatus || getStatusFromContainer(productRoot),
@@ -591,8 +605,15 @@
         trackingUrl: extractTrackingLink(productRoot) || extractTrackingLink(container),
         ...ids,
       };
+      const key = shipmentIdentityKey(shipment);
+      if (seen.has(`${asin}|${title}|${key}`)) continue;
+      seen.add(`${asin}|${title}|${key}`);
+      if (byIdentity.has(key)) {
+        mergeShipment(byIdentity.get(key), shipment);
+        continue;
+      }
       shipments.push(shipment);
-      seenAsins.set(asin, shipment);
+      byIdentity.set(key, shipment);
     }
 
     return shipments;

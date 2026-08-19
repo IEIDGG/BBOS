@@ -16,15 +16,19 @@ function isAuto() {
   return new URLSearchParams(location.search).get('auto') === '1';
 }
 
-async function getAuthToken() {
-  const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-  if (cookie?.value) return cookie.value;
+async function getAuthToken(forceRefresh = false) {
+  if (!forceRefresh) {
+    const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
+    if (cookie?.value) return cookie.value;
+  }
   const refreshCookie = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
   if (!refreshCookie?.value) return null;
-  await fetch(`${API_BASE}/api/refresh-token`, {
+  const refreshResp = await fetch(`${API_BASE}/api/refresh-token`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'X-Refresh-Token': refreshCookie.value },
   });
+  if (!refreshResp.ok) return null;
   const refreshed = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
   return refreshed?.value || null;
 }
@@ -84,6 +88,9 @@ async function getUsableHandle(options = {}) {
 }
 
 function parsePackagedManifest(payload) {
+  if (typeof validatePackagePayload === 'function') {
+    return validatePackagePayload(payload);
+  }
   const entry = payload.files['manifest.json'];
   if (!entry || entry.encoding !== 'utf-8' || typeof entry.content !== 'string') {
     throw new Error('Package is missing manifest.json');
@@ -106,10 +113,11 @@ function parsePackagedManifest(payload) {
 async function fetchPackage(token) {
   const response = await fetch(`${API_BASE}/api/order-scraper/package`, {
     cache: 'no-store',
+    credentials: 'include',
     headers: { 'X-Auth-Token': token },
   });
   if (response.status === 401) {
-    const retried = await getAuthToken();
+    const retried = await getAuthToken(true);
     if (!retried || retried === token) throw new Error('Sign in to IEID to update');
     return fetchPackage(retried);
   }
@@ -289,9 +297,26 @@ async function verifyAfterReload() {
   return false;
 }
 
+function attachPickFolderListener(pickBtn) {
+  if (!pickBtn || pickBtn.dataset.bound === '1') return;
+  pickBtn.dataset.bound = '1';
+  pickBtn.addEventListener('click', async () => {
+    try {
+      let handle = await getUsableHandle({ allowPrompt: true });
+      if (!handle) handle = await pickFolder();
+      pickBtn.hidden = true;
+      await runApply(handle);
+    } catch (err) {
+      logUpdate('pick failed', err);
+      setStatus(err.message || String(err), true);
+    }
+  });
+}
+
 async function start() {
   logUpdate('starting', { auto: isAuto() });
   const pickBtn = document.getElementById('pickFolderBtn');
+  attachPickFolderListener(pickBtn);
   if (await verifyAfterReload()) return;
   let handle = await getUsableHandle({ allowPrompt: !isAuto() });
   if (!handle) {
@@ -301,17 +326,6 @@ async function start() {
       return;
     }
     pickBtn.hidden = false;
-    pickBtn.addEventListener('click', async () => {
-      try {
-        handle = await getUsableHandle({ allowPrompt: true });
-        if (!handle) handle = await pickFolder();
-        pickBtn.hidden = true;
-        await runApply(handle);
-      } catch (err) {
-        logUpdate('pick failed', err);
-        setStatus(err.message || String(err), true);
-      }
-    });
     setStatus('Select the folder you used with Load unpacked.');
     return;
   }
@@ -329,6 +343,19 @@ async function ownerTabIsAlive(ownerId) {
 }
 
 async function runApply(handle) {
+  const scrapeStatus = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: 'scrape_status' }, (resp) => {
+      if (chrome.runtime.lastError) {
+        resolve(null);
+        return;
+      }
+      resolve(resp || null);
+    });
+  });
+  if (scrapeStatus?.running) {
+    setStatus('Finish or stop the scrape before updating. Reload would interrupt an active job.', true);
+    return;
+  }
   const tab = await chrome.tabs.getCurrent();
   const local = await chrome.storage.local.get(['updateInProgress', 'updateReloadPending']);
   const session = await chrome.storage.session.get('updateOwner');

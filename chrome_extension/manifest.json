@@ -3,7 +3,7 @@
   "name": "IEID Order Scraper",
   "version": "1.1.7",
   "description": "Scrape Amazon order and tracking data",
-  "permissions": ["activeTab", "scripting", "tabs", "storage", "cookies", "alarms"],
+  "permissions": ["scripting", "tabs", "storage", "cookies", "alarms"],
   "host_permissions": ["https://www.amazon.com/*", "https://amazon.com/*", "https://ieidgg.com/*"],
   "action": {
     "default_popup": "popup.html",

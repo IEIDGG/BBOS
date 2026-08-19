@@ -1,4 +1,4 @@
-importScripts('update_helpers.js');
+importScripts('update_helpers.js', 'scrape_core.js');
 
 const API_BASE = 'https://ieidgg.com';
 const UPDATE_CHECK_ALARM = 'extensionUpdateCheck';
@@ -20,7 +20,7 @@ async function checkExtensionVersion() {
 
 async function findExistingUpdateTab() {
   const base = chrome.runtime.getURL('update.html');
-  const tabs = await chrome.tabs.query({});
+  const tabs = await chrome.tabs.query({ url: `${base}*` });
   return tabs.find((tab) => tab.url && tab.url.startsWith(base)) || null;
 }
 
@@ -80,8 +80,11 @@ async function maybeAutoApplyUpdate() {
   if (stored.lastAttemptedVersion === latest && !stored.updateInProgress) return;
   if (!(await folderPermissionGranted())) {
     console.info('[IEID update] skipping auto apply: folder permission not granted');
+    await chrome.storage.local.set({ folderNeedsReconnect: true });
+    await chrome.action.setBadgeText({ text: '!' });
     return;
   }
+  await chrome.storage.local.set({ folderNeedsReconnect: false });
   if (!(await hasIeidSession())) {
     console.info('[IEID update] skipping auto apply: not signed in');
     return;
@@ -104,9 +107,12 @@ const ORDER_PAGE_DELAY_MAX_MS = 800;
 const KEEP_ALIVE_ALARM = 'scrapeKeepAlive';
 const LOG_PAGE = 'log.html';
 
-let scrapeState = { running: false, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0 };
+const JOB_CHECKPOINT_KEY = 'scrapeJobCheckpoint';
+let scrapeState = { running: false, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0, extractionIncomplete: false };
 let scrapeLogs = [];
 let logTabId = null;
+let logWriteChain = Promise.resolve();
+let activeTrackingTabIds = [];
 async function ensureUpdateCheckAlarm() {
   try {
     const alarm = await chrome.alarms.get(UPDATE_CHECK_ALARM);
@@ -122,8 +128,10 @@ async function ensureUpdateCheckAlarm() {
 ensureUpdateCheckAlarm();
 maybeAutoApplyUpdate();
 
+let scrapeLogsReset = false;
+let scrapeResumePromise = null;
 const scrapeLogsReady = chrome.storage.session.get('scrapeLogs').then((data) => {
-  scrapeLogs = data.scrapeLogs || [];
+  if (!scrapeLogsReset) scrapeLogs = data.scrapeLogs || [];
 });
 
 function notify(type, data) {
@@ -131,16 +139,60 @@ function notify(type, data) {
 }
 
 async function saveScrapeLogs() {
-  try {
+  logWriteChain = logWriteChain.then(async () => {
+    await scrapeLogsReady;
     await chrome.storage.session.set({ scrapeLogs });
-  } catch (err) {
+  }).catch((err) => {
     console.error('Failed to save scrape logs:', err);
-  }
+  });
+  return logWriteChain;
 }
 
 function clearScrapeLogs() {
+  scrapeLogsReset = true;
   scrapeLogs = [];
   saveScrapeLogs();
+}
+
+async function persistScrapeCheckpoint(job) {
+  try {
+    await chrome.storage.local.set({ [JOB_CHECKPOINT_KEY]: job });
+  } catch (err) {
+    console.error('Failed to persist scrape checkpoint:', err);
+  }
+}
+
+async function clearScrapeCheckpoint() {
+  try {
+    await chrome.storage.local.remove(JOB_CHECKPOINT_KEY);
+  } catch (err) {
+    console.error('Failed to clear scrape checkpoint:', err);
+  }
+}
+
+async function loadScrapeCheckpoint() {
+  try {
+    const data = await chrome.storage.local.get(JOB_CHECKPOINT_KEY);
+    return data[JOB_CHECKPOINT_KEY] || null;
+  } catch (err) {
+    console.error('Failed to load scrape checkpoint:', err);
+    return null;
+  }
+}
+
+async function resumeScrapeFromCheckpoint() {
+  if (scrapeState.running || scrapeResumePromise) return scrapeResumePromise;
+  scrapeResumePromise = (async () => {
+    const checkpoint = await loadScrapeCheckpoint();
+    if (!checkpoint?.incomplete || !checkpoint.config) return;
+    console.info('[IEID] resuming scrape from checkpoint', checkpoint.page, checkpoint.phase);
+    if (checkpoint.kind === 'bulk') await runScrape(checkpoint.config, checkpoint);
+  })().catch((err) => {
+    console.error('Failed to resume scrape checkpoint:', err);
+  }).finally(() => {
+    scrapeResumePromise = null;
+  });
+  return scrapeResumePromise;
 }
 
 function log(text, level = '') {
@@ -153,10 +205,12 @@ function log(text, level = '') {
 }
 
 function scrapeDone(text, success) {
-  log(text, success ? 'success' : 'error');
-  notify('scrape_done', { text, success });
+  const ok = success && scrapeOutcomeSuccess(scrapeState);
+  log(text, ok ? 'success' : 'error');
+  notify('scrape_done', { text, success: ok });
   stopScrapeKeepAlive();
   scrapeState.running = false;
+  clearScrapeCheckpoint();
   maybeAutoApplyUpdate();
 }
 
@@ -177,13 +231,18 @@ function stats() {
   });
 }
 
-function withTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
-    }),
-  ]);
+function withTimeout(promise, ms, label, onTimeout) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      Promise.resolve(onTimeout ? onTimeout() : undefined)
+        .catch(() => {})
+        .finally(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 function startScrapeKeepAlive() {
@@ -223,39 +282,47 @@ async function openLogTab() {
 }
 
 // Get the access_token cookie for authenticated API calls
-async function getAuthCookie() {
-  const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-  if (cookie) return cookie.value;
-
-  // Try refresh
+async function refreshAccessToken() {
   const refreshCookie = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-  if (!refreshCookie) return null;
+  if (!refreshCookie?.value) return null;
+  const response = await fetch(`${API_BASE}/api/refresh-token`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'X-Refresh-Token': refreshCookie.value },
+  });
+  if (!response.ok) return null;
+  const newCookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
+  return newCookie?.value || null;
+}
 
+async function getAuthCookie(forceRefresh = false) {
+  if (!forceRefresh) {
+    const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
+    if (cookie?.value) return cookie.value;
+  }
   try {
-    await fetch(`${API_BASE}/api/refresh-token`, {
-      method: 'POST',
-      headers: { 'X-Refresh-Token': refreshCookie.value },
-    });
-    const newCookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-    return newCookie?.value || null;
+    return await refreshAccessToken();
   } catch {
     return null;
   }
 }
 
-async function apiPost(path, body) {
-  const token = await getAuthCookie();
+async function authorizedFetch(path, options = {}, allowRetry = true) {
+  const token = await getAuthCookie(!allowRetry);
   if (!token) throw new Error('Not authenticated. Please sign in again.');
-
   const resp = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
+    ...options,
+    credentials: 'include',
     headers: {
-      'Content-Type': 'application/json',
+      ...(options.headers || {}),
       'X-Auth-Token': token,
     },
-    body: JSON.stringify(body),
   });
-
+  if (resp.status === 401 && allowRetry) {
+    const refreshed = await getAuthCookie(true);
+    if (!refreshed || refreshed === token) throw new Error('Session expired. Please sign in again.');
+    return authorizedFetch(path, options, false);
+  }
   if (resp.status === 401) throw new Error('Session expired. Please sign in again.');
   if (!resp.ok) {
     const errText = await resp.text();
@@ -264,20 +331,16 @@ async function apiPost(path, body) {
   return resp.json();
 }
 
-async function apiGet(path) {
-  const token = await getAuthCookie();
-  if (!token) throw new Error('Not authenticated. Please sign in again.');
-
-  const resp = await fetch(`${API_BASE}${path}`, {
-    headers: { 'X-Auth-Token': token },
+async function apiPost(path, body) {
+  return authorizedFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   });
+}
 
-  if (resp.status === 401) throw new Error('Session expired. Please sign in again.');
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`API ${resp.status}: ${errText}`);
-  }
-  return resp.json();
+async function apiGet(path) {
+  return authorizedFetch(path);
 }
 
 function normalizeTrackingList(value) {
@@ -410,11 +473,14 @@ function closeTab(tabId) {
 }
 
 async function injectAndRun(tabId, file) {
+  const files = (file === 'scraper.js' || file === 'order_detail_scraper.js')
+    ? ['scrape_core.js', file]
+    : [file];
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    files: [file],
+    files,
   });
-  return results?.[0]?.result;
+  return results?.[results.length - 1]?.result;
 }
 
 function sleep(ms) {
@@ -427,41 +493,6 @@ async function waitForTabReady() {
 
 function randomOrderPageDelay() {
   return ORDER_PAGE_DELAY_MIN_MS + Math.random() * (ORDER_PAGE_DELAY_MAX_MS - ORDER_PAGE_DELAY_MIN_MS);
-}
-
-function isShipTrackUrl(url) {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname.includes('amazon.com') && parsed.pathname.includes('ship-track');
-  } catch {
-    return false;
-  }
-}
-
-function normalizeTrackingUrl(url) {
-  if (!url) return '';
-
-  try {
-    const trackingUrl = new URL(url);
-    if (!trackingUrl.hostname.includes('amazon.com') || !trackingUrl.pathname.includes('ship-track')) {
-      return '';
-    }
-    if (trackingUrl.pathname.includes('/your-orders/pop')) {
-      return '';
-    }
-    trackingUrl.searchParams.set('ref', 'ppx_yo2ov_dt_b_track_package');
-    trackingUrl.searchParams.set('noPtRedirect', '1');
-    return trackingUrl.toString();
-  } catch {
-    return '';
-  }
-}
-
-function getTrackingItemId(shipment) {
-  if (shipment.itemId) return shipment.itemId;
-  if (!shipment.lineItemId) return '';
-  return shipment.lineItemId.endsWith('s') ? shipment.lineItemId.slice(0, -1) : shipment.lineItemId;
 }
 
 function buildTrackingUrl(order, shipment) {
@@ -538,7 +569,7 @@ function normalizeTrackingUrlForKey(value) {
 
   try {
     const trackingUrl = new URL(value);
-    if (trackingUrl.hostname.includes('amazon.com') && trackingUrl.pathname.includes('/gp/your-account/ship-track')) {
+    if (isApprovedAmazonUrl(trackingUrl.href) && trackingUrl.pathname.includes('/gp/your-account/ship-track')) {
       const params = new URLSearchParams();
       for (const key of ['orderId', 'shipmentId', 'lineItemId', 'itemId', 'packageId', 'packageIndex']) {
         const paramValue = trackingUrl.searchParams.get(key);
@@ -551,29 +582,6 @@ function normalizeTrackingUrlForKey(value) {
   } catch {
     return normalizeComparable(value);
   }
-}
-
-function getShipmentIdentity(order, shipment) {
-  if (shipment.asin) {
-    const itemId = getTrackingItemId(shipment);
-    const shipmentPart = shipment.shipmentId || shipment.packageId || '';
-    if (shipmentPart || itemId) {
-      return ['line', order.orderId || '', shipment.asin, shipmentPart, itemId].join('|');
-    }
-    return ['line', order.orderId || '', shipment.asin].join('|');
-  }
-
-  const trackingUrl = normalizeTrackingUrlForKey(shipment.trackingUrl || '');
-  if (trackingUrl) return ['tracking-url', order.orderId || '', trackingUrl].join('|');
-
-  const trackingNumber = normalizeComparable(shipment.trackingNumber || '');
-  if (trackingNumber) return ['tracking-number', order.orderId || '', trackingNumber].join('|');
-
-  return [
-    'product',
-    order.orderId || '',
-    normalizeComparable(shipment.productTitle || ''),
-  ].join('|');
 }
 
 function mergeShipment(existing, incoming) {
@@ -615,29 +623,6 @@ function dedupeOrderShipments(order) {
 
   order.shipments = deduped;
   return shipments.length - deduped.length;
-}
-
-function dedupePayloadLineItems(rows) {
-  const byKey = new Map();
-
-  for (const row of rows) {
-    const key = `${row.order_id}|${row.asin || row.product_name || ''}`;
-    const existing = byKey.get(key);
-    if (!existing) {
-      byKey.set(key, { ...row });
-      continue;
-    }
-
-    const existingQty = parseInt(existing.quantity, 10) || 1;
-    const incomingQty = parseInt(row.quantity, 10) || 1;
-    existing.quantity = String(Math.max(existingQty, incomingQty));
-    if (!existing.total_owed && row.total_owed) existing.total_owed = row.total_owed;
-    if (!existing.tracking_number && row.tracking_number) existing.tracking_number = row.tracking_number;
-    if (!existing.item_image && row.item_image) existing.item_image = row.item_image;
-    if (!existing.carrier && row.carrier) existing.carrier = row.carrier;
-  }
-
-  return Array.from(byKey.values());
 }
 
 function getAccountSwitcherUrl() {
@@ -776,13 +761,7 @@ function mergeCancelledOrders(target, incoming) {
 async function uploadCancelledOrdersToApi(cancelledOrders, amazonEmail) {
   if (!cancelledOrders.length) return;
 
-  const payload = cancelledOrders.map((order) => ({
-    order_id: order.orderId,
-    order_date: order.orderDate || '',
-    order_status: 'Cancelled',
-    shipment_status: 'Cancelled',
-    email_address: amazonEmail,
-  }));
+  const payload = cancelledOrders.map((order) => buildCancelledPayload(order, amazonEmail));
 
   log(`Sending ${payload.length} cancelled order${payload.length === 1 ? '' : 's'} to API...`, 'info');
 
@@ -799,6 +778,8 @@ async function uploadCancelledOrdersToApi(cancelledOrders, amazonEmail) {
       stats();
       log(`Cancelled batch ${Math.floor(i / batchSize) + 1}: ${result.inserted || 0} inserted, ${result.updated || 0} updated, ${result.failed || 0} failed`, result.failed ? 'error' : 'success');
     } catch (err) {
+      scrapeState.failed += batch.length;
+      stats();
       log(`Cancelled API error (batch ${Math.floor(i / batchSize) + 1}): ${err.message}`, 'error');
     }
   }
@@ -852,7 +833,7 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
   const payload = dedupePayloadLineItems(allOrders.flatMap((order) => {
     return order.shipments.map((shipment) => {
       const rawStatus = shipment.status || '';
-      return {
+      return compactScrapeRow({
         order_id: order.orderId,
         order_date: order.orderDate || '',
         total_owed: getShipmentTotalOwed(order, shipment),
@@ -865,8 +846,10 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
         quantity: String(shipment.quantity || 1),
         carrier: normalizeCarrier(shipment.carrier || '') || '',
         tracking_number: shipment.trackingNumber || '',
+        shipment_id: shipment.shipmentId || '',
+        line_item_id: shipment.lineItemId || shipment.itemId || '',
         email_address: amazonEmail,
-      };
+      });
     });
   }));
 
@@ -891,6 +874,8 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
         }
       }
     } catch (err) {
+      scrapeState.failed += batch.length;
+      stats();
       log(`API error (batch ${Math.floor(i / batchSize) + 1}): ${err.message}`, 'error');
     }
 
@@ -943,6 +928,7 @@ async function fetchTrackingBatch(batchGroups) {
 
   const tabIds = [];
   let timedOutCount = 0;
+  activeTrackingTabIds = tabIds;
 
   try {
     const openResults = await Promise.all(
@@ -982,6 +968,7 @@ async function fetchTrackingBatch(batchGroups) {
     }
   } finally {
     await Promise.all(tabIds.map((tabId) => closeTab(tabId)));
+    activeTrackingTabIds = activeTrackingTabIds.filter((id) => !tabIds.includes(id));
   }
 
   return { timedOutCount };
@@ -1032,7 +1019,11 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
       const { timedOutCount } = await withTimeout(
         fetchTrackingBatch(batchGroups),
         TRACKING_BATCH_TIMEOUT_MS,
-        `Tracking batch ${batchNumber}`
+        `Tracking batch ${batchNumber}`,
+        async () => {
+          const hanging = [...activeTrackingTabIds];
+          await Promise.all(hanging.map((tabId) => closeTab(tabId)));
+        }
       );
 
       if (timedOutCount === batchGroups.reduce((n, group) => n + group.targets.length, 0)) {
@@ -1089,12 +1080,13 @@ async function runSingleOrderScrape(config) {
     return;
   }
 
-  scrapeState = { running: true, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0 };
+  scrapeState = { running: true, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0, extractionIncomplete: false };
   clearScrapeLogs();
   startScrapeKeepAlive();
   openLogTab();
 
   let dbCache = null;
+  let tabId = null;
 
   try {
     const token = await getAuthCookie();
@@ -1114,10 +1106,15 @@ async function runSingleOrderScrape(config) {
     progress(15, `Loading order ${orderId}...`);
 
     const url = buildOrderDetailUrl(orderId);
-    const tabId = await openTab(url);
-    await sleep(2000);
-    const result = await injectAndRun(tabId, 'order_detail_scraper.js');
-    await closeTab(tabId);
+    let result = null;
+    try {
+      tabId = await openTab(url);
+      await sleep(2000);
+      result = await injectAndRun(tabId, 'order_detail_scraper.js');
+    } finally {
+      if (tabId) await closeTab(tabId);
+      tabId = null;
+    }
 
     if (result?.issue) {
       scrapeDone(result.issue, false);
@@ -1210,20 +1207,23 @@ async function runSingleOrderScrape(config) {
 }
 
 // --- Main scrape logic ---
-async function runScrape(config) {
+async function runScrape(config, checkpoint = null) {
   const { yearFilter, maxPages, fetchTracking, useDbCache } = config;
   const zipFilters = normalizeZipFilters(config.zipFilters);
-  scrapeState = { running: true, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0 };
-  clearScrapeLogs();
+  scrapeState = checkpoint?.scrapeState || { running: true, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0, extractionIncomplete: false };
+  scrapeState.running = true;
+  if (!checkpoint) clearScrapeLogs();
   startScrapeKeepAlive();
   openLogTab();
 
-  const allOrders = [];
-  const allCancelledOrders = [];
-  let totalPages = 1;
-  let page = 1;
-  let totalZipSkipped = 0;
+  const allOrders = checkpoint?.allOrders || [];
+  const allCancelledOrders = checkpoint?.allCancelledOrders || [];
+  let totalPages = checkpoint?.totalPages || 1;
+  let page = checkpoint?.page || 1;
+  let totalZipSkipped = checkpoint?.totalZipSkipped || 0;
   let dbCache = null;
+  let amazonEmail = checkpoint?.amazonEmail || '';
+  let phase = checkpoint?.phase || 'list';
 
   try {
     const token = await getAuthCookie();
@@ -1237,13 +1237,28 @@ async function runScrape(config) {
       dbCache = await loadDbShipmentCache();
     }
 
-    const amazonEmail = await detectAmazonAccountEmail();
+    if (!amazonEmail) amazonEmail = await detectAmazonAccountEmail();
 
-    // Phase 1: Scrape order list pages
-    log('Starting order list scrape...', 'info');
-    if (zipFilters.length) {
-      log(`Keeping only orders for ZIP ${zipFilters.join(', ')} during list scan`, 'info');
-    }
+    const snapshot = () => ({
+      incomplete: true,
+      kind: 'bulk',
+      phase,
+      config,
+      page,
+      totalPages,
+      allOrders,
+      allCancelledOrders,
+      amazonEmail,
+      totalZipSkipped,
+      scrapeState,
+    });
+
+    if (phase === 'list') {
+      log(checkpoint ? `Resuming order list scrape at page ${page}...` : 'Starting order list scrape...', 'info');
+      if (zipFilters.length) {
+        log(`Keeping only orders for ZIP ${zipFilters.join(', ')} during list scan`, 'info');
+      }
+      await persistScrapeCheckpoint(snapshot());
 
     while (page <= totalPages) {
       if (scrapeState.stopped) break;
@@ -1255,18 +1270,31 @@ async function runScrape(config) {
       progress(0, `Loading page ${page}...`);
       log(`Scraping page ${page}...`);
 
-      const tabId = await openTab(url);
-      await waitForTabReady();
-
-      const result = await injectAndRun(tabId, 'scraper.js');
-      await closeTab(tabId);
+      let tabId = null;
+      let result = null;
+      try {
+        tabId = await openTab(url);
+        await waitForTabReady();
+        result = await injectAndRun(tabId, 'scraper.js');
+      } catch (err) {
+        scrapeState.extractionIncomplete = true;
+        scrapeState.failed += 1;
+        log(`Failed to extract page ${page}: ${err.message}`, 'error');
+        break;
+      } finally {
+        if (tabId) await closeTab(tabId);
+      }
 
       if (result?.issue) {
+        scrapeState.extractionIncomplete = true;
+        scrapeState.failed += 1;
         log(result.issue, 'error');
         break;
       }
 
       if (!result || (!result.orders && !result.cancelledOrders)) {
+        scrapeState.extractionIncomplete = true;
+        scrapeState.failed += 1;
         log(`Failed to extract page ${page}`, 'error');
         break;
       }
@@ -1307,9 +1335,22 @@ async function runScrape(config) {
       progress(Math.round((page / effectiveTotal) * 50), `Page ${page}/${effectiveTotal} done (${allOrders.length} orders)`);
 
       page++;
+      await persistScrapeCheckpoint(snapshot());
       if (page <= effectiveTotal) {
         await sleep(randomOrderPageDelay());
       }
+    }
+
+      if (!scrapeState.stopped && !scrapeState.extractionIncomplete) {
+        phase = fetchTracking ? 'tracking' : 'upload';
+        await persistScrapeCheckpoint(snapshot());
+      }
+    } else {
+      log(`Resuming scrape at ${phase} (${allOrders.length} orders)...`, 'info');
+    }
+
+    if (scrapeState.extractionIncomplete) {
+      log('Extraction stopped early; remaining pages were not scraped', 'error');
     }
 
     if (scrapeState.stopped) {
@@ -1318,7 +1359,7 @@ async function runScrape(config) {
       return;
     }
 
-    log(`Scraped ${allOrders.length} orders with ${scrapeState.shipments} shipments`, 'success');
+    log(`Scraped ${allOrders.length} orders with ${scrapeState.shipments} shipments`, scrapeState.extractionIncomplete ? 'error' : 'success');
     if (zipFilters.length) {
       log(`ZIP filter kept ${allOrders.length} orders and skipped ${totalZipSkipped}`, totalZipSkipped ? 'info' : 'success');
     }
@@ -1343,9 +1384,14 @@ async function runScrape(config) {
       log(`Found ${cancelledToReport.length} cancelled order${cancelledToReport.length === 1 ? '' : 's'}`, 'info');
     }
 
-    if (fetchTracking && allOrders.length) {
+    if (phase !== 'upload' && fetchTracking && allOrders.length) {
+      phase = 'tracking';
+      await persistScrapeCheckpoint(snapshot());
       await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null);
     }
+
+    phase = 'upload';
+    await persistScrapeCheckpoint(snapshot());
 
     if (allOrders.length) {
       log('Sending data to API...', 'info');
@@ -1363,7 +1409,9 @@ async function runScrape(config) {
     if (cancelledToReport.length) parts.push(`${cancelledToReport.length} cancelled`);
     parts.push(`${scrapeState.sent} saved`);
     if (scrapeState.failed) parts.push(`${scrapeState.failed} failed`);
-    const doneText = `Complete: ${parts.join(', ')}`;
+    const doneText = scrapeState.extractionIncomplete
+      ? `Incomplete: ${parts.join(', ')}`
+      : `Complete: ${parts.join(', ')}`;
     scrapeDone(doneText, scrapeState.failed === 0);
   } catch (err) {
     scrapeDone(`Error: ${err.message}`, false);
@@ -1405,8 +1453,12 @@ function normalizeShipmentStatus(raw) {
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === KEEP_ALIVE_ALARM && scrapeState.running) {
-    console.log('[IEID] scrape keep-alive');
+  if (alarm.name === KEEP_ALIVE_ALARM) {
+    if (scrapeState.running) {
+      console.log('[IEID] scrape keep-alive');
+      return;
+    }
+    resumeScrapeFromCheckpoint();
   }
   if (alarm.name === UPDATE_CHECK_ALARM) {
     maybeAutoApplyUpdate();
@@ -1420,7 +1472,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   ensureUpdateCheckAlarm();
-  maybeAutoApplyUpdate();
+  resumeScrapeFromCheckpoint().finally(() => maybeAutoApplyUpdate());
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -1428,24 +1480,43 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // Message handler
+async function openExtensionPopup() {
+  if (chrome.action && typeof chrome.action.openPopup === 'function') {
+    try {
+      await chrome.action.openPopup();
+      return;
+    } catch (err) {
+      console.log('[IEID] Could not open popup automatically:', err?.message || err);
+    }
+  }
+  try {
+    await chrome.windows.create({
+      url: chrome.runtime.getURL('popup.html'),
+      type: 'popup',
+      width: 400,
+      height: 640,
+    });
+  } catch (err) {
+    console.log('[IEID] Could not open popup window:', err?.message || err);
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'start_scrape') {
     if (!scrapeState.running) {
       runScrape(msg.config);
     }
-    sendResponse({ ok: true });
+    sendResponse({ ok: true, running: scrapeState.running });
   } else if (msg.action === 'start_single_order_scrape') {
     if (!scrapeState.running) {
       runSingleOrderScrape(msg.config);
     }
-    sendResponse({ ok: true });
+    sendResponse({ ok: true, running: scrapeState.running });
   } else if (msg.action === 'prepare_single_order_scan') {
     if (msg.orderId) {
       chrome.storage.local.set({ pendingSingleOrderId: msg.orderId });
     }
-    chrome.action.openPopup().catch((err) => {
-      console.log('[IEID] Could not open popup automatically:', err?.message || err);
-    });
+    openExtensionPopup();
     sendResponse({ ok: true });
   } else if (msg.action === 'get_pending_single_order') {
     chrome.storage.local.get('pendingSingleOrderId', (data) => {

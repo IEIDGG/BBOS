@@ -7,6 +7,10 @@ on:
     paths:
       - "chrome_extension/**"
 
+concurrency:
+  group: bump-scraper-version
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -55,4 +59,13 @@ jobs:
             exit 0
           fi
           git commit -m "Bump Order Scraper patch version."
-          git push
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin main
+            if git push; then
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed; retrying"
+            sleep $((attempt * 2))
+          done
+          echo "Failed to push scraper version bump after retries"
+          exit 1

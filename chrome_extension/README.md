@@ -1,4 +1,4 @@
-# IEID Amazon Order Scraper v1.1.3
+# IEID Amazon Order Scraper v1.1.7
 
 Chrome extension for importing Amazon order and tracking details into IEID.
 

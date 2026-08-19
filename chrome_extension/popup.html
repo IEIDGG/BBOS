@@ -82,7 +82,14 @@
   </style>
 </head>
 <body>
-  <h1><span>IEID</span> Order Scraper <small class="version-badge" id="extensionVersion">v1.1.6</small></h1>
+  <h1><span>IEID</span> Order Scraper <small class="version-badge" id="extensionVersion">v1.1.7</small></h1>
+
+  <div class="update-banner hidden" id="reconnectBanner">
+    <div class="update-banner-text">Folder access expired. Reconnect the loaded extension folder to resume one-click updates.</div>
+    <div class="update-banner-actions">
+      <button type="button" class="update-download-link" id="reconnectFolderBtn">Reconnect folder</button>
+    </div>
+  </div>
 
   <div class="update-banner hidden" id="updateBanner">
     <div class="update-banner-text">v<span id="updateLatestVersion"></span> is available. One click installs it from IEID. The first time, you will pick the folder you loaded this extension from.</div>

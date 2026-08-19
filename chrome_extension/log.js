@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 
 let autoScroll = true;
 let renderedCount = 0;
+let pollTimer = null;
 
 const logEl = $('log');
 
@@ -70,18 +71,46 @@ function applyStatus(resp) {
   }
 }
 
+function stopPoll() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function startPoll() {
+  if (pollTimer) return;
+  pollTimer = setInterval(pollStatus, 500);
+}
+
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === 'scrape_log') appendLog(msg.text, msg.level || '');
-  if (msg.type === 'scrape_progress') updateProgress(msg.pct, msg.text);
+  if (msg.type === 'scrape_log') {
+    appendLog(msg.text, msg.level || '');
+    startPoll();
+  }
+  if (msg.type === 'scrape_progress') {
+    updateProgress(msg.pct, msg.text);
+    startPoll();
+  }
   if (msg.type === 'scrape_stats') updateStats(msg);
-  if (msg.type === 'scrape_done') updateRunning(false);
+  if (msg.type === 'scrape_done') {
+    updateRunning(false);
+    stopPoll();
+  }
 });
 
 function pollStatus() {
   chrome.runtime.sendMessage({ action: 'scrape_status' }, (resp) => {
+    if (chrome.runtime.lastError) {
+      console.info('[IEID log] worker unavailable', chrome.runtime.lastError.message);
+      stopPoll();
+      return;
+    }
     applyStatus(resp);
+    if (resp?.running) startPoll();
+    else stopPoll();
   });
 }
 
+window.addEventListener('pagehide', stopPoll);
 pollStatus();
-setInterval(pollStatus, 500);

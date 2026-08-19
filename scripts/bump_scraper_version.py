@@ -9,13 +9,22 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+CHROME_VERSION_COMPONENT_MAX = 65535
+
+
 def next_patch_version(version: str) -> str:
     parts = str(version).split(".")
     if not parts or not all(part.isdigit() for part in parts) or len(parts) > 4:
         raise ValueError(f"Invalid Chrome extension version: {version}")
-    parts[-1] = str(int(parts[-1]) + 1)
-    logger.info("Bumping scraper version from %s to %s", version, ".".join(parts))
-    return ".".join(parts)
+    next_parts = [int(part) for part in parts]
+    next_parts[-1] += 1
+    if any(part > CHROME_VERSION_COMPONENT_MAX for part in next_parts):
+        raise ValueError(
+            f"Chrome extension version component exceeds {CHROME_VERSION_COMPONENT_MAX}: {version}"
+        )
+    bumped = ".".join(str(part) for part in next_parts)
+    logger.info("Bumping scraper version from %s to %s", version, bumped)
+    return bumped
 
 
 def should_bump_extension(

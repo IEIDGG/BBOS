@@ -200,9 +200,14 @@
 
   function isShipTrackHref(href) {
     try {
-      const url = new URL(href, location.href);
+      const absolute = new URL(href, location.href).href;
+      if (typeof isShipTrackUrl === 'function') return isShipTrackUrl(absolute);
+      const url = new URL(absolute);
+      if (url.protocol !== 'https:') return false;
+      const host = url.hostname.replace(/\.$/, '').toLowerCase();
+      if (!/(?:^|\.)amazon\.com$/i.test(host)) return false;
       if (url.pathname.includes('/your-orders/pop')) return false;
-      return url.pathname.includes('ship-track');
+      return url.pathname.includes('/gp/your-account/ship-track') || url.pathname.includes('ship-track');
     } catch {
       return false;
     }
@@ -265,6 +270,11 @@
 
       try {
         const url = new URL(link.href, location.href);
+        const absolute = url.href;
+        if (typeof isApprovedAmazonUrl === 'function' && !isApprovedAmazonUrl(absolute)) continue;
+        if (typeof isApprovedAmazonUrl !== 'function') {
+          if (url.protocol !== 'https:' || !/(?:^|\.)amazon\.com$/i.test(url.hostname.replace(/\.$/, ''))) continue;
+        }
         ids.shipmentId = ids.shipmentId || url.searchParams.get('shipmentId') || '';
         ids.itemId = ids.itemId || url.searchParams.get('itemId') || '';
         ids.lineItemId = ids.lineItemId || url.searchParams.get('lineItemId') || ids.itemId || '';
@@ -432,16 +442,28 @@
       for (const link of productLinks) {
         const href = link.href || '';
         const asin = href.match(ASIN_RE)?.[1]?.toUpperCase() || '';
-        if (!asin || seen.has(asin)) continue;
-        seen.add(asin);
+        if (!asin) continue;
 
         const productRoot = getProductRoot(link, container);
         const title = extractProductTitle(productRoot, link);
         const quantity = extractQuantity(productRoot);
         const unitPrice = extractUnitPrice(productRoot);
         const imageUrl = extractProductImage(productRoot, link, container, asin);
-        const ids = extractShipmentIds(container);
-        const pageTrack = pageTrackLinks.find((entry) => entry.shipmentId && entry.itemId) || pageTrackLinks[0] || null;
+        const ids = {
+          shipmentId: '',
+          itemId: '',
+          lineItemId: '',
+          packageId: '',
+        };
+        const containerIds = extractShipmentIds(container);
+        const productIds = extractShipmentIds(productRoot);
+        ids.shipmentId = productIds.shipmentId || containerIds.shipmentId || '';
+        ids.itemId = productIds.itemId || containerIds.itemId || '';
+        ids.lineItemId = productIds.lineItemId || containerIds.lineItemId || '';
+        ids.packageId = productIds.packageId || containerIds.packageId || '';
+        const pageTrack = typeof matchingShipTrack === 'function'
+          ? matchingShipTrack(ids, pageTrackLinks)
+          : null;
 
         if (pageTrack) {
           ids.shipmentId = ids.shipmentId || pageTrack.shipmentId || '';
@@ -450,7 +472,7 @@
           ids.packageId = ids.packageId || pageTrack.packageId || '';
         }
 
-        shipments.push({
+        const shipment = {
           status,
           statusDetail: getStatusDetail(container, status),
           asin,
@@ -458,9 +480,15 @@
           quantity,
           unitPrice,
           itemImage: imageUrl,
-          trackingUrl: extractTrackingLink(container) || pageTrack?.trackingUrl || '',
+          trackingUrl: extractTrackingLink(productRoot) || extractTrackingLink(container) || pageTrack?.trackingUrl || '',
           ...ids,
-        });
+        };
+        const key = typeof getShipmentIdentity === 'function'
+          ? getShipmentIdentity({ orderId: '' }, shipment)
+          : [ids.shipmentId, ids.itemId, ids.lineItemId, asin, title].join('|');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        shipments.push(shipment);
       }
     }
 

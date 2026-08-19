@@ -13,14 +13,18 @@ async function checkForExtensionUpdate() {
   if (!currentVersion) return;
 
   try {
+    const stored = await chrome.storage.local.get(['updateDismissedVersion', 'folderNeedsReconnect']);
+    const reconnectBanner = $('reconnectBanner');
+    if (reconnectBanner) {
+      reconnectBanner.classList.toggle('hidden', !stored.folderNeedsReconnect);
+    }
+
     const resp = await fetch(`${API_BASE}/api/order-scraper/version`, { cache: 'no-store' });
     if (!resp.ok) return;
 
     const data = await resp.json();
     const latestVersion = data?.version;
     if (!latestVersion || !isVersionNewer(latestVersion, currentVersion)) return;
-
-    const stored = await chrome.storage.local.get('updateDismissedVersion');
     if (stored.updateDismissedVersion === latestVersion) return;
 
     const banner = $('updateBanner');
@@ -69,17 +73,25 @@ function setScrapingUi(running) {
   $('scanSingleOrderBtn').disabled = running;
   $('scanSingleOrderBtn').textContent = running ? 'Scraping...' : 'Scan This Order';
   $('stopBtn').style.display = running ? 'block' : 'none';
+  const updateBtn = $('updateBtn');
+  if (updateBtn) {
+    updateBtn.disabled = running;
+    updateBtn.textContent = running ? 'Wait for scrape' : 'Update';
+  }
 }
 
-async function getAuthToken() {
-  const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-  if (cookie) return cookie.value;
+async function getAuthToken(forceRefresh = false) {
+  if (!forceRefresh) {
+    const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
+    if (cookie?.value) return cookie.value;
+  }
 
   const refreshCookie = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-  if (!refreshCookie) return null;
+  if (!refreshCookie?.value) return null;
 
   const refreshResp = await fetch(`${API_BASE}/api/refresh-token`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'X-Refresh-Token': refreshCookie.value },
   });
   if (!refreshResp.ok) return null;
@@ -100,16 +112,26 @@ async function importZipMappingsFromIeid() {
   showZipImportStatus('Loading zip mappings...', '');
 
   try {
-    const token = await getAuthToken();
+    let token = await getAuthToken();
     if (!token) {
       showZipImportStatus('Sign in to IEID first', 'error');
       return;
     }
 
-    const resp = await fetch(`${API_BASE}/api/settings/monitor`, {
-      headers: { 'X-Auth-Token': token },
+    const fetchMonitor = (authToken) => fetch(`${API_BASE}/api/settings/monitor`, {
+      credentials: 'include',
+      headers: { 'X-Auth-Token': authToken },
     });
 
+    let resp = await fetchMonitor(token);
+    if (resp.status === 401) {
+      const retried = await getAuthToken(true);
+      if (!retried || retried === token) {
+        showZipImportStatus('Session expired. Sign in to IEID again.', 'error');
+        return;
+      }
+      resp = await fetchMonitor(retried);
+    }
     if (resp.status === 401) {
       showZipImportStatus('Session expired. Sign in to IEID again.', 'error');
       return;
@@ -365,6 +387,21 @@ $('stopBtn').addEventListener('click', () => {
 });
 
 $('updateBtn').addEventListener('click', () => {
+  chrome.runtime.sendMessage({ action: 'scrape_status' }, (resp) => {
+    if (chrome.runtime.lastError) {
+      chrome.tabs.create({ url: chrome.runtime.getURL('update.html') });
+      return;
+    }
+    if (resp?.running) {
+      $('updateBtn').disabled = true;
+      $('updateBtn').textContent = 'Wait for scrape';
+      return;
+    }
+    chrome.tabs.create({ url: chrome.runtime.getURL('update.html') });
+  });
+});
+
+$('reconnectFolderBtn')?.addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('update.html') });
 });
 
