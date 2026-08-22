@@ -53,6 +53,9 @@ jobs:
       - name: Bump script tests
         run: uv run python tests/test_bump_scraper_version.py
 
+      - name: Whitespace check tests
+        run: uv run python tests/test_check_ws.py
+
   extension:
     runs-on: ubuntu-latest
     steps:
@@ -71,14 +74,8 @@ jobs:
 
       - name: Trailing whitespace
         env:
-          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
-        run: |
-          git fetch origin "$BASE_REF" --depth=1 || true
-          if git rev-parse --verify "origin/${BASE_REF}" >/dev/null 2>&1; then
-            git diff --check "origin/${BASE_REF}...HEAD"
-          else
-            git diff --check
-          fi
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/check_ws.sh "$BASE_SHA"
 
       - name: Unpacked extension smoke test
         run: |
