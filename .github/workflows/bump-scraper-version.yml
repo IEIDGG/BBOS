@@ -1,0 +1,71 @@
+name: Bump scraper version
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "chrome_extension/**"
+
+concurrency:
+  group: bump-scraper-version
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            git diff --name-only HEAD~1 HEAD > /tmp/changed.txt || git diff --name-only HEAD > /tmp/changed.txt
+          else
+            git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/changed.txt
+          fi
+          cat /tmp/changed.txt
+
+      - name: Bump patch version when needed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          mapfile -t files < /tmp/changed.txt
+          args=()
+          for file in "${files[@]}"; do
+            args+=(--changed-file "$file")
+          done
+          base_ref="$BEFORE"
+          if [ -z "$base_ref" ] || [ "$base_ref" = "0000000000000000000000000000000000000000" ]; then
+            base_ref="HEAD~1"
+          fi
+          python scripts/bump_scraper_version.py --manifest chrome_extension/manifest.json --base-ref "$base_ref" "${args[@]}"
+
+      - name: Commit bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chrome_extension/manifest.json
+          if git diff --staged --quiet; then
+            echo "No manifest bump to commit"
+            exit 0
+          fi
+          git commit -m "Bump Order Scraper patch version."
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin main
+            if git push; then
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed; retrying"
+            sleep $((attempt * 2))
+          done
+          echo "Failed to push scraper version bump after retries"
+          exit 1

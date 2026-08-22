@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>IEID Order Scraper Update</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1a1a2e; color: #eee; margin: 0; padding: 24px; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    p, li { font-size: 13px; line-height: 1.5; color: #ccc; }
+    button { background: #7a6520; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #status { margin-top: 16px; white-space: pre-wrap; }
+    .error { color: #f0a0a0; }
+  </style>
+</head>
+<body>
+  <h1>Update IEID Order Scraper</h1>
+  <p id="intro">This will install the latest package from IEID into the folder Chrome already loaded.</p>
+  <button type="button" id="pickFolderBtn" hidden>Select the folder you loaded this extension from</button>
+  <p id="status"></p>
+  <script src="scrape_core.js"></script>
+  <script src="update_helpers.js"></script>
+  <script src="update.js"></script>
+</body>
+</html>

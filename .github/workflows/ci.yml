@@ -50,6 +50,44 @@ jobs:
       - name: ty type check
         run: uvx --from ty==0.0.70 ty check --output-format github .
 
+      - name: Bump script tests
+        run: uv run python tests/test_bump_scraper_version.py
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: JavaScript syntax and scrape helpers
+        run: |
+          node tests/test_scrape_core.js
+          node tests/test_package_integrity.js
+
+      - name: Trailing whitespace
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+        run: |
+          git fetch origin "$BASE_REF" --depth=1 || true
+          if git rev-parse --verify "origin/${BASE_REF}" >/dev/null 2>&1; then
+            git diff --check "origin/${BASE_REF}...HEAD"
+          else
+            git diff --check
+          fi
+
+      - name: Unpacked extension smoke test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          npm install --prefix "$RUNNER_TEMP/pw" playwright@1.49.0
+          npx --prefix "$RUNNER_TEMP/pw" playwright install chromium --with-deps
+          NODE_PATH="$RUNNER_TEMP/pw/node_modules" xvfb-run -a node tests/test_extension_smoke.js
+
   install-bat-windows:
     # End-to-end test of the actual end-user install flow. main.py itself
     # is an interactive console app that expects real credentials, so it
