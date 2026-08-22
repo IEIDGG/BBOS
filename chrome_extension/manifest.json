@@ -1,10 +1,20 @@
 {
   "manifest_version": 3,
   "name": "IEID Order Scraper",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "Scrape Amazon order and tracking data",
-  "permissions": ["scripting", "tabs", "storage", "cookies", "alarms"],
-  "host_permissions": ["https://www.amazon.com/*", "https://amazon.com/*", "https://ieidgg.com/*"],
+  "permissions": [
+    "scripting",
+    "tabs",
+    "storage",
+    "cookies",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://www.amazon.com/*",
+    "https://amazon.com/*",
+    "https://ieidgg.com/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
@@ -22,7 +32,9 @@
         "https://www.amazon.com/your-orders/order-details*",
         "https://amazon.com/your-orders/order-details*"
       ],
-      "js": ["order_page.js"],
+      "js": [
+        "order_page.js"
+      ],
       "run_at": "document_idle"
     }
   ],
