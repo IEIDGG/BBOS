@@ -27,7 +27,10 @@ def init_repo(path):
 def commit_file(repo, relpath, content, message):
     target = Path(repo) / relpath
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    if isinstance(content, bytes):
+        target.write_bytes(content)
+    else:
+        target.write_text(content, encoding="utf-8")
     run_git(repo, "add", relpath)
     run_git(repo, "commit", "-m", message)
     return run_git(repo, "rev-parse", "HEAD").stdout.strip()
@@ -94,6 +97,31 @@ class CheckWsTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("trailing whitespace", result.stdout + result.stderr)
+
+    def test_script_accepts_crlf_without_masking_spaces_before_crlf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            init_repo(repo)
+            before = commit_file(repo, "windows.txt", b"ok\r\n", "base")
+            commit_file(repo, "windows.txt", b"ok\r\nnext\r\n", "crlf")
+            clean = subprocess.run(
+                ["bash", str(SCRIPT), before],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+
+            commit_file(repo, "windows.txt", b"ok\r\nnext \r\n", "bad space")
+            dirty = subprocess.run(
+                ["bash", str(SCRIPT), "HEAD^"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(dirty.returncode, 0)
+            self.assertIn("trailing whitespace", dirty.stdout + dirty.stderr)
 
     def test_script_falls_back_when_base_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
