@@ -118,9 +118,11 @@ class ScannedOrderWriter:
                 "message": "No tracking numbers found",
                 "submitted": 0,
             }
-        currency_code = str(
-            order.get("currency_code") or order.get("currency") or "USD"
-        ).strip().upper()
+        currency_code = (
+            str(order.get("currency_code") or order.get("currency") or "USD")
+            .strip()
+            .upper()
+        )
         if currency_code != "USD":
             return {
                 "success": False,
