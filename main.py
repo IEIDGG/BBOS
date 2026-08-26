@@ -575,17 +575,16 @@ class BBOSApplication:
 
     def test_api_submission(self) -> None:
         print("\n" + "=" * 60)
-        print("              API TEST SUBMISSION")
+        print("        DIRECT SCANNED-ORDER TEST")
         print("=" * 60)
 
         if not self.api_config.is_enabled():
-            print("\n✗ API submission is currently DISABLED")
-            print("  Please enable API submission first (option 1)")
+            print("\n✗ Direct scanned-order persistence is currently DISABLED")
+            print("  Please enable persistence first (option 1)")
             input("\nPress Enter to continue...")
             return
 
-        api_url = self.api_config.get_api_url()
-        print(f"\nTesting API submission to: {api_url}")
+        print("\nTesting direct persistence to IEIDLLC PostgreSQL")
         print("\nSelect test type:")
         print("1. Test Single Order Submission (latest order)")
         print("2. Test Bulk Order Submission (latest 2 orders)")
@@ -632,7 +631,7 @@ class BBOSApplication:
                     print(f"  Tracking numbers: {len(order['tracking'])}")
                     print(f"  State: {order.get('state', 'N/A')}")
 
-                    print("\nSubmitting to API...")
+                    print("\nWriting directly to scanned_orders...")
                     api_submitter = OrderAPISubmitter(self.api_config)
                     result = api_submitter.submit_order(order)
 
@@ -684,7 +683,7 @@ class BBOSApplication:
                             f"  - Order {order['number']}: {len(order['tracking'])} tracking number(s)"
                         )
 
-                    print("\nSubmitting to API (bulk)...")
+                    print("\nWriting directly to scanned_orders (bulk)...")
                     api_submitter = OrderAPISubmitter(self.api_config)
                     result = api_submitter.submit_orders_bulk(orders)
 
@@ -698,17 +697,7 @@ class BBOSApplication:
                         print(
                             f"✓ Total Failed: {result['total_failed']} tracking number(s)"
                         )
-                        print(f"✓ Buying Groups: {result['buying_groups']}")
-
-                        if "group_results" in result:
-                            print("\nGroup Results:")
-                            for group_res in result["group_results"]:
-                                print(f"\n  Buying Group: {group_res['buying_group']}")
-                                print(f"    Total: {group_res['total']}")
-                                print(f"    Successful: {group_res['successful']}")
-                                print(f"    Failed: {group_res['failed']}")
-                                print(f"    Skipped: {group_res['skipped']}")
-                                print(f"    Message: {group_res['message']}")
+                        print("✓ Destination: IEIDLLC scanned_orders")
                     else:
                         print("✗ Status: FAILED")
                         print(f"✗ Message: {result['message']}")
@@ -736,13 +725,11 @@ class BBOSApplication:
             print("=" * 60)
 
             api_status = "ENABLED" if self.api_config.is_enabled() else "DISABLED"
-            api_url = self.api_config.get_api_url()
 
-            print(f"\n1. Toggle API Submission (Currently: {api_status})")
-            print(f"   API URL: {api_url}")
-            print("2. Configure API Settings")
-            print("3. Check API Health")
-            print("4. Test API Submission")
+            print(f"\n1. Toggle scanned-order persistence (Currently: {api_status})")
+            print("2. Show PostgreSQL configuration requirements")
+            print("3. Check PostgreSQL health")
+            print("4. Test scanned-order persistence")
             print("5. Back to Main Menu")
 
             choice = input("\nSelect option (1-5): ").strip()
@@ -752,32 +739,25 @@ class BBOSApplication:
                 new_status = not current_status
                 self.api_config.set_enabled(new_status)
                 status_text = "ENABLED" if new_status else "DISABLED"
-                print(f"\n✓ API Submission is now {status_text}")
+                print(f"\n✓ Scanned-order persistence is now {status_text}")
                 if new_status:
-                    print(
-                        f"  Orders with tracking numbers will be submitted to: {api_url}"
-                    )
+                    print("  Orders with tracking numbers will write to scanned_orders")
                 input("\nPress Enter to continue...")
 
             elif choice == "2":
                 print("\n" + "=" * 60)
-                print("              API CONFIGURATION")
+                print("          POSTGRESQL CONFIGURATION")
                 print("=" * 60)
-                print("\nTo configure API settings, edit: api/api_config.json")
-                print("\nAvailable settings:")
-                print("  - api_url: FastAPI backend URL")
-                print("  - api_key: Authentication key")
-                print("  - enabled: Enable/disable submission")
-                print("  - zip_to_buying_group: ZIP code mappings (priority)")
-                print("  - state_to_buying_group: State code mappings (fallback)")
-                print("\nSee api/README.md for detailed documentation")
+                print("\nProvide POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB,")
+                print("POSTGRES_USER, POSTGRES_PASSWORD, and IEIDLLC_USER_ID.")
+                print("The local api_config.json retains only the enabled toggle.")
                 input("\nPress Enter to continue...")
 
             elif choice == "3":
                 print("\n" + "=" * 60)
-                print("              API HEALTH CHECK")
+                print("          POSTGRESQL HEALTH CHECK")
                 print("=" * 60)
-                print(f"\nChecking API at: {api_url}/health")
+                print("\nChecking the shared IEIDLLC PostgreSQL service")
                 print("Please wait...")
 
                 api_submitter = OrderAPISubmitter(self.api_config)

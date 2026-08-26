@@ -125,7 +125,7 @@ def get_email_username(email: str) -> str:
     return clean_filename(username)
 
 
-def get_db_filename(email: str = None, service: str = "bestbuy") -> str:
+def get_db_filename(email: str | None = None, service: str = "bestbuy") -> str:
     db_dir = "db"
     if not os.path.exists(db_dir):
         os.makedirs(db_dir)

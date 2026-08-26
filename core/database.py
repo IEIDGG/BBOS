@@ -3,17 +3,20 @@ from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple
 
 from config.settings import DB_SETTINGS
+from core.money import parse_usd_to_minor
 from core.utils import get_db_filename
 
 
 class DatabaseManager:
-    def __init__(self, db_config=None, email: str = None, service: str = "bestbuy"):
+    def __init__(
+        self, db_config=None, email: str | None = None, service: str = "bestbuy"
+    ):
         self.db_config = db_config or DB_SETTINGS
         if email:
             self.db_file = get_db_filename(email, service)
         else:
-            self.db_file = self.db_config.get(
-                "filename", get_db_filename(None, service)
+            self.db_file = str(
+                self.db_config.get("filename", get_db_filename(None, service))
             )
         self.connection = None
         self.create_connection()
@@ -34,7 +37,38 @@ class DatabaseManager:
         cursor = self.connection.cursor()
         for table_sql in self.db_config["tables"].values():
             cursor.executescript(table_sql)
+        self._migrate_order_money(cursor)
         self.connection.commit()
+
+    def _migrate_order_money(self, cursor) -> None:
+        cursor.execute("PRAGMA table_info(orders)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "total_price_minor" not in columns:
+            cursor.execute("ALTER TABLE orders ADD COLUMN total_price_minor INTEGER")
+        if "currency_code" not in columns:
+            cursor.execute("ALTER TABLE orders ADD COLUMN currency_code TEXT")
+        cursor.execute(
+            """
+            SELECT order_number, total_price
+            FROM orders
+            WHERE total_price_minor IS NULL
+              AND total_price IS NOT NULL
+              AND trim(total_price) <> ''
+            """
+        )
+        for order_number, total_price in cursor.fetchall():
+            try:
+                amount_minor = parse_usd_to_minor(total_price)
+            except ValueError:
+                continue
+            cursor.execute(
+                """
+                UPDATE orders
+                SET total_price_minor = ?, currency_code = 'USD'
+                WHERE order_number = ? AND total_price_minor IS NULL
+                """,
+                (amount_minor, order_number),
+            )
 
     def insert_order(self, order: Dict) -> None:
         if not self.connection:
@@ -61,17 +95,26 @@ class DatabaseManager:
 
             state_value = order.get("state", "")
             website_value = order.get("website", "BestBuy")
+            try:
+                total_price_minor = parse_usd_to_minor(order.get("total_price"))
+                currency_code = "USD"
+            except ValueError:
+                total_price_minor = None
+                currency_code = None
 
             if existing_order:
                 cursor.execute(
                     """
-                    UPDATE orders 
-                    SET order_date = ?, total_price = ?, status = ?, email_address = ?, state = ?, website = ?
+                    UPDATE orders
+                    SET order_date = ?, total_price = ?, total_price_minor = ?,
+                        currency_code = ?, status = ?, email_address = ?, state = ?, website = ?
                     WHERE order_number = ?
                 """,
                     (
                         order["date"],
                         order["total_price"],
+                        total_price_minor,
+                        currency_code,
                         order["status"],
                         order["email_address"],
                         state_value,
@@ -82,13 +125,18 @@ class DatabaseManager:
             else:
                 cursor.execute(
                     """
-                    INSERT INTO orders (order_number, order_date, total_price, status, email_address, state, website)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO orders (
+                        order_number, order_date, total_price, total_price_minor,
+                        currency_code, status, email_address, state, website
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         order["number"],
                         order["date"],
                         order["total_price"],
+                        total_price_minor,
+                        currency_code,
                         order["status"],
                         order["email_address"],
                         state_value,
@@ -232,7 +280,7 @@ class DatabaseManager:
             if has_website:
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS successful_orders_temp AS
-                    SELECT 
+                    SELECT
                         COALESCE(o.website, 'BestBuy') as website,
                         o.order_number,
                         o.order_date,
@@ -243,21 +291,21 @@ class DatabaseManager:
                         GROUP_CONCAT(t.tracking_number, '; ') as tracking_number,
                         COALESCE(o.state, '') as state,
                         COALESCE(o.email_address, '') as email_address
-                    FROM 
+                    FROM
                         orders o
-                    LEFT JOIN 
+                    LEFT JOIN
                         products p ON o.order_number = p.order_id
-                    LEFT JOIN 
+                    LEFT JOIN
                         tracking_numbers t ON o.order_number = t.order_id
-                    WHERE 
+                    WHERE
                         o.status != 'Cancelled'
-                    GROUP BY 
+                    GROUP BY
                         o.order_number
                 """)
             else:
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS successful_orders_temp AS
-                    SELECT 
+                    SELECT
                         'BestBuy' as website,
                         o.order_number,
                         o.order_date,
@@ -268,15 +316,15 @@ class DatabaseManager:
                         GROUP_CONCAT(t.tracking_number, '; ') as tracking_number,
                         COALESCE(o.state, '') as state,
                         COALESCE(o.email_address, '') as email_address
-                    FROM 
+                    FROM
                         orders o
-                    LEFT JOIN 
+                    LEFT JOIN
                         products p ON o.order_number = p.order_id
-                    LEFT JOIN 
+                    LEFT JOIN
                         tracking_numbers t ON o.order_number = t.order_id
-                    WHERE 
+                    WHERE
                         o.status != 'Cancelled'
-                    GROUP BY 
+                    GROUP BY
                         o.order_number
                 """)
 
@@ -308,7 +356,7 @@ class DatabaseManager:
 
             cursor.execute(
                 """
-                UPDATE orders 
+                UPDATE orders
                 SET state = ?
                 WHERE order_number = ?
             """,
@@ -357,14 +405,22 @@ class DatabaseManager:
         cursor = self.connection.cursor()
         try:
             cursor.execute("""
-                SELECT 
+                SELECT
                     COUNT(DISTINCT order_number) as unique_orders,
                     COUNT(*) as total_orders,
                     SUM(CASE WHEN status = 'Shipped' THEN 1 ELSE 0 END) as shipped_count,
                     (SELECT COUNT(*) FROM tracking_numbers) as tracking_numbers_count
                 FROM orders
             """)
-            return cursor.fetchone()
+            row = cursor.fetchone()
+            if row is None:
+                return (0, 0, 0, 0)
+            return (
+                int(row[0] or 0),
+                int(row[1] or 0),
+                int(row[2] or 0),
+                int(row[3] or 0),
+            )
         except Exception as e:
             print(f"Error getting order summary: {str(e)}")
             return (0, 0, 0, 0)
@@ -536,7 +592,7 @@ class DatabaseManager:
         cursor = self.connection.cursor()
         try:
             cursor.execute("SELECT tracking_key FROM submitted_tracking_keys")
-            keys = {row[0] for row in cursor.fetchall()}
+            keys = {str(row[0]) for row in cursor.fetchall()}
             return keys
         except Exception as e:
             print(f"Error getting submitted tracking keys: {str(e)}")
@@ -554,7 +610,7 @@ class DatabaseManager:
             submitted_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor.execute(
                 """
-                INSERT OR IGNORE INTO submitted_tracking_keys 
+                INSERT OR IGNORE INTO submitted_tracking_keys
                 (tracking_key, order_number, tracking_number, submitted_date)
                 VALUES (?, ?, ?, ?)
             """,
@@ -578,7 +634,7 @@ class DatabaseManager:
             for key_data in keys_data:
                 cursor.execute(
                     """
-                    INSERT OR IGNORE INTO submitted_tracking_keys 
+                    INSERT OR IGNORE INTO submitted_tracking_keys
                     (tracking_key, order_number, tracking_number, submitted_date)
                     VALUES (?, ?, ?, ?)
                 """,

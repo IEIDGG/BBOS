@@ -487,7 +487,7 @@ class ContinuousMonitor:
                     len(order.get("tracking", [])) for order in orders_to_submit
                 )
                 print(
-                    f"\n📡 Submitting {total_tracking_numbers} tracking number(s) from {len(orders_to_submit)} order(s) between {lookback_date} and {end_date} (Bulk API)..."
+                    f"\n📡 Writing {total_tracking_numbers} tracking number(s) from {len(orders_to_submit)} order(s) between {lookback_date} and {end_date} to scanned_orders..."
                 )
 
                 result = self.api_submitter.submit_orders_bulk(orders_to_submit)
@@ -496,11 +496,13 @@ class ContinuousMonitor:
                     submitted_count = result.get("total_submitted", 0)
                     if submitted_count > 0:
                         submitted_keys = []
-                        for order in orders_to_submit:
-                            order_number = order.get("number") or order.get(
-                                "order_number"
-                            )
-                            for tracking_num in order.get("tracking", []):
+                        for order_result in result.get("order_results", []):
+                            order_number = order_result.get("order_number")
+                            write_result = order_result.get("result", {})
+                            if not write_result.get("success"):
+                                continue
+                            tracking_num = write_result.get("tracking_number")
+                            if order_number and tracking_num:
                                 unique_key = f"{order_number}_{tracking_num}"
                                 submitted_keys.append(
                                     {
@@ -521,21 +523,11 @@ class ContinuousMonitor:
                                 f"💾 Saved {len(submitted_keys)} submitted tracking keys to database"
                             )
 
-                    print(f"✅ Bulk Submission: {result['message']}")
+                    print(f"✅ Direct database write: {result['message']}")
                     print(f"   Total submitted: {submitted_count}")
                     print(f"   Total failed: {result.get('total_failed', 0)}")
-                    print(f"   Buying groups: {result.get('buying_groups', 0)}")
-
-                    for group_result in result.get("group_results", []):
-                        buying_group = group_result.get("buying_group")
-                        successful = group_result.get("successful", 0)
-                        failed = group_result.get("failed", 0)
-                        skipped = group_result.get("skipped", 0)
-                        print(
-                            f"   • {buying_group}: {successful} successful, {failed} failed, {skipped} skipped"
-                        )
                 else:
-                    print(f"⚠️ Bulk Submission: {result['message']}")
+                    print(f"⚠️ Direct database write: {result['message']}")
             else:
                 print("   No new trackings to submit (all already submitted)")
 
