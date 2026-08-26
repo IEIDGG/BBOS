@@ -130,6 +130,20 @@ class ScannedOrderWriterTests(unittest.TestCase):
                 self.assertFalse(result["success"])
         self.assertEqual(self.connection.cursor_instance.calls, [])
 
+    def test_rejects_non_usd_orders_before_connecting(self):
+        order = {
+            "number": "BB-CAD",
+            "total_price": "$120.34",
+            "currency": "CAD",
+            "tracking": ["1Z9999999999999999"],
+        }
+
+        result = self.writer.write_order(order)
+
+        self.assertFalse(result["success"])
+        self.assertIn("USD", str(result["message"]))
+        self.assertEqual(self.connection.cursor_instance.calls, [])
+
     def test_environment_settings_fail_closed_when_incomplete(self):
         with self.assertRaises(ValueError, msg="missing PostgreSQL settings"):
             PostgresSettings.from_env({})

@@ -118,6 +118,15 @@ class ScannedOrderWriter:
                 "message": "No tracking numbers found",
                 "submitted": 0,
             }
+        currency_code = str(
+            order.get("currency_code") or order.get("currency") or "USD"
+        ).strip().upper()
+        if currency_code != "USD":
+            return {
+                "success": False,
+                "message": f"Unsupported currency {currency_code}; only USD is accepted",
+                "submitted": 0,
+            }
         try:
             amount_minor = parse_usd_to_minor(order.get("total_price"))
         except ValueError as exc:
@@ -152,7 +161,7 @@ class ScannedOrderWriter:
                         f"{order_number}_{tracking_number}",
                         tracking_number,
                         amount_minor,
-                        "USD",
+                        currency_code,
                         raw,
                     ),
                 )

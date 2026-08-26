@@ -247,6 +247,32 @@ class SQLiteMoneyMigrationTests(unittest.TestCase):
             )
             manager.close()
 
+    def test_invalid_legacy_money_fails_database_initialization_closed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "orders.sqlite3"
+            connection = sqlite3.connect(db_path)
+            connection.execute(
+                "CREATE TABLE orders (order_number TEXT PRIMARY KEY, total_price TEXT)"
+            )
+            connection.execute("INSERT INTO orders VALUES ('bad', 'N/A')")
+            connection.commit()
+            connection.close()
+
+            with self.assertRaisesRegex(ValueError, "cannot migrate"):
+                DatabaseManager(
+                    db_config={
+                        "filename": str(db_path),
+                        "tables": {
+                            "orders": """
+                                CREATE TABLE IF NOT EXISTS orders (
+                                    order_number TEXT PRIMARY KEY,
+                                    total_price TEXT
+                                )
+                            """
+                        },
+                    }
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,10 +38,16 @@ class DatabaseManager:
         self._assert_local_writes_open()
 
         cursor = self.connection.cursor()
-        for table_sql in self.db_config["tables"].values():
-            cursor.executescript(table_sql)
-        self._migrate_order_money(cursor)
-        self.connection.commit()
+        try:
+            for table_sql in self.db_config["tables"].values():
+                cursor.executescript(table_sql)
+            self._migrate_order_money(cursor)
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            cursor.close()
 
     def _migrate_order_money(self, cursor) -> None:
         cursor.execute("PRAGMA table_info(orders)")
@@ -59,10 +65,12 @@ class DatabaseManager:
               AND trim(total_price) <> ''
             """
         )
+        rejected: list[str] = []
         for order_number, total_price in cursor.fetchall():
             try:
                 amount_minor = parse_usd_to_minor(total_price)
-            except ValueError:
+            except ValueError as exc:
+                rejected.append(f"{order_number}: {exc}")
                 continue
             cursor.execute(
                 """
@@ -71,6 +79,10 @@ class DatabaseManager:
                 WHERE order_number = ? AND total_price_minor IS NULL
                 """,
                 (amount_minor, order_number),
+            )
+        if rejected:
+            raise ValueError(
+                "cannot migrate legacy order money exactly: " + "; ".join(rejected)
             )
 
     def insert_order(self, order: Dict) -> None:
