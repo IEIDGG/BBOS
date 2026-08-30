@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Set
 
 from api.submitter import APIConfig, OrderAPISubmitter
 from config.settings import SEARCH_CRITERIA
+from core.money import display_order_total
 from email_processing.handlers import OrderEmailHandler
 
 
@@ -284,7 +285,8 @@ class ContinuousMonitor:
                     print(f"\n🎉 FOUND {len(new_orders)} NEW CONFIRMATION ORDER(S)!")
                     for order in new_orders:
                         print(
-                            f"  📦 Order #{order.get('number')} - ${order.get('total_price', 'N/A')}"
+                            f"  📦 Order #{order.get('number')} - "
+                            f"{display_order_total(order)}"
                         )
                     new_orders_found = True
 

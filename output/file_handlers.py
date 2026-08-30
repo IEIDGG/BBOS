@@ -7,6 +7,7 @@ from config.settings import (
     OUTPUT_SETTINGS,
 )
 from core.database import DatabaseManager
+from core.money import display_order_total
 
 
 def get_output_settings(service: str = "bestbuy") -> Dict:
@@ -56,7 +57,7 @@ class OutputHandler:
                         row = {
                             "order_number": order.get("number", ""),
                             "order_date": order.get("date", ""),
-                            "total_price": order.get("total_price", ""),
+                            "total_price": display_order_total(order),
                             "status": order.get("status", ""),
                             "email_address": order.get("email_address", ""),
                             "products": products_str,

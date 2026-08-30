@@ -2,6 +2,8 @@ import os
 from datetime import datetime
 from typing import Dict, Tuple
 
+from core.money import display_order_total
+
 
 def read_credentials(filename: str) -> Tuple[str, str, str]:
     try:
@@ -51,7 +53,7 @@ def format_order_details(order: Dict) -> str:
         f"Order Number: {order['number']}",
         f"Date: {order['date']}",
         f"Status: {order['status'] or 'Processing'}",
-        f"Total Price: {order['total_price']}",
+        f"Total Price: {display_order_total(order)}",
         "\nProducts:",
     ]
 

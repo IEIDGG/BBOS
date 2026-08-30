@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from config.settings import DB_SETTINGS
-from core.money import parse_usd_to_minor
+from core.money import display_order_total, parse_usd_to_minor, resolve_usd_money
 from core.utils import get_db_filename
 
 
@@ -34,6 +34,10 @@ class DatabaseManager:
 
     def create_tables(self) -> None:
         if not self.connection:
+            return
+        if self._local_writes_blocked():
+            # During cutover, an existing database remains readable but no DDL
+            # or backfill may run from an application process.
             return
         self._assert_local_writes_open()
 
@@ -296,6 +300,7 @@ class DatabaseManager:
             cursor.execute("PRAGMA table_info(orders)")
             columns = [row[1] for row in cursor.fetchall()]
             has_website = "website" in columns
+            cursor.execute("DROP TABLE IF EXISTS successful_orders_temp")
 
             if has_website:
                 cursor.execute("""
@@ -305,6 +310,8 @@ class DatabaseManager:
                         o.order_number,
                         o.order_date,
                         o.total_price,
+                        o.total_price_minor,
+                        o.currency_code,
                         o.status,
                         GROUP_CONCAT(p.title, '; ') as title,
                         GROUP_CONCAT(p.quantity, '; ') as quantity,
@@ -330,6 +337,8 @@ class DatabaseManager:
                         o.order_number,
                         o.order_date,
                         o.total_price,
+                        o.total_price_minor,
+                        o.currency_code,
                         o.status,
                         GROUP_CONCAT(p.title, '; ') as title,
                         GROUP_CONCAT(p.quantity, '; ') as quantity,
@@ -347,6 +356,24 @@ class DatabaseManager:
                     GROUP BY
                         o.order_number
                 """)
+
+            rows = cursor.execute(
+                "SELECT order_number, total_price, total_price_minor, currency_code "
+                "FROM successful_orders_temp"
+            ).fetchall()
+            for order_number, total_price, amount_minor, currency_code in rows:
+                display = display_order_total(
+                    {
+                        "total_price": total_price,
+                        "total_price_minor": amount_minor,
+                        "currency_code": currency_code,
+                    }
+                )
+                cursor.execute(
+                    "UPDATE successful_orders_temp SET total_price = ? "
+                    "WHERE order_number = ?",
+                    (display, order_number),
+                )
 
             cursor.execute("DROP TABLE IF EXISTS successful_orders")
             cursor.execute(
@@ -396,22 +423,40 @@ class DatabaseManager:
 
         cursor = self.connection.cursor()
         try:
+            minor_column, currency_column = self._money_projection(cursor)
             cursor.execute(
-                "SELECT order_number, order_date, total_price, status, email_address, state FROM orders"
+                "SELECT order_number, order_date, total_price, "
+                f"{minor_column}, {currency_column}, "
+                "status, email_address, state FROM orders"
             )
             rows = cursor.fetchall()
 
             orders = []
             for row in rows:
+                money = resolve_usd_money(
+                    {
+                        "total_price": row[2],
+                        "total_price_minor": row[3],
+                        "currency_code": row[4],
+                    }
+                )
                 orders.append(
                     {
                         "number": row[0],
                         "order_number": row[0],
                         "date": row[1],
-                        "total_price": row[2],
-                        "status": row[3],
-                        "email_address": row[4],
-                        "state": row[5] if len(row) > 5 else "",
+                        "total_price": display_order_total(
+                            {
+                                "total_price": row[2],
+                                "total_price_minor": row[3],
+                                "currency_code": row[4],
+                            }
+                        ),
+                        "total_price_minor": money.amount_minor,
+                        "currency_code": money.currency_code,
+                        "status": row[5],
+                        "email_address": row[6],
+                        "state": row[7] if len(row) > 7 else "",
                     }
                 )
             return orders
@@ -452,9 +497,11 @@ class DatabaseManager:
 
         cursor = self.connection.cursor()
         try:
+            minor_column, currency_column = self._money_projection(cursor)
             cursor.execute(
-                """
-                SELECT order_number, order_date, total_price, status, email_address, state
+                f"""
+                SELECT order_number, order_date, total_price, {minor_column},
+                       {currency_column}, status, email_address, state
                 FROM orders
                 WHERE order_number = ?
             """,
@@ -464,6 +511,14 @@ class DatabaseManager:
 
             if not order_row:
                 return None
+
+            money = resolve_usd_money(
+                {
+                    "total_price": order_row[2],
+                    "total_price_minor": order_row[3],
+                    "currency_code": order_row[4],
+                }
+            )
 
             cursor.execute(
                 """
@@ -497,10 +552,18 @@ class DatabaseManager:
                 "number": order_row[0],
                 "order_number": order_row[0],
                 "date": order_row[1],
-                "total_price": order_row[2],
-                "status": order_row[3],
-                "email_address": order_row[4],
-                "state": order_row[5] if len(order_row) > 5 else "",
+                "total_price": display_order_total(
+                    {
+                        "total_price": order_row[2],
+                        "total_price_minor": order_row[3],
+                        "currency_code": order_row[4],
+                    }
+                ),
+                "total_price_minor": money.amount_minor,
+                "currency_code": money.currency_code,
+                "status": order_row[5],
+                "email_address": order_row[6],
+                "state": order_row[7] if len(order_row) > 7 else "",
                 "products": products,
                 "tracking": tracking_numbers,
             }
@@ -591,18 +654,19 @@ class DatabaseManager:
     def _ensure_submitted_tracking_keys_table(self) -> None:
         if not self.connection:
             return
-        self._assert_local_writes_open()
 
         cursor = self.connection.cursor()
         try:
             cursor.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='submitted_tracking_keys'"
             )
-            if not cursor.fetchone():
-                table_sql = self.db_config["tables"].get("submitted_tracking_keys")
-                if table_sql:
-                    cursor.executescript(table_sql)
-                    self.connection.commit()
+            if cursor.fetchone():
+                return
+            self._assert_local_writes_open()
+            table_sql = self.db_config["tables"].get("submitted_tracking_keys")
+            if table_sql:
+                cursor.executescript(table_sql)
+                self.connection.commit()
         except Exception as e:
             print(f"Error ensuring submitted_tracking_keys table exists: {str(e)}")
 
@@ -695,21 +759,37 @@ class DatabaseManager:
             self.connection.close()
 
     @staticmethod
-    def _assert_local_writes_open() -> None:
+    def _local_write_gate_path() -> Path | None:
         gate_value = os.environ.get("IEIDLLC_MONEY_CUTOVER_GATE_FILE", "").strip()
         if not gate_value:
-            return
+            return None
         try:
-            gate_path = Path(gate_value)
-            blocked = gate_path.exists()
+            return Path(gate_value)
         except (OSError, ValueError) as exc:
             raise RuntimeError(
                 "BBOS money writes are paused because the cutover gate path is invalid"
             ) from exc
-        if not blocked:
+
+    @classmethod
+    def _local_writes_blocked(cls) -> bool:
+        gate_path = cls._local_write_gate_path()
+        return gate_path is not None and gate_path.exists()
+
+    @classmethod
+    def _assert_local_writes_open(cls) -> None:
+        gate_path = cls._local_write_gate_path()
+        if gate_path is None or not gate_path.exists():
             return
         try:
             release_id = gate_path.read_text().strip() or "unknown release"
         except OSError:
             release_id = "unknown release"
         raise RuntimeError(f"BBOS money writes are paused for release {release_id}")
+
+    @staticmethod
+    def _money_projection(cursor) -> tuple[str, str]:
+        cursor.execute("PRAGMA table_info(orders)")
+        columns = {row[1] for row in cursor.fetchall()}
+        minor = "total_price_minor" if "total_price_minor" in columns else "NULL"
+        currency = "currency_code" if "currency_code" in columns else "NULL"
+        return minor, currency
