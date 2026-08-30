@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from core.database import DatabaseManager
 from core.money import parse_usd_to_minor
@@ -120,6 +121,131 @@ class SQLiteMoneyMigrationTests(unittest.TestCase):
             manager.close()
 
         self.assertEqual(row, ("$120.34", 12034, "USD"))
+
+    def test_invalid_new_order_money_fails_before_order_mutation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "orders.sqlite3"
+            manager = DatabaseManager(
+                db_config={
+                    "filename": str(db_path),
+                    "tables": {
+                        "orders": """
+                            CREATE TABLE IF NOT EXISTS orders (
+                                order_number TEXT PRIMARY KEY,
+                                order_date TEXT,
+                                total_price TEXT,
+                                status TEXT,
+                                email_address TEXT,
+                                state TEXT,
+                                website TEXT
+                            )
+                        """,
+                        "products": """
+                            CREATE TABLE IF NOT EXISTS products (
+                                id INTEGER PRIMARY KEY,
+                                order_id TEXT,
+                                title TEXT,
+                                price TEXT,
+                                quantity TEXT
+                            )
+                        """,
+                        "tracking_numbers": """
+                            CREATE TABLE IF NOT EXISTS tracking_numbers (
+                                id INTEGER PRIMARY KEY,
+                                order_id TEXT,
+                                tracking_number TEXT
+                            )
+                        """,
+                    },
+                }
+            )
+
+            with self.assertRaisesRegex(ValueError, "fractional cent"):
+                manager.insert_order(
+                    {
+                        "number": "invalid",
+                        "date": "2026-08-26",
+                        "total_price": "$1.005",
+                        "status": "Shipped",
+                        "email_address": "buyer@example.com",
+                        "products": [],
+                        "tracking": [],
+                    }
+                )
+
+            assert manager.connection is not None
+            self.assertIsNone(
+                manager.connection.execute(
+                    "SELECT 1 FROM orders WHERE order_number = 'invalid'"
+                ).fetchone()
+            )
+            manager.close()
+
+    def test_sqlite_cutover_gate_blocks_writes_across_processes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "orders.sqlite3"
+            gate_path = root / "sqlite-write-gate"
+            manager = DatabaseManager(
+                db_config={
+                    "filename": str(db_path),
+                    "tables": {
+                        "orders": """
+                            CREATE TABLE IF NOT EXISTS orders (
+                                order_number TEXT PRIMARY KEY,
+                                order_date TEXT,
+                                total_price TEXT,
+                                status TEXT,
+                                email_address TEXT,
+                                state TEXT,
+                                website TEXT
+                            )
+                        """,
+                        "products": """
+                            CREATE TABLE IF NOT EXISTS products (
+                                id INTEGER PRIMARY KEY,
+                                order_id TEXT,
+                                title TEXT,
+                                price TEXT,
+                                quantity TEXT
+                            )
+                        """,
+                        "tracking_numbers": """
+                            CREATE TABLE IF NOT EXISTS tracking_numbers (
+                                id INTEGER PRIMARY KEY,
+                                order_id TEXT,
+                                tracking_number TEXT
+                            )
+                        """,
+                    },
+                }
+            )
+            gate_path.write_text("minor-money-v1\n")
+
+            with patch.dict(
+                "os.environ",
+                {"IEIDLLC_MONEY_CUTOVER_GATE_FILE": str(gate_path)},
+            ):
+                with self.assertRaisesRegex(RuntimeError, "writes are paused"):
+                    manager.insert_order(
+                        {
+                            "number": "paused",
+                            "date": "2026-08-26",
+                            "total_price": "$1.00",
+                            "status": "Shipped",
+                            "email_address": "buyer@example.com",
+                            "products": [],
+                            "tracking": [],
+                        }
+                    )
+
+            assert manager.connection is not None
+            self.assertIsNone(
+                manager.connection.execute(
+                    "SELECT 1 FROM orders WHERE order_number = 'paused'"
+                ).fetchone()
+            )
+            manager.close()
 
 
 if __name__ == "__main__":

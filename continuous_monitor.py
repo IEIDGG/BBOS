@@ -496,14 +496,25 @@ class ContinuousMonitor:
                     submitted_count = result.get("total_submitted", 0)
                     if submitted_count > 0:
                         submitted_keys = []
+                        submitted_key_set = set()
                         for order_result in result.get("order_results", []):
                             order_number = order_result.get("order_number")
                             write_result = order_result.get("result", {})
                             if not write_result.get("success"):
                                 continue
-                            tracking_num = write_result.get("tracking_number")
-                            if order_number and tracking_num:
+                            tracking_numbers = write_result.get("tracking_numbers")
+                            if not tracking_numbers:
+                                tracking_number = write_result.get("tracking_number")
+                                tracking_numbers = (
+                                    [tracking_number] if tracking_number else []
+                                )
+                            for tracking_num in tracking_numbers:
+                                if not order_number or not tracking_num:
+                                    continue
                                 unique_key = f"{order_number}_{tracking_num}"
+                                if unique_key in submitted_key_set:
+                                    continue
+                                submitted_key_set.add(unique_key)
                                 submitted_keys.append(
                                     {
                                         "tracking_key": unique_key,

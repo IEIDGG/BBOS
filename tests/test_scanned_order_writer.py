@@ -81,11 +81,42 @@ class ScannedOrderWriterTests(unittest.TestCase):
         )
         self.assertEqual(params[0], self.settings.owner_id)
         self.assertEqual(params[1], "bbos")
-        self.assertEqual(params[2], "BB-12034")
+        self.assertEqual(params[2], "BB-12034_1Z9999999999999999")
         self.assertEqual(params[3], "1Z9999999999999999")
         self.assertEqual(params[4], 12034)
         self.assertEqual(params[5], "USD")
         self.assertEqual(json.loads(params[6]), order)
+        self.assertEqual(self.connection.commits, 1)
+
+    def test_writes_each_distinct_tracking_number_with_its_own_source_key(self):
+        order = {
+            "number": "BB-MULTI",
+            "date": "2026-08-26",
+            "total_price": "$12.34",
+            "tracking": ["1Z-FIRST", "1Z-SECOND", "1Z-FIRST", ""],
+        }
+
+        result = self.writer.write_order(order)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["submitted"], 2)
+        self.assertEqual(result["tracking_numbers"], ["1Z-FIRST", "1Z-SECOND"])
+        self.assertEqual(result["tracking_number"], "1Z-FIRST")
+        writes = self.connection.cursor_instance.calls
+        self.assertEqual(
+            [params[2] for _sql, params in writes],
+            [
+                "BB-MULTI_1Z-FIRST",
+                "BB-MULTI_1Z-SECOND",
+            ],
+        )
+        self.assertEqual(
+            [params[3] for _sql, params in writes],
+            [
+                "1Z-FIRST",
+                "1Z-SECOND",
+            ],
+        )
         self.assertEqual(self.connection.commits, 1)
 
     def test_rejects_missing_required_order_fields_without_connecting(self):

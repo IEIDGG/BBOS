@@ -1,5 +1,7 @@
+import os
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from config.settings import DB_SETTINGS
@@ -33,6 +35,7 @@ class DatabaseManager:
     def create_tables(self) -> None:
         if not self.connection:
             return
+        self._assert_local_writes_open()
 
         cursor = self.connection.cursor()
         for table_sql in self.db_config["tables"].values():
@@ -73,6 +76,14 @@ class DatabaseManager:
     def insert_order(self, order: Dict) -> None:
         if not self.connection:
             return
+        self._assert_local_writes_open()
+
+        try:
+            total_price_minor = parse_usd_to_minor(order.get("total_price"))
+        except ValueError:
+            self.connection.rollback()
+            raise
+        currency_code = "USD"
 
         cursor = self.connection.cursor()
 
@@ -95,12 +106,6 @@ class DatabaseManager:
 
             state_value = order.get("state", "")
             website_value = order.get("website", "BestBuy")
-            try:
-                total_price_minor = parse_usd_to_minor(order.get("total_price"))
-                currency_code = "USD"
-            except ValueError:
-                total_price_minor = None
-                currency_code = None
 
             if existing_order:
                 cursor.execute(
@@ -178,6 +183,7 @@ class DatabaseManager:
     def insert_xbox_code(self, code_data: Dict) -> None:
         if not self.connection:
             return
+        self._assert_local_writes_open()
 
         if "xbox_codes" not in self.db_config["tables"]:
             print("Xbox codes table not available in this database configuration")
@@ -200,6 +206,7 @@ class DatabaseManager:
     def insert_membership_number(self, membership_data: Dict) -> None:
         if not self.connection:
             return
+        self._assert_local_writes_open()
 
         cursor = self.connection.cursor()
         try:
@@ -270,6 +277,7 @@ class DatabaseManager:
     def create_successful_orders_view(self) -> None:
         if not self.connection:
             return
+        self._assert_local_writes_open()
 
         cursor = self.connection.cursor()
         try:
@@ -344,6 +352,7 @@ class DatabaseManager:
                 f"ERROR: No database connection for updating address of order {order_number}"
             )
             return
+        self._assert_local_writes_open()
 
         cursor = self.connection.cursor()
         try:
@@ -570,6 +579,7 @@ class DatabaseManager:
     def _ensure_submitted_tracking_keys_table(self) -> None:
         if not self.connection:
             return
+        self._assert_local_writes_open()
 
         cursor = self.connection.cursor()
         try:
@@ -603,6 +613,7 @@ class DatabaseManager:
     ) -> None:
         if not self.connection:
             return
+        self._assert_local_writes_open()
 
         self._ensure_submitted_tracking_keys_table()
         cursor = self.connection.cursor()
@@ -626,6 +637,7 @@ class DatabaseManager:
     ) -> None:
         if not self.connection:
             return
+        self._assert_local_writes_open()
 
         self._ensure_submitted_tracking_keys_table()
         cursor = self.connection.cursor()
@@ -669,3 +681,23 @@ class DatabaseManager:
     def close(self) -> None:
         if self.connection:
             self.connection.close()
+
+    @staticmethod
+    def _assert_local_writes_open() -> None:
+        gate_value = os.environ.get("IEIDLLC_MONEY_CUTOVER_GATE_FILE", "").strip()
+        if not gate_value:
+            return
+        try:
+            gate_path = Path(gate_value)
+            blocked = gate_path.exists()
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(
+                "BBOS money writes are paused because the cutover gate path is invalid"
+            ) from exc
+        if not blocked:
+            return
+        try:
+            release_id = gate_path.read_text().strip() or "unknown release"
+        except OSError:
+            release_id = "unknown release"
+        raise RuntimeError(f"BBOS money writes are paused for release {release_id}")

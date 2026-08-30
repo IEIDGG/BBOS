@@ -96,11 +96,16 @@ class ScannedOrderWriter:
             order.get("number") or order.get("order_number") or ""
         ).strip()
         tracking_values = order.get("tracking")
-        tracking_numbers = (
-            [str(value).strip() for value in tracking_values if str(value).strip()]
-            if isinstance(tracking_values, (list, tuple))
-            else []
-        )
+        tracking_numbers = []
+        seen_tracking_numbers = set()
+        if isinstance(tracking_values, (list, tuple)):
+            for value in tracking_values:
+                if value is None:
+                    continue
+                tracking_number = str(value).strip()
+                if tracking_number and tracking_number not in seen_tracking_numbers:
+                    tracking_numbers.append(tracking_number)
+                    seen_tracking_numbers.add(tracking_number)
         if not order_number:
             return {
                 "success": False,
@@ -122,34 +127,35 @@ class ScannedOrderWriter:
         connection = self._connect(**self.settings.connection_kwargs())
         cursor = connection.cursor()
         try:
-            cursor.execute(
-                """
-                INSERT INTO public.scanned_orders (
-                    user_id, provider, source_key, tracking_number,
-                    amount_minor, currency_code, raw, ingest_source,
-                    record_schema_version
+            for tracking_number in tracking_numbers:
+                cursor.execute(
+                    """
+                    INSERT INTO public.scanned_orders (
+                        user_id, provider, source_key, tracking_number,
+                        amount_minor, currency_code, raw, ingest_source,
+                        record_schema_version
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, 'api', 1)
+                    ON CONFLICT (user_id, provider, source_key)
+                    WHERE source_key IS NOT NULL AND btrim(source_key) <> ''
+                    DO UPDATE SET
+                        tracking_number = EXCLUDED.tracking_number,
+                        amount_minor = EXCLUDED.amount_minor,
+                        currency_code = EXCLUDED.currency_code,
+                        raw = EXCLUDED.raw,
+                        ingest_source = EXCLUDED.ingest_source,
+                        record_schema_version = EXCLUDED.record_schema_version
+                    """,
+                    (
+                        self.settings.owner_id,
+                        "bbos",
+                        f"{order_number}_{tracking_number}",
+                        tracking_number,
+                        amount_minor,
+                        "USD",
+                        raw,
+                    ),
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, 'api', 1)
-                ON CONFLICT (user_id, provider, source_key)
-                WHERE source_key IS NOT NULL AND btrim(source_key) <> ''
-                DO UPDATE SET
-                    tracking_number = EXCLUDED.tracking_number,
-                    amount_minor = EXCLUDED.amount_minor,
-                    currency_code = EXCLUDED.currency_code,
-                    raw = EXCLUDED.raw,
-                    ingest_source = EXCLUDED.ingest_source,
-                    record_schema_version = EXCLUDED.record_schema_version
-                """,
-                (
-                    self.settings.owner_id,
-                    "bbos",
-                    order_number,
-                    tracking_numbers[0],
-                    amount_minor,
-                    "USD",
-                    raw,
-                ),
-            )
             connection.commit()
         except Exception:
             connection.rollback()
@@ -159,7 +165,8 @@ class ScannedOrderWriter:
             connection.close()
         return {
             "success": True,
-            "message": "Stored 1 scanned order",
-            "submitted": 1,
+            "message": f"Stored {len(tracking_numbers)} scanned orders",
+            "submitted": len(tracking_numbers),
             "tracking_number": tracking_numbers[0],
+            "tracking_numbers": tracking_numbers,
         }
