@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 from bs4 import BeautifulSoup
 
 from .parsers.amazon_parser import AmazonParser
+from .parsers.apple_parser import AppleParser
 from .parsers.bb_parser import OrderParser
 from .parsers.costco_parser import CostcoParser
 from .parsers.xbox_parser import XboxParser
@@ -149,6 +150,7 @@ class EmailProcessor:
         self.xbox_parser = XboxParser()
         self.costco_parser = CostcoParser()
         self.amazon_parser = AmazonParser()
+        self.apple_parser = AppleParser()
         self.walmart_parser = _load_optional_parser("walmart_parser", "WalmartParser")
 
     def _parse_email_metadata(
@@ -218,6 +220,60 @@ class EmailProcessor:
         )
 
         return email_address, email_date, html_content
+
+    def process_apple_confirmation_email(self, email_data: tuple) -> Dict[str, Any]:
+        try:
+            email_address, email_date, html_content = self._parse_email_metadata(
+                email_data
+            )
+            if not html_content:
+                logger.warning("No HTML content found in Apple confirmation email")
+                return {}
+            return self.apple_parser.parse_confirmation(
+                html_content,
+                subject=self._extract_subject(email_data),
+                email_address=email_address,
+                email_date=email_date,
+            )
+        except Exception as exc:
+            logger.error("Error processing Apple confirmation email: %s", exc)
+            return {}
+
+    def process_apple_cancellation_email(self, email_data: tuple) -> Dict[str, Any]:
+        try:
+            email_address, email_date, html_content = self._parse_email_metadata(
+                email_data
+            )
+            if not html_content:
+                logger.warning("No HTML content found in Apple cancellation email")
+                return {}
+            return self.apple_parser.parse_cancellation(
+                html_content,
+                subject=self._extract_subject(email_data),
+                email_address=email_address,
+                email_date=email_date,
+            )
+        except Exception as exc:
+            logger.error("Error processing Apple cancellation email: %s", exc)
+            return {}
+
+    def process_apple_shipped_email(self, email_data: tuple) -> Dict[str, Any]:
+        try:
+            email_address, email_date, html_content = self._parse_email_metadata(
+                email_data
+            )
+            if not html_content:
+                logger.warning("No HTML content found in Apple shipped email")
+                return {}
+            return self.apple_parser.parse_shipment(
+                html_content,
+                subject=self._extract_subject(email_data),
+                email_address=email_address,
+                email_date=email_date,
+            )
+        except Exception as exc:
+            logger.error("Error processing Apple shipped email: %s", exc)
+            return {}
 
     def _bestbuy_catalog_fields(self, html_content: str, soup: BeautifulSoup) -> Dict:
         products, total_price, xbox_items = self.order_parser.parse_product_details(

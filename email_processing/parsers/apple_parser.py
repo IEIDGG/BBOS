@@ -1,0 +1,486 @@
+"""Pure HTML parsers for Apple Online Store order emails."""
+
+import re
+from copy import deepcopy
+from datetime import datetime
+from urllib.parse import unquote, urlsplit
+
+from bs4 import BeautifulSoup, FeatureNotFound
+
+
+class AppleParser:
+    """Extract normalized order details from Apple email HTML."""
+
+    _ORDER_NUMBER_RE = re.compile(r"\bW\d{8,12}\b")
+    _LOCATION_RE = re.compile(
+        r"(?P<city>[A-Za-z][A-Za-z .'-]*?)\s+(?P<state>[A-Z]{2})\s+(?P<zip>\d{5}(?:-\d{4})?)\b"
+    )
+    _ORDER_LINK_PATH_RE = re.compile(
+        r"/(?:[a-z]{2}/|xc/[a-z]{2}/)?vieworder/"
+        r"(?P<order_number>W\d{8,12})(?:/[^/.][^/]*)?(?:/AOS-[A-Za-z0-9-]+)?/?"
+    )
+    _PRICE_RE = re.compile(r"\$[\d,]+\.\d{2}")
+    _CONFIRMATION_MARKERS = ("we're processing your order", "thank you for your order")
+
+    def parse_confirmation(
+        self, html_content: str, *, subject: str, email_address: str, email_date: str
+    ) -> dict:
+        normalized_subject = self._clean_text(subject).lower().replace("’", "'")
+        if not any(
+            marker in normalized_subject for marker in self._CONFIRMATION_MARKERS
+        ):
+            return {}
+        soup = self._soup(html_content)
+        order_number = self._order_number(soup, subject)
+        if not order_number:
+            return {}
+        body = self._clean_text(soup.get_text(" ")).lower().replace("’", "'")
+        if not (
+            any(marker in body for marker in self._CONFIRMATION_MARKERS)
+            or self._products(soup)
+            or self._ordered_date(soup)
+            or self._PRICE_RE.fullmatch(self._total(soup))
+        ):
+            return {}
+        return self._order(
+            soup,
+            order_number=order_number,
+            email_address=email_address,
+            email_date=email_date,
+        )
+
+    def parse_cancellation(
+        self, html_content: str, *, subject: str, email_address: str, email_date: str
+    ) -> dict:
+        soup = self._soup(html_content)
+        if not re.search(
+            r"\byour order has been cancel{1,2}ed\b",
+            self._clean_text(soup.get_text(" ")).lower(),
+        ):
+            return {}
+        order_number = self._order_number(soup, subject)
+        if not order_number:
+            return {}
+        result = self._order(
+            soup,
+            order_number=order_number,
+            email_address=email_address,
+            email_date=email_date,
+        )
+        result["cancellation_type"] = "cancelled"
+        return result
+
+    def parse_shipment(
+        self, html_content: str, *, subject: str, email_address: str, email_date: str
+    ) -> dict:
+        soup = self._soup(html_content)
+        order_number = self._order_number(soup, subject)
+        if not order_number:
+            return {}
+        result = self._order(
+            soup,
+            order_number=order_number,
+            email_address=email_address,
+            email_date=email_date,
+        )
+        result["tracking_numbers"] = self._tracking_numbers(soup, order_number)
+        result["carrier"] = self._row_value(soup, "Carrier Name")
+        if not (
+            result["tracking_numbers"]
+            or result["carrier"]
+            or result["estimated_delivery"]
+            or "your shipment is on its way"
+            in self._clean_text(soup.get_text(" ")).lower()
+        ):
+            return {}
+        return result
+
+    @staticmethod
+    def _soup(html_content: str) -> BeautifulSoup:
+        try:
+            return BeautifulSoup(html_content or "", "lxml")
+        except FeatureNotFound:
+            return BeautifulSoup(html_content or "", "html.parser")
+
+    @staticmethod
+    def _clean_text(value: str) -> str:
+        return re.sub(r"\s+", " ", value or "").strip()
+
+    def _order_number(self, soup: BeautifulSoup, subject: str) -> str:
+        for value in (subject, soup.get_text(" ")):
+            match = self._ORDER_NUMBER_RE.search(value or "")
+            if match:
+                return match.group(0)
+        for link in soup.find_all("a", href=True):
+            order_number = self._validated_order_link(link["href"])
+            if order_number:
+                return order_number
+        return ""
+
+    def _order(
+        self,
+        soup: BeautifulSoup,
+        *,
+        order_number: str,
+        email_address: str,
+        email_date: str,
+    ) -> dict:
+        location = self._location(soup)
+        return {
+            "order_number": order_number,
+            "date": self._ordered_date(soup) or email_date,
+            "products": self._products(soup),
+            "total_price": self._total(soup),
+            "estimated_delivery": self._delivery(soup),
+            "email_address": email_address,
+            "order_details_link": self._order_link(soup, order_number),
+            "shipping_address": self._shipping_address(soup),
+            "shipping_city": location["shipping_city"],
+            "state": location["state"],
+            "zip": location["zip"],
+            "zip_and_state": location["zip_and_state"],
+        }
+
+    def _ordered_date(self, soup: BeautifulSoup) -> str:
+        value = self._row_value(soup, "Ordered on")
+        for date_format in ("%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(value, date_format).date().isoformat()
+            except ValueError:
+                pass
+        return ""
+
+    def _products(self, soup: BeautifulSoup) -> list[dict[str, str]]:
+        products = []
+        for table in soup.select("table.line-item-table"):
+            if any(
+                self._is_non_item_table(parent)
+                for parent in table.parents
+                if parent.name == "table"
+            ):
+                continue
+            title = next(
+                (
+                    self._clean_text(cell.get_text(" "))
+                    for cell in table.select(".product-name-td")
+                    if self._clean_text(cell.get_text(" "))
+                ),
+                "",
+            )
+            if not title:
+                continue
+            qty = table.select_one(".product-quantity")
+            match = re.search(
+                r"\bQty\s*:?\s*(\d+)", qty.get_text(" ") if qty else "", re.I
+            )
+            price = next(
+                (
+                    self._clean_text(cell.get_text(" "))
+                    for cell in table.select(".base-price-td, .total-price")
+                    if self._PRICE_RE.fullmatch(self._clean_text(cell.get_text(" ")))
+                ),
+                "",
+            )
+            product = {
+                "title": title,
+                "quantity": match.group(1) if match else "1",
+                "price": price,
+            }
+            image = table.select_one("img.product-image-img")
+            if image and str(image.get("src", "")).startswith("https://"):
+                product["item_image"] = image["src"]
+            products.append(product)
+        if products:
+            return products
+        eligible_tables = []
+        for table in soup.find_all("table"):
+            classes = " ".join(table.get("class", [])).lower()
+            if (
+                "item" not in classes and "shipment" not in classes
+            ) or self._is_non_item_table(table):
+                continue
+            eligible_tables.append(table)
+
+        eligible_table_ids = {id(table) for table in eligible_tables}
+        for table in eligible_tables:
+            for quantity_cell in table.find_all(
+                ["td", "th"], string=lambda text: self._clean_text(text) == "Qty"
+            ):
+                owner = next(
+                    (
+                        ancestor
+                        for ancestor in quantity_cell.parents
+                        if ancestor.name == "table"
+                        and id(ancestor) in eligible_table_ids
+                    ),
+                    None,
+                )
+                if owner is not table:
+                    continue
+                if any(
+                    self._is_non_item_table(ancestor)
+                    for ancestor in quantity_cell.parents
+                    if ancestor.name == "table"
+                ):
+                    continue
+                quantity = self._next_cell_text(quantity_cell)
+                quantity_row = quantity_cell.find_parent("tr")
+                if not quantity_row:
+                    continue
+                title_row = quantity_row.find_previous_sibling("tr")
+                if not title_row:
+                    continue
+                cells = title_row.find_all(["td", "th"])
+                values = [self._clean_text(cell.get_text(" ")) for cell in cells]
+                title = next(
+                    (
+                        value
+                        for value in values
+                        if value and not self._PRICE_RE.fullmatch(value)
+                    ),
+                    "",
+                )
+                price = next(
+                    (
+                        match.group(0)
+                        for value in values
+                        if (match := self._PRICE_RE.search(value))
+                    ),
+                    "",
+                )
+                if title:
+                    products.append(
+                        {"title": title, "quantity": quantity or "1", "price": price}
+                    )
+        return products
+
+    def _total(self, soup: BeautifulSoup) -> str:
+        return self._row_value(soup, "Order Total")
+
+    def _delivery(self, soup: BeautifulSoup) -> str:
+        for cell in soup.find_all(["td", "th", "div"]):
+            text = self._clean_text(cell.get_text(" "))
+            if not text.startswith("Delivers"):
+                continue
+            delivery = self._clean_text(text.removeprefix("Delivers").lstrip(":"))
+            return re.sub(r"\s+(?:via|by)\s+.+$", "", delivery, flags=re.IGNORECASE)
+        return ""
+
+    def _row_value(self, soup: BeautifulSoup, label: str) -> str:
+        section = self._heading_value(soup, label)
+        if section:
+            return self._clean_text(" ".join(section))
+        for span in soup.select(".order-num span"):
+            if (
+                self._clean_text(span.get_text(" ")).rstrip(":").casefold()
+                == label.casefold()
+            ):
+                sibling = span.find_next_sibling("span")
+                if sibling:
+                    return self._clean_text(sibling.get_text(" "))
+        for cell in soup.find_all(["td", "th"]):
+            if (
+                self._clean_text(cell.get_text(" ")).rstrip(":").strip().casefold()
+                == label.casefold()
+            ):
+                value = self._next_cell_text(cell)
+                if value:
+                    return value
+                table = cell.find_parent("table", class_="amt-label-table")
+                sibling = table.find_next_sibling("table") if table else None
+                if sibling:
+                    return self._clean_text(sibling.get_text(" "))
+        return ""
+
+    def _heading_value(self, soup, label):
+        for heading in soup.find_all(["h2", "h3", "h4"]):
+            if (
+                self._clean_text(heading.get_text(" ")).rstrip(":").casefold()
+                != label.casefold()
+            ):
+                continue
+            values = []
+            for sibling in heading.find_next_siblings():
+                if sibling.name in {"h2", "h3", "h4"}:
+                    break
+                values.extend(
+                    self._clean_text(s)
+                    for s in sibling.stripped_strings
+                    if self._clean_text(s)
+                )
+            return values
+        return []
+
+    def _shipping_address(self, soup):
+        lines = self._heading_value(soup, "Shipping Address")
+        return ", ".join(line for line in lines if not re.search(r"[•*]{3,}", line))
+
+    def _next_cell_text(self, cell) -> str:
+        sibling = cell.find_next_sibling(["td", "th"])
+        return self._clean_text(sibling.get_text(" ")) if sibling else ""
+
+    def _order_link(self, soup: BeautifulSoup, order_number: str) -> str:
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            if self._validated_order_link(href, order_number):
+                return href
+        return ""
+
+    def _validated_order_link(self, href: str, expected_order_number: str = "") -> str:
+        if re.search(r"[\s\\]", href):
+            return ""
+        try:
+            url = urlsplit(href)
+            valid_origin = (
+                url.scheme == "https"
+                and url.hostname in {"store.apple.com", "secure.store.apple.com"}
+                and url.port in {None, 443}
+                and url.username is None
+                and url.password is None
+            )
+        except ValueError:
+            return ""
+        if not valid_origin:
+            return ""
+        if any(
+            unquote(segment) in {".", ".."} or re.search(r"[/\\\s]", unquote(segment))
+            for segment in url.path.split("/")
+        ):
+            return ""
+        match = self._ORDER_LINK_PATH_RE.fullmatch(url.path)
+        if not match:
+            return ""
+        order_number = match.group("order_number")
+        if expected_order_number and order_number != expected_order_number:
+            return ""
+        return order_number
+
+    def _location(self, soup: BeautifulSoup) -> dict[str, str]:
+        empty = {"shipping_city": "", "state": "", "zip": "", "zip_and_state": ""}
+        blocks = []
+        # Labeled address cells take precedence over template-specific blocks.
+        for cell in soup.find_all(["td", "th"]):
+            direct_text = self._shipping_region_text(cell, "same_cell")
+            normalized_text = self._normalize_shipping_text(direct_text)
+            same_cell_heading = re.match(
+                r"^(?:shipping address|ship to)\s*:", normalized_text, re.I
+            )
+            if same_cell_heading and normalized_text[same_cell_heading.end() :].strip():
+                blocks.append((cell, "same_cell"))
+                continue
+            if normalized_text.rstrip(":").strip().casefold() in {
+                "shipping address",
+                "ship to",
+            }:
+                address_cell = cell.find_next_sibling(["td", "th"])
+                if address_cell is not None:
+                    blocks.append((address_cell, "adjacent"))
+                else:
+                    row = cell.find_parent("tr")
+                    next_row = row.find_next_sibling("tr") if row else None
+                    if next_row is not None:
+                        blocks.append((next_row, "row"))
+        if not blocks:
+            blocks = [
+                (table, "template")
+                for table in soup.select("table.fulfillment, table.shipment-content")
+            ]
+        address = ""
+        for block, context in blocks:
+            match = self._LOCATION_RE.search(self._shipping_region_text(block, context))
+            if match:
+                address = match.group(0)
+                break
+        if not address:
+            return empty
+        try:
+            from services.location import copy_location_fields, parse_location
+
+            parsed = copy_location_fields(parse_location(address))
+            return {**empty, **parsed}
+        except ImportError:
+            match = list(self._LOCATION_RE.finditer(address))[-1]
+            city = self._clean_text(match.group("city"))
+            state = match.group("state")
+            zip_code = match.group("zip")
+            return {
+                "shipping_city": city,
+                "state": state,
+                "zip": zip_code,
+                "zip_and_state": f"{city}, {state} {zip_code}",
+            }
+
+    @staticmethod
+    def _normalize_shipping_text(value: str) -> str:
+        return re.sub(r"\s+", " ", value or "").strip()
+
+    def _shipping_region_text(self, element, context: str) -> str:
+        region = deepcopy(element)
+        tables = region.find_all("table")
+        table_ids = {id(table) for table in tables}
+        if context == "same_cell":
+            tables_to_remove = [
+                table
+                for table in tables
+                if not any(id(parent) in table_ids for parent in table.parents)
+            ]
+        else:
+            tables_to_remove = [
+                table
+                for table in tables
+                if self._is_footer_table(table)
+                and not any(
+                    id(parent) in table_ids and self._is_footer_table(parent)
+                    for parent in table.parents
+                )
+            ]
+        for table in tables_to_remove:
+            table.decompose()
+        return re.sub(r"[^\S\n]+", " ", region.get_text("\n")).strip()
+
+    @staticmethod
+    def _is_footer_table(table) -> bool:
+        return any(
+            "footer" in str(class_name).casefold()
+            for class_name in table.get("class", [])
+        )
+
+    @staticmethod
+    def _is_non_item_table(table) -> bool:
+        class_text = " ".join(table.get("class", [])).casefold()
+        return any(
+            marker in class_text for marker in ("footer", "promo", "summary", "widget")
+        )
+
+    def _tracking_numbers(self, soup: BeautifulSoup, order_number: str) -> list[str]:
+        tracking_numbers = list(
+            dict.fromkeys(
+                value
+                for value in self._heading_value(soup, "Tracking Number")
+                if self._valid_tracking(value, order_number)
+            )
+        )
+        for label in soup.find_all(["td", "th"]):
+            if self._clean_text(label.get_text(" ")).lower() != "tracking number:":
+                continue
+            value_cell = label.find_next_sibling(["td", "th"])
+            if not value_cell:
+                continue
+            for value in value_cell.stripped_strings:
+                candidate = self._clean_text(value)
+                if (
+                    self._valid_tracking(candidate, order_number)
+                    and candidate not in tracking_numbers
+                ):
+                    tracking_numbers.append(candidate)
+        return tracking_numbers
+
+    @staticmethod
+    def _valid_tracking(value: str, order_number: str) -> bool:
+        compact = re.sub(r"\s+", "", value)
+        return (
+            compact != order_number
+            and not re.search(r"[•*xX]{3,}", compact)
+            and not re.fullmatch(r"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}", compact)
+            and bool(re.fullmatch(r"[A-Za-z0-9]{8,35}", compact))
+        )
