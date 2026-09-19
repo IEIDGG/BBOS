@@ -156,7 +156,7 @@ class AppleParser:
             classes = " ".join(table.get("class", [])).lower()
             if (
                 "item" not in classes and "shipment" not in classes
-            ) or self._is_footer_table(table):
+            ) or self._is_non_item_table(table):
                 continue
             eligible_tables.append(table)
 
@@ -177,7 +177,7 @@ class AppleParser:
                 if owner is not table:
                     continue
                 if any(
-                    self._is_footer_table(ancestor)
+                    self._is_non_item_table(ancestor)
                     for ancestor in quantity_cell.parents
                     if ancestor.name == "table"
                 ):
@@ -362,6 +362,13 @@ class AppleParser:
         return any(
             "footer" in str(class_name).casefold()
             for class_name in table.get("class", [])
+        )
+
+    @staticmethod
+    def _is_non_item_table(table) -> bool:
+        class_text = " ".join(table.get("class", [])).casefold()
+        return any(
+            marker in class_text for marker in ("footer", "promo", "summary", "widget")
         )
 
     def _tracking_numbers(self, soup: BeautifulSoup, order_number: str) -> list[str]:

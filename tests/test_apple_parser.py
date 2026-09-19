@@ -307,6 +307,54 @@ def test_products_ignore_flat_and_wrapped_footer_qty_rows(
 
 
 @pytest.mark.parametrize(
+    "kind,subject,marker,item_class",
+    [
+        (
+            "confirmation",
+            "Thank you for your order W9999999999",
+            "Thank you for your order",
+            "item-content",
+        ),
+        (
+            "shipment",
+            "Your shipment is on its way W9999999997",
+            "Your shipment is on its way",
+            "shipment-content",
+        ),
+    ],
+)
+@pytest.mark.parametrize("non_item_class", ["promotional-widget", "order-summary"])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_products_ignore_nested_non_item_qty_rows(
+    kind, subject, marker, item_class, non_item_class, wrapped
+):
+    item = f"""
+      <table class="{item_class}"><tr><td>Actual Product</td><td>$10.00</td></tr>
+        <tr><td>Qty</td><td>2</td></tr></table>
+    """
+    non_item = f"""
+      <table class="{non_item_class}"><tr><td>Promotional Widget</td><td>$9.99</td></tr>
+        <tr><td>Qty</td><td>1</td></tr></table>
+    """
+    body = f"{item}{non_item}"
+    if wrapped:
+        body = f'<table class="shipment-items"><tr><td>{body}</td></tr></table>'
+    assert body.count("Actual Product") == 1
+    assert body.count("Promotional Widget") == 1
+
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        f"<p>{marker}</p>{body}",
+        subject=subject,
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+
+    assert result["products"] == [
+        {"title": "Actual Product", "quantity": "2", "price": "$10.00"}
+    ]
+
+
+@pytest.mark.parametrize(
     "kind,subject,marker,section_class",
     [
         (
