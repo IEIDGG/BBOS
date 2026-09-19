@@ -307,6 +307,53 @@ def test_products_ignore_flat_and_wrapped_footer_qty_rows(
 
 
 @pytest.mark.parametrize(
+    "kind,subject,marker,section_class",
+    [
+        (
+            "confirmation",
+            "Thank you for your order W9999999999",
+            "Thank you for your order",
+            "item-content",
+        ),
+        (
+            "shipment",
+            "Your shipment is on its way W9999999997",
+            "Your shipment is on its way",
+            "shipment-items",
+        ),
+    ],
+)
+@pytest.mark.parametrize("line_count", [1, 2])
+def test_products_keep_classless_nested_layout_lines(
+    kind, subject, marker, section_class, line_count
+):
+    line = """
+      <table><tr><td>Actual Product</td><td>$10.00</td></tr>
+        <tr><td>Qty</td><td>2</td></tr></table>
+    """
+    nested_lines = line * line_count
+    html = (
+        f'<p>{marker}</p><table class="{section_class}"><tr><td>'
+        f"{nested_lines}</td></tr></table>"
+    )
+    assert html.count("Actual Product") == line_count
+    assert html.count('class="item-content"') == (1 if kind == "confirmation" else 0)
+
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        html,
+        subject=subject,
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+
+    assert (
+        result["products"]
+        == [{"title": "Actual Product", "quantity": "2", "price": "$10.00"}]
+        * line_count
+    )
+
+
+@pytest.mark.parametrize(
     "kind,subject,wrapper_class,item_class",
     [
         (

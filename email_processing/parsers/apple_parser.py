@@ -154,16 +154,33 @@ class AppleParser:
         eligible_tables = []
         for table in soup.find_all("table"):
             classes = " ".join(table.get("class", [])).lower()
-            if "item" not in classes and "shipment" not in classes:
+            if (
+                "item" not in classes and "shipment" not in classes
+            ) or self._is_footer_table(table):
                 continue
             eligible_tables.append(table)
 
+        eligible_table_ids = {id(table) for table in eligible_tables}
         for table in eligible_tables:
             for quantity_cell in table.find_all(
                 ["td", "th"], string=lambda text: self._clean_text(text) == "Qty"
             ):
-                owner = quantity_cell.find_parent("table")
+                owner = next(
+                    (
+                        ancestor
+                        for ancestor in quantity_cell.parents
+                        if ancestor.name == "table"
+                        and id(ancestor) in eligible_table_ids
+                    ),
+                    None,
+                )
                 if owner is not table:
+                    continue
+                if any(
+                    self._is_footer_table(ancestor)
+                    for ancestor in quantity_cell.parents
+                    if ancestor.name == "table"
+                ):
                     continue
                 quantity = self._next_cell_text(quantity_cell)
                 quantity_row = quantity_cell.find_parent("tr")
