@@ -1,0 +1,24 @@
+From: Apple <orders@apple.example.test>
+To: buyer@example.test
+Subject: We're processing your order W9999999999
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="apple-confirmation"
+
+--apple-confirmation
+Content-Type: text/plain; charset="utf-8"
+
+Your Apple order confirmation.
+--apple-confirmation
+Content-Type: text/html; charset="utf-8"
+
+<html><body>
+  <table class="order-summary"><tr><td>Order Number</td><td>W9999999999</td></tr>
+    <tr><td>Ordered on</td><td>September 12, 2026</td></tr></table>
+  <table class="item-content"><tr><td>iPhone 18 Pro Max 256GB Burgundy</td><td>$1,299.00</td></tr>
+    <tr><td>Qty</td><td>1</td></tr></table>
+  <table class="fulfillment"><tr><td>Delivers Sep 29 – Oct 6 via Standard Delivery</td></tr>
+    <tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr></table>
+  <table><tr><td>Order Total</td><td>$1,299.00</td></tr></table>
+  <a href="https://secure.example.test/vieworder/W9999999999/buyer@example.test/">View order</a>
+</body></html>
+--apple-confirmation--

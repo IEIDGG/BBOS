@@ -1,0 +1,19 @@
+From: Apple <orders@apple.example.test>
+To: buyer@example.test
+Subject: Information about your order W9999999998
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="apple-cancellation"
+
+--apple-cancellation
+Content-Type: text/plain; charset="utf-8"
+
+Your Apple order was cancelled.
+--apple-cancellation
+Content-Type: text/html; charset="utf-8"
+
+<html><body>
+  <table class="cancellation"><tr><td>Your order has been cancelled</td></tr>
+    <tr><td>Order Number</td><td>W9999999998</td></tr>
+    <tr><td>Ordered on</td><td>Apr 23, 2026</td></tr></table>
+</body></html>
+--apple-cancellation--

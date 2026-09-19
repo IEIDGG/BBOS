@@ -1,0 +1,24 @@
+From: Apple <orders@apple.example.test>
+To: buyer@example.test
+Subject: Your shipment is on its way W9999999997
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="apple-shipment"
+
+--apple-shipment
+Content-Type: text/plain; charset="utf-8"
+
+Your Apple shipment is on its way.
+--apple-shipment
+Content-Type: text/html; charset="utf-8"
+
+<html><body>
+  <table class="shipment-summary"><tr><td>Order Number</td><td>W9999999997</td></tr>
+    <tr><td>Ordered on</td><td>Sep 12, 2026</td></tr></table>
+  <table class="shipment-content"><tr><td>iPhone 18 Pro Max 256GB Black</td><td>$1,299.00</td></tr>
+    <tr><td>Qty</td><td>1</td></tr>
+    <tr><td>Delivers Sep 24, 2026 via UPS</td></tr>
+    <tr><td>Carrier Name</td><td>UPS</td></tr>
+    <tr><td>Tracking Number:</td><td><a href="https://www.ups.example.test/track/1Z999AA10123456784">1Z999AA10123456784</a></td></tr>
+    <tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr></table>
+</body></html>
+--apple-shipment--
