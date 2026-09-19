@@ -505,6 +505,39 @@ def test_nested_template_shipping_address_is_preserved(kind, table_class):
 
 
 @pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+def test_nested_footer_table_does_not_discard_valid_shipping_data(kind):
+    html, subject, recipient = load_html(f"apple_{kind}.eml")
+    address_row = (
+        "<tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>"
+    )
+    nested_footer = (
+        '<table class="footer"><tr><td>'
+        "<table><tr><td>Merchant Contact<br>Cupertino CA 95014</td></tr></table>"
+        "</td></tr></table>"
+    )
+    address_row_with_footer = (
+        "<tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301"
+        f"{nested_footer}</td></tr>"
+    )
+    assert html.count(address_row) == 1
+    assert nested_footer not in html
+    html = html.replace(address_row, address_row_with_footer, 1)
+    assert html.count(address_row_with_footer) == 1
+    assert html.count(nested_footer) == 1
+
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        html, subject=subject, email_address=recipient, email_date="2026-09-19"
+    )
+
+    assert result["shipping_city"] == "Concord"
+    assert result["state"] == "NH"
+    assert result["zip"] == "03301"
+    assert result["zip_and_state"] == "Concord, NH 03301"
+    if kind == "shipment":
+        assert result["tracking_numbers"] == ["1Z999AA10123456784"]
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
 @pytest.mark.parametrize("layout", ["adjacent", "next_row"])
 def test_split_inline_shipping_heading_is_normalized(kind, layout):
     buyer = "Example Buyer<br>123 MAIN STREET<br>Concord NH 03301"

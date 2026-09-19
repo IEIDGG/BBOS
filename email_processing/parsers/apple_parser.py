@@ -298,9 +298,26 @@ class AppleParser:
 
     def _shipping_region_text(self, element, context: str) -> str:
         region = deepcopy(element)
-        for table in region.find_all("table"):
-            if context == "same_cell" or self._is_footer_table(table):
-                table.decompose()
+        tables = region.find_all("table")
+        table_ids = {id(table) for table in tables}
+        if context == "same_cell":
+            tables_to_remove = [
+                table
+                for table in tables
+                if not any(id(parent) in table_ids for parent in table.parents)
+            ]
+        else:
+            tables_to_remove = [
+                table
+                for table in tables
+                if self._is_footer_table(table)
+                and not any(
+                    id(parent) in table_ids and self._is_footer_table(parent)
+                    for parent in table.parents
+                )
+            ]
+        for table in tables_to_remove:
+            table.decompose()
         return re.sub(r"[^\S\n]+", " ", region.get_text("\n")).strip()
 
     @staticmethod
