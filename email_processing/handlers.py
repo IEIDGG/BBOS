@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 from config.settings import (
+    APPLE_SEARCH_CRITERIA,
     AMAZON_SEARCH_CRITERIA,
     COSTCO_SEARCH_CRITERIA,
     SEARCH_CRITERIA,
@@ -645,6 +646,191 @@ class OrderEmailHandler(BaseEmailHandler):
         print(f"Total fetches: {stats['fetch_count']}")
         print(f"Remaining quota: {stats['remaining']}/{stats['max_fetches']}")
         print(f"Usage: {(stats['fetch_count'] / stats['max_fetches'] * 100):.1f}%")
+
+
+class AppleEmailHandler(OrderEmailHandler):
+    """Process Apple order messages with the shared normalized order contract."""
+
+    _MERGE_FIELDS = (
+        "products",
+        "total_price",
+        "email_address",
+        "order_details_link",
+        "shipping_city",
+        "state",
+        "zip",
+        "zip_and_state",
+        "estimated_delivery",
+        "carrier",
+        "date",
+    )
+
+    def _fetch_apple_messages(
+        self,
+        folder: str,
+        criteria_key: str,
+        ignore_cache: bool,
+        date_filter: Optional[str],
+    ):
+        use_uid_filter = not ignore_cache
+        search_criteria = get_search_criteria_with_date(
+            criteria_key, date_filter, APPLE_SEARCH_CRITERIA
+        )
+        success, messages = self.connector.search_emails(
+            folder, search_criteria, use_uid_filter=use_uid_filter
+        )
+        if not success:
+            return
+
+        if len(messages) > 10:
+            email_data_list = self.connector.fetch_emails_batch(
+                messages, use_uid=use_uid_filter
+            )
+            for message_id, email_data in zip(messages, email_data_list):
+                if email_data:
+                    yield message_id, email_data
+            return
+
+        for message_id in messages:
+            fetched, email_data = self.connector.fetch_email(
+                message_id, use_uid=use_uid_filter
+            )
+            if fetched and email_data:
+                yield message_id, email_data
+
+    def _merge_apple_details(self, order: Dict, result: Dict) -> None:
+        for field in self._MERGE_FIELDS:
+            self._fill_if_empty(order, field, result.get(field, ""))
+        order["website"] = "Apple"
+
+    def _new_apple_order(
+        self, result: Dict, status: str, tracking: Optional[List[str]] = None
+    ) -> Dict:
+        order = {
+            "date": result.get("date", ""),
+            "number": result["order_number"],
+            "status": status,
+            "tracking": list(tracking or []),
+            "products": [],
+            "website": "Apple",
+        }
+        for field in self._MERGE_FIELDS:
+            if field in result:
+                order[field] = result[field]
+        self._merge_apple_details(order, result)
+        return order
+
+    def process_confirmation_emails(
+        self, folder: str, ignore_cache: bool = False, date_filter: Optional[str] = None
+    ) -> List[Dict]:
+        orders = []
+        for message_id, email_data in self._fetch_apple_messages(
+            folder, "confirmation", ignore_cache, date_filter
+        ) or []:
+            try:
+                result = self.processor.process_apple_confirmation_email(email_data)
+            except Exception as exc:
+                logger.error("Error processing Apple confirmation email: %s", exc)
+                result = {}
+
+            if result.get("order_number"):
+                orders.append(self._new_apple_order(result, "Processing"))
+                self.statistics["confirmations"] += 1
+                self.connector.mark_uid_processed(message_id)
+            self._update_stats(bool(result.get("order_number")))
+        return orders
+
+    def process_cancellation_emails(
+        self,
+        folder: str,
+        orders: List[Dict],
+        ignore_cache: bool = False,
+        date_filter: Optional[str] = None,
+    ) -> None:
+        for message_id, email_data in self._fetch_apple_messages(
+            folder, "cancellation", ignore_cache, date_filter
+        ) or []:
+            try:
+                result = self.processor.process_apple_cancellation_email(email_data)
+            except Exception as exc:
+                logger.error("Error processing Apple cancellation email: %s", exc)
+                result = {}
+
+            order_number = result.get("order_number")
+            if order_number:
+                matched_order = next(
+                    (order for order in orders if order.get("number") == order_number),
+                    None,
+                )
+                if matched_order is None:
+                    order = {
+                        "date": result.get("date", ""),
+                        "number": order_number,
+                        "status": "Cancelled",
+                        "tracking": [],
+                        "products": [],
+                        "website": "Apple",
+                        "email_address": result.get("email_address", ""),
+                    }
+                    for field in self._MERGE_FIELDS:
+                        if field not in {"date", "email_address", "products"}:
+                            self._fill_if_empty(order, field, result.get(field, ""))
+                    orders.append(order)
+                else:
+                    matched_order["status"] = "Cancelled"
+                    self._merge_apple_details(matched_order, result)
+                self.statistics["cancellations"] += 1
+                self.connector.mark_uid_processed(message_id)
+            self._update_stats(bool(order_number))
+
+    def process_shipped_emails(
+        self,
+        folder: str,
+        orders: List[Dict],
+        db_manager=None,
+        ignore_cache: bool = False,
+        date_filter: Optional[str] = None,
+    ) -> None:
+        for message_id, email_data in self._fetch_apple_messages(
+            folder, "shipped", ignore_cache, date_filter
+        ) or []:
+            try:
+                result = self.processor.process_apple_shipped_email(email_data)
+            except Exception as exc:
+                logger.error("Error processing Apple shipment email: %s", exc)
+                result = {}
+
+            order_number = result.get("order_number")
+            if order_number:
+                tracking_numbers = result.get("tracking_numbers") or []
+                matched_order = next(
+                    (order for order in orders if order.get("number") == order_number),
+                    None,
+                )
+                if matched_order is None:
+                    if tracking_numbers:
+                        orders.append(
+                            self._new_apple_order(
+                                result, "Shipped", tracking_numbers
+                            )
+                        )
+                        self.statistics["shipped"] += 1
+                        self.statistics["tracking_numbers"] += len(tracking_numbers)
+                else:
+                    existing_tracking = matched_order.setdefault("tracking", [])
+                    new_tracking = [
+                        tracking
+                        for tracking in tracking_numbers
+                        if tracking not in existing_tracking
+                    ]
+                    existing_tracking.extend(new_tracking)
+                    if matched_order.get("status") != "Cancelled":
+                        matched_order["status"] = "Shipped"
+                    self._merge_apple_details(matched_order, result)
+                    self.statistics["shipped"] += 1
+                    self.statistics["tracking_numbers"] += len(new_tracking)
+                self.connector.mark_uid_processed(message_id)
+            self._update_stats(bool(order_number))
 
 
 class XboxEmailHandler(BaseEmailHandler):
