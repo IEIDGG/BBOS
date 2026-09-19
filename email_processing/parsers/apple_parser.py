@@ -241,7 +241,14 @@ class AppleParser:
         blocks = []
         # Labeled address cells take precedence over template-specific blocks.
         for cell in soup.find_all(["td", "th"]):
-            label = self._clean_text(cell.get_text(" ")).rstrip(":").casefold()
+            cell_text = self._clean_text(cell.get_text(" "))
+            label = cell_text.rstrip(":").casefold()
+            same_cell_heading = re.match(
+                r"^(?:shipping address|ship to)\s*:", cell_text, re.I
+            )
+            if same_cell_heading and cell_text[same_cell_heading.end() :].strip():
+                blocks.append(cell)
+                continue
             if label in {"shipping address", "ship to"}:
                 address_cell = cell.find_next_sibling(["td", "th"])
                 if address_cell is not None:

@@ -336,6 +336,51 @@ def test_labeled_shipping_block_is_used_without_template_classes(label):
     assert result["zip_and_state"] == "Concord, NH 03301"
 
 
+def test_confirmation_extracts_same_cell_shipping_heading_without_table_class():
+    html, subject, recipient = load_html("apple_confirmation.eml")
+    html = html.replace(
+        '<table class="fulfillment"><tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr></table>',
+        "<table><tr><td>Shipping Address:<br>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr></table>",
+    ).replace(
+        "</body>",
+        "<table><tr><td>Merchant Contact<br>Cupertino CA 95014</td></tr></table></body>",
+    )
+
+    result = AppleParser().parse_confirmation(
+        html, subject=subject, email_address=recipient, email_date="2026-09-19"
+    )
+
+    assert result["shipping_city"] == "Concord"
+    assert result["state"] == "NH"
+    assert result["zip"] == "03301"
+
+
+def test_shipment_extracts_same_cell_shipping_heading_without_table_class():
+    html, subject, recipient = load_html("apple_shipment.eml")
+    html = (
+        html.replace(
+            '<table class="shipment-content">',
+            "<table>",
+        )
+        .replace(
+            "<tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>",
+            "<tr><td>Shipping Address:<br>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>",
+        )
+        .replace(
+            "</body>",
+            "<table><tr><td>Merchant Contact<br>Cupertino CA 95014</td></tr></table></body>",
+        )
+    )
+
+    result = AppleParser().parse_shipment(
+        html, subject=subject, email_address=recipient, email_date="2026-09-19"
+    )
+
+    assert result["shipping_city"] == "Concord"
+    assert result["state"] == "NH"
+    assert result["zip"] == "03301"
+
+
 @pytest.mark.parametrize(
     "url",
     [
