@@ -31,6 +31,19 @@ def load_email_data(name: str) -> tuple[bytes, bytes]:
     return (b"fixture-" + name.encode(), (FIXTURES / name).read_bytes())
 
 
+def link_only_email(subject: str, marker: str, href: str) -> tuple[bytes, bytes]:
+    raw = f"""From: Apple <orders@apple.example.test>
+To: buyer@example.test
+Date: Sat, 19 Sep 2026 12:00:00 +0000
+Subject: {subject}
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>{marker}</p><a href="{href}">View order</a></body></html>
+"""
+    return b"link-only", raw.encode()
+
+
 def test_apple_search_criteria_cover_all_email_types():
     assert set(APPLE_SEARCH_CRITERIA) == {"confirmation", "cancellation", "shipped"}
     assert "orders.apple.com" in APPLE_SEARCH_CRITERIA["confirmation"]["from"]
@@ -247,6 +260,53 @@ def test_confirmation_excludes_footer_qty_rows_from_products():
 
 
 @pytest.mark.parametrize(
+    "kind,subject,marker,item_class",
+    [
+        (
+            "confirmation",
+            "Thank you for your order W9999999999",
+            "Thank you for your order",
+            "item-content",
+        ),
+        (
+            "shipment",
+            "Your shipment is on its way W9999999997",
+            "Your shipment is on its way",
+            "shipment-content",
+        ),
+    ],
+)
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_products_ignore_flat_and_wrapped_footer_qty_rows(
+    kind, subject, marker, item_class, wrapped
+):
+    item = f"""
+      <table class="{item_class}"><tr><td>Actual Product</td><td>$10.00</td></tr>
+        <tr><td>Qty</td><td>2</td></tr></table>
+    """
+    footer = """
+      <table class="footer-widget"><tr><td>Promotional Widget</td><td>$9.99</td></tr>
+        <tr><td>Qty</td><td>1</td></tr></table>
+    """
+    body = f"{item}{footer}"
+    if wrapped:
+        body = f'<table class="shipment-items"><tr><td>{body}</td></tr></table>'
+    assert body.count("Actual Product") == 1
+    assert body.count("Promotional Widget") == 1
+
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        f"<p>{marker}</p>{body}",
+        subject=subject,
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+
+    assert result["products"] == [
+        {"title": "Actual Product", "quantity": "2", "price": "$10.00"}
+    ]
+
+
+@pytest.mark.parametrize(
     "kind,subject,wrapper_class,item_class",
     [
         (
@@ -375,6 +435,131 @@ def test_order_number_and_subject_alone_do_not_establish_an_event(
         email_address="buyer@example.test",
         email_date="2026-09-19",
     )
+    assert result == {}
+
+
+@pytest.mark.parametrize(
+    "method,subject,marker,number",
+    [
+        (
+            "parse_confirmation",
+            "Thank you for your order",
+            "Thank you for your order",
+            "W9999999999",
+        ),
+        (
+            "parse_cancellation",
+            "Information about your order",
+            "Your order has been cancelled",
+            "W9999999998",
+        ),
+        (
+            "parse_shipment",
+            "Your shipment is on its way",
+            "Your shipment is on its way",
+            "W9999999997",
+        ),
+    ],
+)
+def test_valid_order_view_link_supplies_missing_order_number(
+    method, subject, marker, number
+):
+    href = f"https://store.apple.com/vieworder/{number}/buyer@example.test/"
+    result = getattr(AppleParser(), method)(
+        f'<p>{marker}</p><a href="{href}">View order</a>',
+        subject=subject,
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+
+    assert result["order_number"] == number
+    assert result["order_details_link"] == href
+
+
+@pytest.mark.parametrize(
+    "method,subject,marker",
+    [
+        (
+            "parse_confirmation",
+            "Thank you for your order",
+            "Thank you for your order",
+        ),
+        (
+            "parse_cancellation",
+            "Information about your order",
+            "Your order has been cancelled",
+        ),
+        (
+            "parse_shipment",
+            "Your shipment is on its way",
+            "Your shipment is on its way",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "href",
+    [
+        "https://evil.example.test/vieworder/W9999999999/",
+        "http://store.apple.com/vieworder/W9999999999/",
+        "https://store.apple.com/notvieworder/W9999999999/",
+        "https://store.apple.com/vieworder/W9999999999/../W9999999998/",
+    ],
+)
+def test_hostile_order_view_link_cannot_supply_order_number(
+    method, subject, marker, href
+):
+    result = getattr(AppleParser(), method)(
+        f'<p>{marker}</p><a href="{href}">View order</a>',
+        subject=subject,
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+
+    assert result == {}
+
+
+@pytest.mark.parametrize(
+    "method,subject,marker,number",
+    [
+        (
+            "process_apple_confirmation_email",
+            "Thank you for your order",
+            "Thank you for your order",
+            "W9999999999",
+        ),
+        (
+            "process_apple_cancellation_email",
+            "Information about your order",
+            "Your order has been cancelled",
+            "W9999999998",
+        ),
+        (
+            "process_apple_shipped_email",
+            "Your shipment is on its way",
+            "Your shipment is on its way",
+            "W9999999997",
+        ),
+    ],
+)
+def test_processor_extracts_order_number_from_valid_link_only_email(
+    method, subject, marker, number
+):
+    href = f"https://store.apple.com/vieworder/{number}/buyer@example.test/"
+    result = getattr(EmailProcessor(), method)(link_only_email(subject, marker, href))
+
+    assert result["order_number"] == number
+    assert result["order_details_link"] == href
+
+
+def test_processor_rejects_hostile_link_only_email():
+    result = EmailProcessor().process_apple_confirmation_email(
+        link_only_email(
+            "Thank you for your order",
+            "Thank you for your order",
+            "https://evil.example.test/vieworder/W9999999999/",
+        )
+    )
+
     assert result == {}
 
 

@@ -15,6 +15,10 @@ class AppleParser:
     _LOCATION_RE = re.compile(
         r"(?P<city>[A-Za-z][A-Za-z .'-]*?)\s+(?P<state>[A-Z]{2})\s+(?P<zip>\d{5}(?:-\d{4})?)\b"
     )
+    _ORDER_LINK_PATH_RE = re.compile(
+        r"/(?:[a-z]{2}/|xc/[a-z]{2}/)?vieworder/"
+        r"(?P<order_number>W\d{8,12})(?:/[^/.][^/]*)?/?"
+    )
     _PRICE_RE = re.compile(r"\$[\d,]+\.\d{2}")
     _CONFIRMATION_MARKERS = ("we're processing your order", "thank you for your order")
 
@@ -107,6 +111,10 @@ class AppleParser:
             match = self._ORDER_NUMBER_RE.search(value or "")
             if match:
                 return match.group(0)
+        for link in soup.find_all("a", href=True):
+            order_number = self._validated_order_link(link["href"])
+            if order_number:
+                return order_number
         return ""
 
     def _order(
@@ -150,20 +158,11 @@ class AppleParser:
                 continue
             eligible_tables.append(table)
 
-        eligible_table_ids = {id(table) for table in eligible_tables}
         for table in eligible_tables:
             for quantity_cell in table.find_all(
                 ["td", "th"], string=lambda text: self._clean_text(text) == "Qty"
             ):
-                owner = next(
-                    (
-                        ancestor
-                        for ancestor in quantity_cell.parents
-                        if ancestor.name == "table"
-                        and id(ancestor) in eligible_table_ids
-                    ),
-                    None,
-                )
+                owner = quantity_cell.find_parent("table")
                 if owner is not table:
                     continue
                 quantity = self._next_cell_text(quantity_cell)
@@ -225,33 +224,38 @@ class AppleParser:
     def _order_link(self, soup: BeautifulSoup, order_number: str) -> str:
         for link in soup.find_all("a", href=True):
             href = link["href"]
-            if re.search(r"[\s\\]", href):
-                continue
-            try:
-                url = urlsplit(href)
-                valid_origin = (
-                    url.scheme == "https"
-                    and url.hostname in {"store.apple.com", "secure.store.apple.com"}
-                    and url.port in {None, 443}
-                    and url.username is None
-                    and url.password is None
-                )
-            except ValueError:
-                continue
-            if any(
-                unquote(segment) in {".", ".."}
-                or re.search(r"[/\\\s]", unquote(segment))
-                for segment in url.path.split("/")
-            ):
-                continue
-            if valid_origin and re.fullmatch(
-                r"/(?:[a-z]{2}/|xc/[a-z]{2}/)?vieworder/"
-                + re.escape(order_number)
-                + r"(?:/[^/.][^/]*)?/?",
-                url.path,
-            ):
+            if self._validated_order_link(href, order_number):
                 return href
         return ""
+
+    def _validated_order_link(self, href: str, expected_order_number: str = "") -> str:
+        if re.search(r"[\s\\]", href):
+            return ""
+        try:
+            url = urlsplit(href)
+            valid_origin = (
+                url.scheme == "https"
+                and url.hostname in {"store.apple.com", "secure.store.apple.com"}
+                and url.port in {None, 443}
+                and url.username is None
+                and url.password is None
+            )
+        except ValueError:
+            return ""
+        if not valid_origin:
+            return ""
+        if any(
+            unquote(segment) in {".", ".."} or re.search(r"[/\\\s]", unquote(segment))
+            for segment in url.path.split("/")
+        ):
+            return ""
+        match = self._ORDER_LINK_PATH_RE.fullmatch(url.path)
+        if not match:
+            return ""
+        order_number = match.group("order_number")
+        if expected_order_number and order_number != expected_order_number:
+            return ""
+        return order_number
 
     def _location(self, soup: BeautifulSoup) -> dict[str, str]:
         empty = {"shipping_city": "", "state": "", "zip": "", "zip_and_state": ""}
