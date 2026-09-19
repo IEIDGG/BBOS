@@ -686,6 +686,14 @@ class AppleEmailHandler(OrderEmailHandler):
             email_data_list = self.connector.fetch_emails_batch(
                 messages, use_uid=use_uid_filter
             )
+            if len(email_data_list) != len(messages):
+                for message_id in messages:
+                    fetched, email_data = self.connector.fetch_email(
+                        message_id, use_uid=use_uid_filter
+                    )
+                    yield message_id, email_data if fetched else None
+                return
+
             for index, message_id in enumerate(messages):
                 email_data = (
                     email_data_list[index]

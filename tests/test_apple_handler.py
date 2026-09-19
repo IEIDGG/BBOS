@@ -22,6 +22,7 @@ class FakeConnector:
         self.fetch_overrides = fetch_overrides or {}
         self.batch_results = batch_results
         self.searches = []
+        self.fetch_calls = []
         self.processed_uids = []
 
     def search_emails(self, folder, criteria, use_uid_filter=True):
@@ -29,6 +30,7 @@ class FakeConnector:
         return True, list(self.messages)
 
     def fetch_email(self, message_id, use_uid=True):
+        self.fetch_calls.append(message_id)
         if message_id in self.fetch_overrides:
             return self.fetch_overrides[message_id]
         return True, self.messages[message_id]
@@ -257,3 +259,36 @@ def test_batch_candidates_keep_uid_association_and_count_empty_slot():
     ]
     assert handler.statistics["processed"] == 11
     assert handler.statistics["failed"] == 1
+
+
+def test_batch_omitted_early_result_does_not_shift_uid_association():
+    fixture = (FIXTURES / "apple_confirmation.eml").read_bytes()
+    messages = {}
+    for index in range(11):
+        uid = f"uid-{index}"
+        order_number = f"W{index:010d}"
+        messages[uid] = (
+            uid.encode(),
+            fixture.replace(b"W9999999999", order_number.encode()),
+        )
+
+    missing_uid = "uid-1"
+    batch_results = [
+        messages[uid] for uid in messages if uid != missing_uid
+    ]
+    connector = FakeConnector(
+        messages,
+        fetch_overrides={missing_uid: (False, None)},
+        batch_results=batch_results,
+    )
+    handler = AppleEmailHandler(connector)
+
+    orders = handler.process_confirmation_emails("INBOX")
+
+    assert [order["number"] for order in orders] == [
+        f"W{index:010d}" for index in range(11) if index != 1
+    ]
+    assert connector.processed_uids == [
+        f"uid-{index}" for index in range(11) if index != 1
+    ]
+    assert connector.fetch_calls == [f"uid-{index}" for index in range(11)]
