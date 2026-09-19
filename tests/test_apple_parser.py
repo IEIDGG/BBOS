@@ -2,6 +2,8 @@ from email import policy
 from email.parser import BytesParser
 from pathlib import Path
 
+from config.settings import APPLE_SEARCH_CRITERIA
+from email_processing.processor import EmailProcessor
 from email_processing.parsers.apple_parser import AppleParser
 
 
@@ -17,6 +19,49 @@ def load_html(name: str) -> tuple[str, str, str]:
     )
     html = html_part.get_content()
     return html, message["Subject"], message["To"]
+
+
+def load_email_data(name: str) -> tuple[bytes, bytes]:
+    return (b"fixture-" + name.encode(), (FIXTURES / name).read_bytes())
+
+
+def test_apple_search_criteria_cover_all_email_types():
+    assert set(APPLE_SEARCH_CRITERIA) == {"confirmation", "cancellation", "shipped"}
+    assert "orders.apple.com" in APPLE_SEARCH_CRITERIA["confirmation"]["from"]
+    assert (
+        "Your shipment is on its way"
+        in APPLE_SEARCH_CRITERIA["shipped"]["subject"]
+    )
+
+
+def test_processor_delegates_apple_confirmation_fixture():
+    result = EmailProcessor().process_apple_confirmation_email(
+        load_email_data("apple_confirmation.eml")
+    )
+
+    assert result["order_number"] == "W9999999999"
+    assert result["products"][0]["title"] == "iPhone 18 Pro Max 256GB Burgundy"
+    assert result["email_address"] == "buyer@example.test"
+
+
+def test_processor_delegates_apple_cancellation_fixture():
+    result = EmailProcessor().process_apple_cancellation_email(
+        load_email_data("apple_cancellation.eml")
+    )
+
+    assert result["order_number"] == "W9999999998"
+    assert result["cancellation_type"] == "cancelled"
+    assert result["email_address"] == "buyer@example.test"
+
+
+def test_processor_delegates_apple_shipment_fixture():
+    result = EmailProcessor().process_apple_shipped_email(
+        load_email_data("apple_shipment.eml")
+    )
+
+    assert result["order_number"] == "W9999999997"
+    assert result["tracking_numbers"] == ["1Z999AA10123456784"]
+    assert result["carrier"] == "UPS"
 
 
 def test_confirmation_extracts_catalog_fulfillment_and_order_link():
