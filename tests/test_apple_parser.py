@@ -338,13 +338,22 @@ def test_labeled_shipping_block_is_used_without_template_classes(label):
 
 def test_confirmation_extracts_same_cell_shipping_heading_without_table_class():
     html, subject, recipient = load_html("apple_confirmation.eml")
-    html = html.replace(
-        '<table class="fulfillment"><tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr></table>',
-        "<table><tr><td>Shipping Address:<br>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr></table>",
-    ).replace(
-        "</body>",
-        "<table><tr><td>Merchant Contact<br>Cupertino CA 95014</td></tr></table></body>",
+    address_row = (
+        "<tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>"
     )
+    same_cell_row = "<tr><td>Shipping Address:<br>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>"
+    assert html.count('class="fulfillment"') == 1
+    assert html.count(address_row) == 1
+    html = (
+        html.replace('class="fulfillment"', "", 1)
+        .replace(address_row, same_cell_row, 1)
+        .replace(
+            "</body>",
+            "<table><tr><td>Merchant Contact<br>Cupertino CA 95014</td></tr></table></body>",
+        )
+    )
+    assert 'class="fulfillment"' not in html
+    assert html.count(same_cell_row) == 1
 
     result = AppleParser().parse_confirmation(
         html, subject=subject, email_address=recipient, email_date="2026-09-19"
@@ -357,20 +366,29 @@ def test_confirmation_extracts_same_cell_shipping_heading_without_table_class():
 
 def test_shipment_extracts_same_cell_shipping_heading_without_table_class():
     html, subject, recipient = load_html("apple_shipment.eml")
+    address_row = (
+        "<tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>"
+    )
+    same_cell_row = "<tr><td>Shipping Address:<br>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>"
+    assert html.count('class="shipment-content"') == 1
+    assert html.count(address_row) == 1
     html = (
         html.replace(
             '<table class="shipment-content">',
             "<table>",
         )
         .replace(
-            "<tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>",
-            "<tr><td>Shipping Address:<br>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>",
+            address_row,
+            same_cell_row,
+            1,
         )
         .replace(
             "</body>",
             "<table><tr><td>Merchant Contact<br>Cupertino CA 95014</td></tr></table></body>",
         )
     )
+    assert 'class="shipment-content"' not in html
+    assert html.count(same_cell_row) == 1
 
     result = AppleParser().parse_shipment(
         html, subject=subject, email_address=recipient, email_date="2026-09-19"
@@ -379,6 +397,39 @@ def test_shipment_extracts_same_cell_shipping_heading_without_table_class():
     assert result["shipping_city"] == "Concord"
     assert result["state"] == "NH"
     assert result["zip"] == "03301"
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+def test_nested_missing_shipping_address_does_not_use_footer(kind):
+    html, subject, recipient = load_html(f"apple_{kind}.eml")
+    address_row = (
+        "<tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>"
+    )
+    table_class = "fulfillment" if kind == "confirmation" else "shipment-content"
+    assert html.count(address_row) == 1
+    assert html.count(f'class="{table_class}"') == 1
+    html = html.replace(address_row, "", 1).replace(f'class="{table_class}"', "", 1)
+    nested_missing_address = """
+      <table class="layout-shell"><tr><td>
+        <table class="shipping-card"><tr><td>Shipping Address:</td></tr></table>
+        <table class="footer"><tr><td>Merchant Contact<br>Cupertino CA 95014</td></tr></table>
+      </td></tr></table>
+    """
+    assert "Shipping Address:" not in html
+    assert "Cupertino CA 95014" not in html
+    assert "</body>" in html
+    html = html.replace("</body>", nested_missing_address + "</body>", 1)
+    assert html.count("Shipping Address:") == 1
+    assert html.count("Cupertino CA 95014") == 1
+
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        html, subject=subject, email_address=recipient, email_date="2026-09-19"
+    )
+
+    assert result["shipping_city"] == ""
+    assert result["state"] == ""
+    assert result["zip"] == ""
+    assert result["zip_and_state"] == ""
 
 
 @pytest.mark.parametrize(
