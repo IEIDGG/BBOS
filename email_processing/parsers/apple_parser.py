@@ -1,6 +1,7 @@
 """Pure HTML parsers for Apple Online Store order emails."""
 
 import re
+from copy import deepcopy
 from datetime import datetime
 from urllib.parse import unquote, urlsplit
 
@@ -241,11 +242,7 @@ class AppleParser:
         blocks = []
         # Labeled address cells take precedence over template-specific blocks.
         for cell in soup.find_all(["td", "th"]):
-            direct_text = self._clean_text(
-                " ".join(
-                    str(text) for text in cell.find_all(string=True, recursive=False)
-                )
-            )
+            direct_text = self._shipping_region_text(cell)
             same_cell_heading = re.match(
                 r"^(?:shipping address|ship to)\s*:", direct_text, re.I
             )
@@ -265,7 +262,7 @@ class AppleParser:
             blocks = soup.select("table.fulfillment, table.shipment-content")
         address = ""
         for block in blocks:
-            match = self._LOCATION_RE.search(block.get_text("\n"))
+            match = self._LOCATION_RE.search(self._shipping_region_text(block))
             if match:
                 address = match.group(0)
                 break
@@ -287,6 +284,12 @@ class AppleParser:
                 "zip": zip_code,
                 "zip_and_state": f"{city}, {state} {zip_code}",
             }
+
+    def _shipping_region_text(self, element) -> str:
+        region = deepcopy(element)
+        for table in region.find_all("table"):
+            table.decompose()
+        return re.sub(r"[^\S\n]+", " ", region.get_text("\n")).strip()
 
     def _tracking_numbers(self, soup: BeautifulSoup, order_number: str) -> list[str]:
         tracking_numbers = []

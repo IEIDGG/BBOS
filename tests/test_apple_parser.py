@@ -432,6 +432,72 @@ def test_nested_missing_shipping_address_does_not_use_footer(kind):
     assert result["zip_and_state"] == ""
 
 
+def parse_minimal_location_case(kind, block):
+    marker = (
+        "Thank you for your order"
+        if kind == "confirmation"
+        else "Your shipment is on its way"
+    )
+    html = f"<p>{marker}</p>{block}"
+    assert html.count("Shipping Address") == 1
+    assert html.count("W9999999999") == 0
+    return getattr(AppleParser(), f"parse_{kind}")(
+        html,
+        subject=f"{marker} W9999999999",
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+def test_nested_footer_in_incomplete_shipping_cell_is_ignored(kind):
+    result = parse_minimal_location_case(
+        kind,
+        """<table><tr><td>Shipping Address:<br>Example Buyer<br>123 MAIN STREET
+<table><tr><td>No destination available</td></tr></table>
+<table class="footer"><tr><td>Merchant Contact<br>Cupertino CA 95014</td></tr></table>
+</td></tr></table>""",
+    )
+
+    assert result["shipping_city"] == ""
+    assert result["state"] == ""
+    assert result["zip"] == ""
+    assert result["zip_and_state"] == ""
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+def test_formatted_separate_shipping_label_keeps_adjacent_address(kind):
+    result = parse_minimal_location_case(
+        kind,
+        """<table><tr><td><b>Shipping Address:</b></td>
+<td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr></table>""",
+    )
+
+    assert result["zip_and_state"] == "Concord, NH 03301"
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+def test_formatted_same_cell_shipping_label_keeps_buyer_address(kind):
+    result = parse_minimal_location_case(
+        kind,
+        """<table><tr><td><b>Shipping Address:</b><br>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr></table>""",
+    )
+
+    assert result["zip_and_state"] == "Concord, NH 03301"
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+def test_wrapped_same_cell_shipping_address_stays_before_footer_row(kind):
+    result = parse_minimal_location_case(
+        kind,
+        """<table><tr><td>Shipping Address:
+<div>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</div></td></tr>
+<tr><td><table class="footer"><tr><td>Merchant Contact<br>Cupertino CA 95014</td></tr></table></td></tr></table>""",
+    )
+
+    assert result["zip_and_state"] == "Concord, NH 03301"
+
+
 @pytest.mark.parametrize(
     "url",
     [
