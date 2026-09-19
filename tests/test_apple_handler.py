@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 
 from email_processing.handlers import AppleEmailHandler
@@ -11,8 +12,15 @@ def load_email_data(name: str) -> tuple[bytes, bytes]:
 
 
 class FakeConnector:
-    def __init__(self, messages: dict[str, tuple[bytes, bytes]]):
+    def __init__(
+        self,
+        messages: dict[str, tuple[bytes, bytes]],
+        fetch_overrides=None,
+        batch_results=None,
+    ):
         self.messages = messages
+        self.fetch_overrides = fetch_overrides or {}
+        self.batch_results = batch_results
         self.searches = []
         self.processed_uids = []
 
@@ -21,9 +29,13 @@ class FakeConnector:
         return True, list(self.messages)
 
     def fetch_email(self, message_id, use_uid=True):
+        if message_id in self.fetch_overrides:
+            return self.fetch_overrides[message_id]
         return True, self.messages[message_id]
 
     def fetch_emails_batch(self, message_ids, use_uid=True):
+        if self.batch_results is not None:
+            return self.batch_results
         return [self.messages[message_id] for message_id in message_ids]
 
     def mark_uid_processed(self, uid):
@@ -175,4 +187,73 @@ def test_malformed_candidate_is_skipped_and_other_uid_is_processed():
     assert connector.processed_uids == ["good"]
     assert handler.statistics["processed"] == 2
     assert handler.statistics["successful"] == 1
+    assert handler.statistics["failed"] == 1
+
+
+def test_cancellation_keeps_order_handler_payment_declined_signature():
+    parameter = inspect.signature(
+        AppleEmailHandler.process_cancellation_emails
+    ).parameters["mark_payment_declined_as_cancelled"]
+
+    assert parameter.default is True
+
+
+def test_duplicate_tracking_values_from_one_result_are_stored_once():
+    connector = FakeConnector({"ship": load_email_data("apple_shipment.eml")})
+    handler = AppleEmailHandler(connector)
+    process_shipment = handler.processor.process_apple_shipped_email
+
+    def process_duplicate_shipment(email_data):
+        result = process_shipment(email_data)
+        result["tracking_numbers"] += [result["tracking_numbers"][0]]
+        return result
+
+    handler.processor.process_apple_shipped_email = process_duplicate_shipment
+    orders = []
+
+    handler.process_shipped_emails("INBOX", orders)
+
+    assert orders[0]["tracking"] == ["1Z999AA10123456784"]
+
+
+def test_failed_and_empty_fetch_candidates_count_as_processed_failures():
+    messages = {
+        "failed": load_email_data("apple_confirmation.eml"),
+        "empty": load_email_data("apple_confirmation.eml"),
+        "good": load_email_data("apple_confirmation.eml"),
+    }
+    connector = FakeConnector(
+        messages,
+        fetch_overrides={"failed": (False, None), "empty": (True, None)},
+    )
+    handler = AppleEmailHandler(connector)
+
+    orders = handler.process_confirmation_emails("INBOX")
+
+    assert [order["number"] for order in orders] == ["W9999999999"]
+    assert connector.processed_uids == ["good"]
+    assert handler.statistics["processed"] == 3
+    assert handler.statistics["successful"] == 1
+    assert handler.statistics["failed"] == 2
+
+
+def test_batch_candidates_keep_uid_association_and_count_empty_slot():
+    messages = {
+        f"uid-{index}": load_email_data("apple_confirmation.eml")
+        for index in range(11)
+    }
+    batch_results = [
+        None if message_id == "uid-5" else messages[message_id]
+        for message_id in messages
+    ]
+    connector = FakeConnector(messages, batch_results=batch_results)
+    handler = AppleEmailHandler(connector)
+
+    orders = handler.process_confirmation_emails("INBOX")
+
+    assert len(orders) == 10
+    assert connector.processed_uids == [
+        f"uid-{index}" for index in range(11) if index != 5
+    ]
+    assert handler.statistics["processed"] == 11
     assert handler.statistics["failed"] == 1

@@ -686,17 +686,20 @@ class AppleEmailHandler(OrderEmailHandler):
             email_data_list = self.connector.fetch_emails_batch(
                 messages, use_uid=use_uid_filter
             )
-            for message_id, email_data in zip(messages, email_data_list):
-                if email_data:
-                    yield message_id, email_data
+            for index, message_id in enumerate(messages):
+                email_data = (
+                    email_data_list[index]
+                    if index < len(email_data_list)
+                    else None
+                )
+                yield message_id, email_data
             return
 
         for message_id in messages:
             fetched, email_data = self.connector.fetch_email(
                 message_id, use_uid=use_uid_filter
             )
-            if fetched and email_data:
-                yield message_id, email_data
+            yield message_id, email_data if fetched else None
 
     def _merge_apple_details(self, order: Dict, result: Dict) -> None:
         for field in self._MERGE_FIELDS:
@@ -706,11 +709,15 @@ class AppleEmailHandler(OrderEmailHandler):
     def _new_apple_order(
         self, result: Dict, status: str, tracking: Optional[List[str]] = None
     ) -> Dict:
+        unique_tracking = []
+        for tracking_value in tracking or []:
+            if tracking_value not in unique_tracking:
+                unique_tracking.append(tracking_value)
         order = {
             "date": result.get("date", ""),
             "number": result["order_number"],
             "status": status,
-            "tracking": list(tracking or []),
+            "tracking": unique_tracking,
             "products": [],
             "website": "Apple",
         }
@@ -727,6 +734,10 @@ class AppleEmailHandler(OrderEmailHandler):
         for message_id, email_data in self._fetch_apple_messages(
             folder, "confirmation", ignore_cache, date_filter
         ) or []:
+            if not email_data:
+                self._update_stats(False)
+                continue
+
             try:
                 result = self.processor.process_apple_confirmation_email(email_data)
             except Exception as exc:
@@ -746,10 +757,15 @@ class AppleEmailHandler(OrderEmailHandler):
         orders: List[Dict],
         ignore_cache: bool = False,
         date_filter: Optional[str] = None,
+        mark_payment_declined_as_cancelled: bool = True,
     ) -> None:
         for message_id, email_data in self._fetch_apple_messages(
             folder, "cancellation", ignore_cache, date_filter
         ) or []:
+            if not email_data:
+                self._update_stats(False)
+                continue
+
             try:
                 result = self.processor.process_apple_cancellation_email(email_data)
             except Exception as exc:
@@ -794,6 +810,10 @@ class AppleEmailHandler(OrderEmailHandler):
         for message_id, email_data in self._fetch_apple_messages(
             folder, "shipped", ignore_cache, date_filter
         ) or []:
+            if not email_data:
+                self._update_stats(False)
+                continue
+
             try:
                 result = self.processor.process_apple_shipped_email(email_data)
             except Exception as exc:
@@ -818,11 +838,13 @@ class AppleEmailHandler(OrderEmailHandler):
                         self.statistics["tracking_numbers"] += len(tracking_numbers)
                 else:
                     existing_tracking = matched_order.setdefault("tracking", [])
-                    new_tracking = [
-                        tracking
-                        for tracking in tracking_numbers
-                        if tracking not in existing_tracking
-                    ]
+                    new_tracking = []
+                    for tracking in tracking_numbers:
+                        if (
+                            tracking not in existing_tracking
+                            and tracking not in new_tracking
+                        ):
+                            new_tracking.append(tracking)
                     existing_tracking.extend(new_tracking)
                     if matched_order.get("status") != "Cancelled":
                         matched_order["status"] = "Shipped"
