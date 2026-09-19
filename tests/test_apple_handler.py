@@ -1,14 +1,22 @@
 import inspect
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 
-from email_processing.handlers import AppleEmailHandler
+import pytest
 
+from email_processing.handlers import AppleEmailHandler
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def load_email_data(name: str) -> tuple[bytes, bytes]:
-    return (b"fixture-" + name.encode(), (FIXTURES / name).read_bytes())
+    return (
+        b"fixture-" + name.encode(),
+        (FIXTURES / name)
+        .read_bytes()
+        .replace(b"https://secure.example.test", b"https://store.apple.com"),
+    )
 
 
 class FakeConnector:
@@ -66,7 +74,7 @@ def test_confirmation_uses_apple_criteria_and_returns_processing_order():
             ],
             "total_price": "$1,299.00",
             "email_address": "buyer@example.test",
-            "order_details_link": "https://secure.example.test/vieworder/W9999999999/buyer@example.test/",
+            "order_details_link": "https://store.apple.com/vieworder/W9999999999/buyer@example.test/",
             "shipping_city": "Concord",
             "state": "NH",
             "zip": "03301",
@@ -80,7 +88,7 @@ def test_confirmation_uses_apple_criteria_and_returns_processing_order():
             "INBOX",
             {
                 "from": '(OR (FROM "orders.apple.com") (FROM "email.apple.com"))',
-                "subject": "(OR (SUBJECT \"We're processing your order\") (SUBJECT \"We’re processing your order\") (SUBJECT \"Thank you for your order\"))",
+                "subject": '(OR (SUBJECT "We\'re processing your order") (SUBJECT "We’re processing your order") (SUBJECT "Thank you for your order"))',
                 "date": "after:2026/09/01",
             },
             True,
@@ -192,6 +200,52 @@ def test_malformed_candidate_is_skipped_and_other_uid_is_processed():
     assert handler.statistics["failed"] == 1
 
 
+@pytest.mark.parametrize(
+    "events", [("cancellation", "shipped"), ("shipped", "cancellation")]
+)
+def test_cancellation_and_shipment_keep_tracking_and_terminal_status(events):
+    cancellation_id, cancellation = load_email_data("apple_cancellation.eml")
+    messages = {
+        "cancellation": (
+            cancellation_id,
+            cancellation.replace(b"W9999999998", b"W9999999997"),
+        ),
+        "shipped": load_email_data("apple_shipment.eml"),
+    }
+    connector = FakeConnector({})
+    handler = AppleEmailHandler(connector)
+    baseline = ["1Z111AA10123456784"]
+    orders = [{"number": "W9999999997", "status": "Processing", "tracking": baseline}]
+    for event in events:
+        connector.messages = {event: messages[event]}
+        getattr(handler, f"process_{event}_emails")("INBOX", orders)
+
+    assert baseline == ["1Z111AA10123456784"]
+    assert orders[0]["status"] == "Cancelled"
+    assert orders[0]["tracking"] == ["1Z111AA10123456784", "1Z999AA10123456784"]
+    assert connector.processed_uids == list(events)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_shipment_without_tracking_only_updates_existing_orders(existing):
+    fixture_id, raw = load_email_data("apple_shipment.eml")
+    connector = FakeConnector(
+        {"ship": (fixture_id, raw.replace(b"1Z999AA10123456784", b""))}
+    )
+    orders = (
+        [{"number": "W9999999997", "status": "Processing", "tracking": []}]
+        if existing
+        else []
+    )
+    AppleEmailHandler(connector).process_shipped_emails("INBOX", orders)
+
+    if existing:
+        assert orders[0]["status"] == "Shipped"
+        assert orders[0]["tracking"] == []
+    else:
+        assert orders == []
+
+
 def test_cancellation_keeps_order_handler_payment_declined_signature():
     parameter = inspect.signature(
         AppleEmailHandler.process_cancellation_emails
@@ -241,8 +295,7 @@ def test_failed_and_empty_fetch_candidates_count_as_processed_failures():
 
 def test_batch_candidates_keep_uid_association_and_count_empty_slot():
     messages = {
-        f"uid-{index}": load_email_data("apple_confirmation.eml")
-        for index in range(11)
+        f"uid-{index}": load_email_data("apple_confirmation.eml") for index in range(11)
     }
     batch_results = [
         None if message_id == "uid-5" else messages[message_id]
@@ -273,9 +326,7 @@ def test_batch_omitted_early_result_does_not_shift_uid_association():
         )
 
     missing_uid = "uid-1"
-    batch_results = [
-        messages[uid] for uid in messages if uid != missing_uid
-    ]
+    batch_results = [messages[uid] for uid in messages if uid != missing_uid]
     connector = FakeConnector(
         messages,
         fetch_overrides={missing_uid: (False, None)},
@@ -292,3 +343,43 @@ def test_batch_omitted_early_result_does_not_shift_uid_association():
         f"uid-{index}" for index in range(11) if index != 1
     ]
     assert connector.fetch_calls == [f"uid-{index}" for index in range(11)]
+
+
+@pytest.mark.parametrize(
+    "status,want_status", [("Processing", "Shipped"), ("Cancelled", "Cancelled")]
+)
+def test_shipment_merges_tracking_without_mutating_callers_shared_list(
+    status, want_status
+):
+    baseline = ["1Z111AA10123456784"]
+    orders = [{"number": "W9999999997", "status": status, "tracking": baseline}]
+    connector = FakeConnector({"ship": load_email_data("apple_shipment.eml")})
+    handler = AppleEmailHandler(connector)
+
+    handler.process_shipped_emails("INBOX", orders)
+    handler.process_shipped_emails("INBOX", orders, ignore_cache=True)
+
+    assert baseline == ["1Z111AA10123456784"]
+    assert orders[0]["tracking"] == ["1Z111AA10123456784", "1Z999AA10123456784"]
+    assert orders[0]["status"] == want_status
+    assert handler.statistics["tracking_numbers"] == 1
+
+
+def test_signal_free_shipment_does_not_change_order_or_acknowledge_uid():
+    _, raw = load_email_data("apple_shipment.eml")
+    message = BytesParser(policy=policy.default).parsebytes(raw)
+    html = next(
+        part for part in message.walk() if part.get_content_type() == "text/html"
+    )
+    html.set_content(
+        "<html><body>No shipping details here</body></html>", subtype="html"
+    )
+    connector = FakeConnector({"ship": (b"fixture-ship", message.as_bytes())})
+    orders = [{"number": "W9999999997", "status": "Processing", "tracking": []}]
+    handler = AppleEmailHandler(connector)
+
+    handler.process_shipped_emails("INBOX", orders)
+
+    assert orders == [{"number": "W9999999997", "status": "Processing", "tracking": []}]
+    assert connector.processed_uids == []
+    assert handler.statistics["failed"] == 1

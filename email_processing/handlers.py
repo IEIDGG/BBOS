@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 from config.settings import (
-    APPLE_SEARCH_CRITERIA,
     AMAZON_SEARCH_CRITERIA,
+    APPLE_SEARCH_CRITERIA,
     COSTCO_SEARCH_CRITERIA,
     SEARCH_CRITERIA,
     WALMART_SEARCH_CRITERIA,
@@ -696,9 +696,7 @@ class AppleEmailHandler(OrderEmailHandler):
 
             for index, message_id in enumerate(messages):
                 email_data = (
-                    email_data_list[index]
-                    if index < len(email_data_list)
-                    else None
+                    email_data_list[index] if index < len(email_data_list) else None
                 )
                 yield message_id, email_data
             return
@@ -739,9 +737,12 @@ class AppleEmailHandler(OrderEmailHandler):
         self, folder: str, ignore_cache: bool = False, date_filter: Optional[str] = None
     ) -> List[Dict]:
         orders = []
-        for message_id, email_data in self._fetch_apple_messages(
-            folder, "confirmation", ignore_cache, date_filter
-        ) or []:
+        for message_id, email_data in (
+            self._fetch_apple_messages(
+                folder, "confirmation", ignore_cache, date_filter
+            )
+            or []
+        ):
             if not email_data:
                 self._update_stats(False)
                 continue
@@ -767,9 +768,12 @@ class AppleEmailHandler(OrderEmailHandler):
         date_filter: Optional[str] = None,
         mark_payment_declined_as_cancelled: bool = True,
     ) -> None:
-        for message_id, email_data in self._fetch_apple_messages(
-            folder, "cancellation", ignore_cache, date_filter
-        ) or []:
+        for message_id, email_data in (
+            self._fetch_apple_messages(
+                folder, "cancellation", ignore_cache, date_filter
+            )
+            or []
+        ):
             if not email_data:
                 self._update_stats(False)
                 continue
@@ -815,9 +819,10 @@ class AppleEmailHandler(OrderEmailHandler):
         ignore_cache: bool = False,
         date_filter: Optional[str] = None,
     ) -> None:
-        for message_id, email_data in self._fetch_apple_messages(
-            folder, "shipped", ignore_cache, date_filter
-        ) or []:
+        for message_id, email_data in (
+            self._fetch_apple_messages(folder, "shipped", ignore_cache, date_filter)
+            or []
+        ):
             if not email_data:
                 self._update_stats(False)
                 continue
@@ -838,14 +843,13 @@ class AppleEmailHandler(OrderEmailHandler):
                 if matched_order is None:
                     if tracking_numbers:
                         orders.append(
-                            self._new_apple_order(
-                                result, "Shipped", tracking_numbers
-                            )
+                            self._new_apple_order(result, "Shipped", tracking_numbers)
                         )
                         self.statistics["shipped"] += 1
                         self.statistics["tracking_numbers"] += len(tracking_numbers)
                 else:
-                    existing_tracking = matched_order.setdefault("tracking", [])
+                    # A caller may share this list with its persisted before-state.
+                    existing_tracking = list(matched_order.get("tracking") or [])
                     new_tracking = []
                     for tracking in tracking_numbers:
                         if (
@@ -854,6 +858,7 @@ class AppleEmailHandler(OrderEmailHandler):
                         ):
                             new_tracking.append(tracking)
                     existing_tracking.extend(new_tracking)
+                    matched_order["tracking"] = existing_tracking
                     if matched_order.get("status") != "Cancelled":
                         matched_order["status"] = "Shipped"
                     self._merge_apple_details(matched_order, result)

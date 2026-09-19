@@ -56,6 +56,9 @@ jobs:
       - name: Whitespace check tests
         run: uv run python tests/test_check_ws.py
 
+      - name: Submodule pytest suite
+        run: uv run --locked --with pytest==9.1.1 python -m pytest -o pythonpath=. tests -q
+
   extension:
     runs-on: ubuntu-latest
     steps:

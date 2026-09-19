@@ -2,6 +2,7 @@
 
 import re
 from datetime import datetime
+from urllib.parse import unquote, urlsplit
 
 from bs4 import BeautifulSoup, FeatureNotFound
 
@@ -14,16 +15,27 @@ class AppleParser:
         r"(?P<city>[A-Za-z][A-Za-z .'-]*?)\s+(?P<state>[A-Z]{2})\s+(?P<zip>\d{5}(?:-\d{4})?)\b"
     )
     _PRICE_RE = re.compile(r"\$[\d,]+\.\d{2}")
+    _CONFIRMATION_MARKERS = ("we're processing your order", "thank you for your order")
 
     def parse_confirmation(
         self, html_content: str, *, subject: str, email_address: str, email_date: str
     ) -> dict:
         normalized_subject = self._clean_text(subject).lower().replace("’", "'")
-        if "we're processing your order" not in normalized_subject:
+        if not any(
+            marker in normalized_subject for marker in self._CONFIRMATION_MARKERS
+        ):
             return {}
         soup = self._soup(html_content)
         order_number = self._order_number(soup, subject)
         if not order_number:
+            return {}
+        body = self._clean_text(soup.get_text(" ")).lower().replace("’", "'")
+        if not (
+            any(marker in body for marker in self._CONFIRMATION_MARKERS)
+            or self._products(soup)
+            or self._ordered_date(soup)
+            or self._PRICE_RE.fullmatch(self._total(soup))
+        ):
             return {}
         return self._order(
             soup,
@@ -36,9 +48,10 @@ class AppleParser:
         self, html_content: str, *, subject: str, email_address: str, email_date: str
     ) -> dict:
         soup = self._soup(html_content)
-        if "your order has been cancelled" not in self._clean_text(
-            soup.get_text(" ")
-        ).lower():
+        if not re.search(
+            r"\byour order has been cancel{1,2}ed\b",
+            self._clean_text(soup.get_text(" ")).lower(),
+        ):
             return {}
         order_number = self._order_number(soup, subject)
         if not order_number:
@@ -67,6 +80,14 @@ class AppleParser:
         )
         result["tracking_numbers"] = self._tracking_numbers(soup, order_number)
         result["carrier"] = self._row_value(soup, "Carrier Name")
+        if not (
+            result["tracking_numbers"]
+            or result["carrier"]
+            or result["estimated_delivery"]
+            or "your shipment is on its way"
+            in self._clean_text(soup.get_text(" ")).lower()
+        ):
+            return {}
         return result
 
     @staticmethod
@@ -138,7 +159,11 @@ class AppleParser:
                 cells = title_row.find_all(["td", "th"])
                 values = [self._clean_text(cell.get_text(" ")) for cell in cells]
                 title = next(
-                    (value for value in values if value and not self._PRICE_RE.fullmatch(value)),
+                    (
+                        value
+                        for value in values
+                        if value and not self._PRICE_RE.fullmatch(value)
+                    ),
                     "",
                 )
                 price = next(
@@ -169,7 +194,10 @@ class AppleParser:
 
     def _row_value(self, soup: BeautifulSoup, label: str) -> str:
         for cell in soup.find_all(["td", "th"]):
-            if self._clean_text(cell.get_text(" ")) == label:
+            if (
+                self._clean_text(cell.get_text(" ")).rstrip(":").strip().casefold()
+                == label.casefold()
+            ):
                 return self._next_cell_text(cell)
         return ""
 
@@ -180,18 +208,57 @@ class AppleParser:
     def _order_link(self, soup: BeautifulSoup, order_number: str) -> str:
         for link in soup.find_all("a", href=True):
             href = link["href"]
-            if "vieworder" in href.lower() and order_number in href:
+            if re.search(r"[\s\\]", href):
+                continue
+            try:
+                url = urlsplit(href)
+                valid_origin = (
+                    url.scheme == "https"
+                    and url.hostname in {"store.apple.com", "secure.store.apple.com"}
+                    and url.port in {None, 443}
+                    and url.username is None
+                    and url.password is None
+                )
+            except ValueError:
+                continue
+            if any(
+                unquote(segment) in {".", ".."}
+                or re.search(r"[/\\\s]", unquote(segment))
+                for segment in url.path.split("/")
+            ):
+                continue
+            if valid_origin and re.fullmatch(
+                r"/(?:[a-z]{2}/|xc/[a-z]{2}/)?vieworder/"
+                + re.escape(order_number)
+                + r"(?:/[^/.][^/]*)?/?",
+                url.path,
+            ):
                 return href
         return ""
 
     def _location(self, soup: BeautifulSoup) -> dict[str, str]:
         empty = {"shipping_city": "", "state": "", "zip": "", "zip_and_state": ""}
-        address = ""
+        blocks = []
+        # Labeled address cells take precedence over template-specific blocks.
         for cell in soup.find_all(["td", "th"]):
-            value = cell.get_text("\n")
-            matches = list(self._LOCATION_RE.finditer(value))
-            if matches:
-                address = matches[-1].group(0)
+            label = self._clean_text(cell.get_text(" ")).rstrip(":").casefold()
+            if label in {"shipping address", "ship to"}:
+                address_cell = cell.find_next_sibling(["td", "th"])
+                if address_cell is not None:
+                    blocks.append(address_cell)
+                else:
+                    row = cell.find_parent("tr")
+                    next_row = row.find_next_sibling("tr") if row else None
+                    if next_row is not None:
+                        blocks.append(next_row)
+        if not blocks:
+            blocks = soup.select("table.fulfillment, table.shipment-content")
+        address = ""
+        for block in blocks:
+            match = self._LOCATION_RE.search(block.get_text("\n"))
+            if match:
+                address = match.group(0)
+                break
         if not address:
             return empty
         try:
@@ -221,7 +288,10 @@ class AppleParser:
                 continue
             for value in value_cell.stripped_strings:
                 candidate = self._clean_text(value)
-                if self._valid_tracking(candidate, order_number) and candidate not in tracking_numbers:
+                if (
+                    self._valid_tracking(candidate, order_number)
+                    and candidate not in tracking_numbers
+                ):
                     tracking_numbers.append(candidate)
         return tracking_numbers
 

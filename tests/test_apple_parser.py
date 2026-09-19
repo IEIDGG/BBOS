@@ -1,11 +1,13 @@
+import re
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path
 
-from config.settings import APPLE_SEARCH_CRITERIA
-from email_processing.processor import EmailProcessor
-from email_processing.parsers.apple_parser import AppleParser
+import pytest
 
+from config.settings import APPLE_SEARCH_CRITERIA
+from email_processing.parsers.apple_parser import AppleParser
+from email_processing.processor import EmailProcessor
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -17,7 +19,9 @@ def load_html(name: str) -> tuple[str, str, str]:
     html_part = next(
         part for part in message.walk() if part.get_content_type() == "text/html"
     )
-    html = html_part.get_content()
+    html = html_part.get_content().replace(
+        "https://secure.example.test", "https://store.apple.com"
+    )
     return html, message["Subject"], message["To"]
 
 
@@ -28,10 +32,7 @@ def load_email_data(name: str) -> tuple[bytes, bytes]:
 def test_apple_search_criteria_cover_all_email_types():
     assert set(APPLE_SEARCH_CRITERIA) == {"confirmation", "cancellation", "shipped"}
     assert "orders.apple.com" in APPLE_SEARCH_CRITERIA["confirmation"]["from"]
-    assert (
-        "Your shipment is on its way"
-        in APPLE_SEARCH_CRITERIA["shipped"]["subject"]
-    )
+    assert "Your shipment is on its way" in APPLE_SEARCH_CRITERIA["shipped"]["subject"]
 
 
 def test_processor_delegates_apple_confirmation_fixture():
@@ -197,7 +198,7 @@ def test_confirmation_without_address_or_footer_has_empty_location_fields():
     html = html.replace(
         "<tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>", ""
     ).replace(
-        '<a href="https://secure.example.test/vieworder/W9999999999/buyer@example.test/">View order</a>',
+        '<a href="https://store.apple.com/vieworder/W9999999999/buyer@example.test/">View order</a>',
         "",
     )
 
@@ -209,3 +210,212 @@ def test_confirmation_without_address_or_footer_has_empty_location_fields():
     assert result["state"] == ""
     assert result["zip"] == ""
     assert result["order_details_link"] == ""
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "We're processing your order W9999999999",
+        "We’re processing your order W9999999999",
+        "THANK YOU FOR YOUR ORDER W9999999999",
+    ],
+)
+def test_confirmation_accepts_supported_subjects_with_order_content(subject):
+    html, _, recipient = load_html("apple_confirmation.eml")
+    result = AppleParser().parse_confirmation(
+        html, subject=subject, email_address=recipient, email_date="2026-09-19"
+    )
+    assert result["order_number"] == "W9999999999"
+    assert result["products"][0]["quantity"] == "1"
+
+
+@pytest.mark.parametrize(
+    "method,subject",
+    [
+        ("parse_confirmation", "We're processing your order W9999999999"),
+        ("parse_confirmation", "We’re processing your order W9999999999"),
+        ("parse_confirmation", "Thank you for your order W9999999999"),
+        ("parse_shipment", "Your shipment is on its way W9999999999"),
+    ],
+)
+@pytest.mark.parametrize("body", ["", "No shipping details here", "Order W9999999999"])
+def test_order_number_and_subject_alone_do_not_establish_an_event(
+    method, subject, body
+):
+    result = getattr(AppleParser(), method)(
+        f"<html><body>{body}</body></html>",
+        subject=subject,
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+    assert result == {}
+
+
+@pytest.mark.parametrize(
+    "marker", ["Your order has been cancelled", "YOUR ORDER HAS BEEN CANCELED"]
+)
+def test_cancellation_accepts_both_body_spellings(marker):
+    html, subject, recipient = load_html("apple_cancellation.eml")
+    result = AppleParser().parse_cancellation(
+        html.replace("Your order has been cancelled", marker),
+        subject=subject,
+        email_address=recipient,
+        email_date="2026-09-19",
+    )
+    assert result["order_number"] == "W9999999998"
+    assert result["cancellation_type"] == "cancelled"
+
+
+@pytest.mark.parametrize(
+    "signal",
+    [
+        "<p>Your shipment is on its way</p>",
+        "<table><tr><td>Carrier Name</td><td>UPS</td></tr></table>",
+        "<table><tr><td>Tracking Number:</td><td>1Z999AA10123456784</td></tr></table>",
+        "<table><tr><td>Delivers Sep 24, 2026 via UPS</td></tr></table>",
+    ],
+)
+def test_shipment_accepts_body_evidence_with_optional_catalog_omitted(signal):
+    result = AppleParser().parse_shipment(
+        signal,
+        subject="YOUR SHIPMENT IS ON ITS WAY W9999999997",
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+    assert result["order_number"] == "W9999999997"
+    assert result["products"] == []
+
+
+@pytest.mark.parametrize("label", ["Ordered on:", "Ordered On"])
+@pytest.mark.parametrize("kind", ["confirmation", "shipment", "cancellation"])
+def test_ordered_date_variants_override_notification_date(label, kind):
+    html, subject, recipient = load_html(f"apple_{kind}.eml")
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        html.replace("Ordered on", label),
+        subject=subject,
+        email_address=recipient,
+        email_date="2026-09-19",
+    )
+    assert result["date"] == ("2026-04-23" if kind == "cancellation" else "2026-09-12")
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+@pytest.mark.parametrize("include_shipping", [True, False])
+def test_shipping_location_never_uses_merchant_footer(kind, include_shipping):
+    html, subject, recipient = load_html(f"apple_{kind}.eml")
+    if not include_shipping:
+        html = html.replace(
+            "<tr><td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr>", ""
+        )
+    # A layout table must not allow a later merchant address to become shipping.
+    html = html.replace("<body>", "<body><table><tr><td>").replace(
+        "</body>",
+        "<table class='footer'><tr><td>Cupertino CA 95014</td></tr></table></td></tr></table></body>",
+    )
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        html, subject=subject, email_address=recipient, email_date="2026-09-19"
+    )
+    assert result["shipping_city"] == ("Concord" if include_shipping else "")
+    assert result["state"] == ("NH" if include_shipping else "")
+    assert result["zip"] == ("03301" if include_shipping else "")
+
+
+@pytest.mark.parametrize("label", ["Shipping Address:", "Ship To"])
+def test_labeled_shipping_block_is_used_without_template_classes(label):
+    html, subject, recipient = load_html("apple_confirmation.eml")
+    html = (
+        html.replace('class="fulfillment"', "")
+        .replace("<td>Example Buyer", f"<td>{label}</td><td>Example Buyer")
+        .replace(
+            "</body>", "<table><tr><td>Cupertino CA 95014</td></tr></table></body>"
+        )
+    )
+    result = AppleParser().parse_confirmation(
+        html, subject=subject, email_address=recipient, email_date="2026-09-19"
+    )
+    assert result["zip_and_state"] == "Concord, NH 03301"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://store.apple.com/vieworder/W9999999999/buyer@example.test/",
+        "https://secure.store.apple.com/xc/us/vieworder/W9999999999/buyer@example.test/",
+    ],
+)
+def test_order_link_accepts_apple_https_detail_urls(url):
+    html, subject, recipient = load_html("apple_confirmation.eml")
+    html = html.replace(
+        "https://store.apple.com/vieworder/W9999999999/buyer@example.test/", url
+    )
+    result = AppleParser().parse_confirmation(
+        html, subject=subject, email_address=recipient, email_date="2026-09-19"
+    )
+    assert result["order_details_link"] == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://untrusted.example.test/vieworder/W9999999999/",
+        "https://store.apple.com.evil.example.test/vieworder/W9999999999/",
+        "https://store.apple.com@evil.example.test/vieworder/W9999999999/",
+        "https://evil.example.test@store.apple.com/vieworder/W9999999999/",
+        "http://store.apple.com/vieworder/W9999999999/",
+        "javascript:alert('vieworder/W9999999999')",
+        "//store.apple.com/vieworder/W9999999999/",
+        "https://store.apple.com:8443/vieworder/W9999999999/",
+        "https://store.apple.com:notaport/vieworder/W9999999999/",
+        "https://[invalid/vieworder/W9999999999/",
+        "https://store.apple.com/vieworder/W99999999990/",
+        "https://store.apple.com/vieworder/W9999999998/?order=W9999999999",
+        "https://store.apple.com/notvieworder/W9999999999/",
+        "https://store.apple.com/orders/?vieworder=W9999999999",
+        "https://store.apple.com/vieworder/W9999999999/../W9999999998/",
+        "https://store.apple.com/vieworder/W9999999999/%2e%2e/",
+        "https://store.apple.com/vieworder/W9999999999/%2f..%2fW9999999998/",
+        "https://store.apple.com/vieworder/W9999999999/%5c..%5cW9999999998/",
+    ],
+)
+def test_order_link_rejects_untrusted_or_mismatched_urls(url):
+    html, subject, recipient = load_html("apple_confirmation.eml")
+    html = html.replace(
+        "https://store.apple.com/vieworder/W9999999999/buyer@example.test/", url
+    )
+    result = AppleParser().parse_confirmation(
+        html, subject=subject, email_address=recipient, email_date="2026-09-19"
+    )
+    assert result["order_details_link"] == ""
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "We're processing your order",
+        "We’re processing your order",
+        "Thank you for your order",
+    ],
+)
+def test_confirmation_body_marker_allows_optional_catalog_date_and_total(marker):
+    result = AppleParser().parse_confirmation(
+        f"<p>{marker}</p>",
+        subject="Thank you for your order W9999999999",
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+    assert result["order_number"] == "W9999999999"
+    assert result["date"] == "2026-09-19"
+    assert result["products"] == []
+    assert result["total_price"] == ""
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "cancellation", "shipment"])
+def test_event_evidence_still_requires_an_order_number(kind):
+    html, subject, recipient = load_html(f"apple_{kind}.eml")
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        re.sub(r"W\d+", "", html),
+        subject=re.sub(r"W\d+", "", subject),
+        email_address=recipient,
+        email_date="2026-09-19",
+    )
+    assert result == {}
