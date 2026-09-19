@@ -121,28 +121,38 @@ class AppleParser:
 
     def _products(self, soup: BeautifulSoup) -> list[dict[str, str]]:
         products = []
-        for quantity_cell in soup.find_all(
-            ["td", "th"], string=lambda text: self._clean_text(text) == "Qty"
-        ):
-            quantity = self._next_cell_text(quantity_cell)
-            quantity_row = quantity_cell.find_parent("tr")
-            table = quantity_cell.find_parent("table")
-            if not quantity_row or not table:
+        for table in soup.find_all("table"):
+            classes = " ".join(table.get("class", [])).lower()
+            if "item" not in classes and "shipment" not in classes:
                 continue
-            title_row = quantity_row.find_previous_sibling("tr")
-            if not title_row:
-                continue
-            cells = title_row.find_all(["td", "th"])
-            values = [self._clean_text(cell.get_text(" ")) for cell in cells]
-            title = next((value for value in values if value and not self._PRICE_RE.fullmatch(value)), "")
-            price = next(
-                (match.group(0) for value in values if (match := self._PRICE_RE.search(value))),
-                "",
-            )
-            if title:
-                products.append(
-                    {"title": title, "quantity": quantity or "1", "price": price}
+            for quantity_cell in table.find_all(
+                ["td", "th"], string=lambda text: self._clean_text(text) == "Qty"
+            ):
+                quantity = self._next_cell_text(quantity_cell)
+                quantity_row = quantity_cell.find_parent("tr")
+                if not quantity_row:
+                    continue
+                title_row = quantity_row.find_previous_sibling("tr")
+                if not title_row:
+                    continue
+                cells = title_row.find_all(["td", "th"])
+                values = [self._clean_text(cell.get_text(" ")) for cell in cells]
+                title = next(
+                    (value for value in values if value and not self._PRICE_RE.fullmatch(value)),
+                    "",
                 )
+                price = next(
+                    (
+                        match.group(0)
+                        for value in values
+                        if (match := self._PRICE_RE.search(value))
+                    ),
+                    "",
+                )
+                if title:
+                    products.append(
+                        {"title": title, "quantity": quantity or "1", "price": price}
+                    )
         return products
 
     def _total(self, soup: BeautifulSoup) -> str:

@@ -121,6 +121,32 @@ def test_confirmation_keeps_single_date_delivery():
     assert result["estimated_delivery"] == "Oct 6, 2026"
 
 
+def test_confirmation_excludes_footer_qty_rows_from_products():
+    html, subject, recipient = load_html("apple_confirmation.eml")
+    html = html.replace(
+        "</body>",
+        """
+        <table class="footer-widget">
+          <tr><td>Promotional Widget</td><td>$9.99</td></tr>
+          <tr><td>Qty</td><td>1</td></tr>
+        </table>
+        </body>
+        """,
+    )
+
+    result = AppleParser().parse_confirmation(
+        html, subject=subject, email_address=recipient, email_date="2026-09-12"
+    )
+
+    assert result["products"] == [
+        {
+            "title": "iPhone 18 Pro Max 256GB Burgundy",
+            "quantity": "1",
+            "price": "$1,299.00",
+        }
+    ]
+
+
 def test_confirmation_without_address_or_footer_has_empty_location_fields():
     html, subject, recipient = load_html("apple_confirmation.eml")
     html = html.replace(
