@@ -242,27 +242,34 @@ class AppleParser:
         blocks = []
         # Labeled address cells take precedence over template-specific blocks.
         for cell in soup.find_all(["td", "th"]):
-            direct_text = self._shipping_region_text(cell)
+            direct_text = self._shipping_region_text(cell, "same_cell")
+            normalized_text = self._normalize_shipping_text(direct_text)
             same_cell_heading = re.match(
-                r"^(?:shipping address|ship to)\s*:", direct_text, re.I
+                r"^(?:shipping address|ship to)\s*:", normalized_text, re.I
             )
-            if same_cell_heading and direct_text[same_cell_heading.end() :].strip():
-                blocks.append(cell)
+            if same_cell_heading and normalized_text[same_cell_heading.end() :].strip():
+                blocks.append((cell, "same_cell"))
                 continue
-            if direct_text.rstrip(":").casefold() in {"shipping address", "ship to"}:
+            if normalized_text.rstrip(":").casefold() in {
+                "shipping address",
+                "ship to",
+            }:
                 address_cell = cell.find_next_sibling(["td", "th"])
                 if address_cell is not None:
-                    blocks.append(address_cell)
+                    blocks.append((address_cell, "adjacent"))
                 else:
                     row = cell.find_parent("tr")
                     next_row = row.find_next_sibling("tr") if row else None
                     if next_row is not None:
-                        blocks.append(next_row)
+                        blocks.append((next_row, "row"))
         if not blocks:
-            blocks = soup.select("table.fulfillment, table.shipment-content")
+            blocks = [
+                (table, "template")
+                for table in soup.select("table.fulfillment, table.shipment-content")
+            ]
         address = ""
-        for block in blocks:
-            match = self._LOCATION_RE.search(self._shipping_region_text(block))
+        for block, context in blocks:
+            match = self._LOCATION_RE.search(self._shipping_region_text(block, context))
             if match:
                 address = match.group(0)
                 break
@@ -285,11 +292,23 @@ class AppleParser:
                 "zip_and_state": f"{city}, {state} {zip_code}",
             }
 
-    def _shipping_region_text(self, element) -> str:
+    @staticmethod
+    def _normalize_shipping_text(value: str) -> str:
+        return re.sub(r"\s+", " ", value or "").strip()
+
+    def _shipping_region_text(self, element, context: str) -> str:
         region = deepcopy(element)
         for table in region.find_all("table"):
-            table.decompose()
+            if context == "same_cell" or self._is_footer_table(table):
+                table.decompose()
         return re.sub(r"[^\S\n]+", " ", region.get_text("\n")).strip()
+
+    @staticmethod
+    def _is_footer_table(table) -> bool:
+        return any(
+            "footer" in str(class_name).casefold()
+            for class_name in table.get("class", [])
+        )
 
     def _tracking_numbers(self, soup: BeautifulSoup, order_number: str) -> list[str]:
         tracking_numbers = []

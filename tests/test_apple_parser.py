@@ -439,7 +439,8 @@ def parse_minimal_location_case(kind, block):
         else "Your shipment is on its way"
     )
     html = f"<p>{marker}</p>{block}"
-    assert html.count("Shipping Address") == 1
+    assert html.count(marker) == 1
+    assert block in html
     assert html.count("W9999999999") == 0
     return getattr(AppleParser(), f"parse_{kind}")(
         html,
@@ -463,6 +464,63 @@ def test_nested_footer_in_incomplete_shipping_cell_is_ignored(kind):
     assert result["state"] == ""
     assert result["zip"] == ""
     assert result["zip_and_state"] == ""
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+def test_nested_adjacent_shipping_address_is_preserved(kind):
+    buyer = "Example Buyer<br>123 MAIN STREET<br>Concord NH 03301"
+    nested = f"<table><tr><td>{buyer}</td></tr></table>"
+    block = f"<table><tr><td>Shipping Address:</td><td>{nested}</td></tr></table>"
+
+    result = parse_minimal_location_case(kind, block)
+
+    assert result["zip_and_state"] == "Concord, NH 03301"
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+def test_nested_next_row_shipping_address_is_preserved(kind):
+    buyer = "Example Buyer<br>123 MAIN STREET<br>Concord NH 03301"
+    nested = f"<table><tr><td>{buyer}</td></tr></table>"
+    block = (
+        f"<table><tr><td>Shipping Address:</td></tr><tr><td>{nested}</td></tr></table>"
+    )
+
+    result = parse_minimal_location_case(kind, block)
+
+    assert result["zip_and_state"] == "Concord, NH 03301"
+
+
+@pytest.mark.parametrize(
+    "kind,table_class",
+    [("confirmation", "fulfillment"), ("shipment", "shipment-content")],
+)
+def test_nested_template_shipping_address_is_preserved(kind, table_class):
+    buyer = "Example Buyer<br>123 MAIN STREET<br>Concord NH 03301"
+    nested = f"<table><tr><td>{buyer}</td></tr></table>"
+    block = f'<table class="{table_class}"><tr><td>{nested}</td></tr></table>'
+
+    result = parse_minimal_location_case(kind, block)
+
+    assert result["zip_and_state"] == "Concord, NH 03301"
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+@pytest.mark.parametrize("layout", ["adjacent", "next_row"])
+def test_split_inline_shipping_heading_is_normalized(kind, layout):
+    buyer = "Example Buyer<br>123 MAIN STREET<br>Concord NH 03301"
+    if layout == "adjacent":
+        block = (
+            f"<table><tr><td><b>Shipping</b> Address:</td><td>{buyer}</td></tr></table>"
+        )
+    else:
+        block = (
+            "<table><tr><td><b>Shipping</b> Address:</td></tr>"
+            f"<tr><td>{buyer}</td></tr></table>"
+        )
+
+    result = parse_minimal_location_case(kind, block)
+
+    assert result["zip_and_state"] == "Concord, NH 03301"
 
 
 @pytest.mark.parametrize("kind", ["confirmation", "shipment"])
