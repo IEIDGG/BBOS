@@ -662,6 +662,7 @@ class AppleEmailHandler(OrderEmailHandler):
         "zip_and_state",
         "estimated_delivery",
         "carrier",
+        "shipping_address",
         "date",
     )
 

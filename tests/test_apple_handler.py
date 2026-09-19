@@ -80,6 +80,7 @@ def test_confirmation_uses_apple_criteria_and_returns_processing_order():
             "zip": "03301",
             "zip_and_state": "Concord, NH 03301",
             "estimated_delivery": "Sep 29 – Oct 6",
+            "shipping_address": "",
             "website": "Apple",
         }
     ]
@@ -175,6 +176,7 @@ def test_shipment_creates_order_only_when_tracking_exists():
             "zip": "03301",
             "zip_and_state": "Concord, NH 03301",
             "estimated_delivery": "Sep 24, 2026",
+            "shipping_address": "",
             "carrier": "UPS",
             "website": "Apple",
         }

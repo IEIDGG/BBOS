@@ -17,7 +17,7 @@ class AppleParser:
     )
     _ORDER_LINK_PATH_RE = re.compile(
         r"/(?:[a-z]{2}/|xc/[a-z]{2}/)?vieworder/"
-        r"(?P<order_number>W\d{8,12})(?:/[^/.][^/]*)?/?"
+        r"(?P<order_number>W\d{8,12})(?:/[^/.][^/]*)?(?:/AOS-[A-Za-z0-9-]+)?/?"
     )
     _PRICE_RE = re.compile(r"\$[\d,]+\.\d{2}")
     _CONFIRMATION_MARKERS = ("we're processing your order", "thank you for your order")
@@ -134,6 +134,7 @@ class AppleParser:
             "estimated_delivery": self._delivery(soup),
             "email_address": email_address,
             "order_details_link": self._order_link(soup, order_number),
+            "shipping_address": self._shipping_address(soup),
             "shipping_city": location["shipping_city"],
             "state": location["state"],
             "zip": location["zip"],
@@ -151,6 +152,46 @@ class AppleParser:
 
     def _products(self, soup: BeautifulSoup) -> list[dict[str, str]]:
         products = []
+        for table in soup.select("table.line-item-table"):
+            if any(
+                self._is_non_item_table(parent)
+                for parent in table.parents
+                if parent.name == "table"
+            ):
+                continue
+            title = next(
+                (
+                    self._clean_text(cell.get_text(" "))
+                    for cell in table.select(".product-name-td")
+                    if self._clean_text(cell.get_text(" "))
+                ),
+                "",
+            )
+            if not title:
+                continue
+            qty = table.select_one(".product-quantity")
+            match = re.search(
+                r"\bQty\s*:?\s*(\d+)", qty.get_text(" ") if qty else "", re.I
+            )
+            price = next(
+                (
+                    self._clean_text(cell.get_text(" "))
+                    for cell in table.select(".base-price-td, .total-price")
+                    if self._PRICE_RE.fullmatch(self._clean_text(cell.get_text(" ")))
+                ),
+                "",
+            )
+            product = {
+                "title": title,
+                "quantity": match.group(1) if match else "1",
+                "price": price,
+            }
+            image = table.select_one("img.product-image-img")
+            if image and str(image.get("src", "")).startswith("https://"):
+                product["item_image"] = image["src"]
+            products.append(product)
+        if products:
+            return products
         eligible_tables = []
         for table in soup.find_all("table"):
             classes = " ".join(table.get("class", [])).lower()
@@ -217,22 +258,62 @@ class AppleParser:
         return self._row_value(soup, "Order Total")
 
     def _delivery(self, soup: BeautifulSoup) -> str:
-        for cell in soup.find_all(["td", "th"]):
+        for cell in soup.find_all(["td", "th", "div"]):
             text = self._clean_text(cell.get_text(" "))
             if not text.startswith("Delivers"):
                 continue
-            delivery = self._clean_text(text.removeprefix("Delivers"))
-            return re.sub(r"\s+via\s+.+$", "", delivery, flags=re.IGNORECASE)
+            delivery = self._clean_text(text.removeprefix("Delivers").lstrip(":"))
+            return re.sub(r"\s+(?:via|by)\s+.+$", "", delivery, flags=re.IGNORECASE)
         return ""
 
     def _row_value(self, soup: BeautifulSoup, label: str) -> str:
+        section = self._heading_value(soup, label)
+        if section:
+            return self._clean_text(" ".join(section))
+        for span in soup.select(".order-num span"):
+            if (
+                self._clean_text(span.get_text(" ")).rstrip(":").casefold()
+                == label.casefold()
+            ):
+                sibling = span.find_next_sibling("span")
+                if sibling:
+                    return self._clean_text(sibling.get_text(" "))
         for cell in soup.find_all(["td", "th"]):
             if (
                 self._clean_text(cell.get_text(" ")).rstrip(":").strip().casefold()
                 == label.casefold()
             ):
-                return self._next_cell_text(cell)
+                value = self._next_cell_text(cell)
+                if value:
+                    return value
+                table = cell.find_parent("table", class_="amt-label-table")
+                sibling = table.find_next_sibling("table") if table else None
+                if sibling:
+                    return self._clean_text(sibling.get_text(" "))
         return ""
+
+    def _heading_value(self, soup, label):
+        for heading in soup.find_all(["h2", "h3", "h4"]):
+            if (
+                self._clean_text(heading.get_text(" ")).rstrip(":").casefold()
+                != label.casefold()
+            ):
+                continue
+            values = []
+            for sibling in heading.find_next_siblings():
+                if sibling.name in {"h2", "h3", "h4"}:
+                    break
+                values.extend(
+                    self._clean_text(s)
+                    for s in sibling.stripped_strings
+                    if self._clean_text(s)
+                )
+            return values
+        return []
+
+    def _shipping_address(self, soup):
+        lines = self._heading_value(soup, "Shipping Address")
+        return ", ".join(line for line in lines if not re.search(r"[•*]{3,}", line))
 
     def _next_cell_text(self, cell) -> str:
         sibling = cell.find_next_sibling(["td", "th"])
@@ -372,7 +453,13 @@ class AppleParser:
         )
 
     def _tracking_numbers(self, soup: BeautifulSoup, order_number: str) -> list[str]:
-        tracking_numbers = []
+        tracking_numbers = list(
+            dict.fromkeys(
+                value
+                for value in self._heading_value(soup, "Tracking Number")
+                if self._valid_tracking(value, order_number)
+            )
+        )
         for label in soup.find_all(["td", "th"]):
             if self._clean_text(label.get_text(" ")).lower() != "tracking number:":
                 continue
