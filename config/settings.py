@@ -60,7 +60,7 @@ AMAZON_SEARCH_CRITERIA = {
 APPLE_SEARCH_CRITERIA = {
     "confirmation": {
         "from": '(OR (FROM "orders.apple.com") (FROM "email.apple.com"))',
-        "subject": '(OR (SUBJECT "We\'re processing your order") (SUBJECT "We’re processing your order") (SUBJECT "Thank you for your order"))',
+        "subject": '(OR (SUBJECT "processing your order") (SUBJECT "Thank you for your order"))',
         "date": f"after:{universal_date}",
     },
     "cancellation": {

@@ -88,7 +88,7 @@ def test_confirmation_uses_apple_criteria_and_returns_processing_order():
             "INBOX",
             {
                 "from": '(OR (FROM "orders.apple.com") (FROM "email.apple.com"))',
-                "subject": '(OR (SUBJECT "We\'re processing your order") (SUBJECT "We’re processing your order") (SUBJECT "Thank you for your order"))',
+                "subject": '(OR (SUBJECT "processing your order") (SUBJECT "Thank you for your order"))',
                 "date": "after:2026/09/01",
             },
             True,

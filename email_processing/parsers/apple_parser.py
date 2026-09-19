@@ -143,13 +143,29 @@ class AppleParser:
 
     def _products(self, soup: BeautifulSoup) -> list[dict[str, str]]:
         products = []
+        eligible_tables = []
         for table in soup.find_all("table"):
             classes = " ".join(table.get("class", [])).lower()
             if "item" not in classes and "shipment" not in classes:
                 continue
+            eligible_tables.append(table)
+
+        eligible_table_ids = {id(table) for table in eligible_tables}
+        for table in eligible_tables:
             for quantity_cell in table.find_all(
                 ["td", "th"], string=lambda text: self._clean_text(text) == "Qty"
             ):
+                owner = next(
+                    (
+                        ancestor
+                        for ancestor in quantity_cell.parents
+                        if ancestor.name == "table"
+                        and id(ancestor) in eligible_table_ids
+                    ),
+                    None,
+                )
+                if owner is not table:
+                    continue
                 quantity = self._next_cell_text(quantity_cell)
                 quantity_row = quantity_cell.find_parent("tr")
                 if not quantity_row:
@@ -250,7 +266,7 @@ class AppleParser:
             if same_cell_heading and normalized_text[same_cell_heading.end() :].strip():
                 blocks.append((cell, "same_cell"))
                 continue
-            if normalized_text.rstrip(":").casefold() in {
+            if normalized_text.rstrip(":").strip().casefold() in {
                 "shipping address",
                 "ship to",
             }:

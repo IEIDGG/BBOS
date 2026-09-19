@@ -1,3 +1,4 @@
+import base64
 import re
 from email import policy
 from email.parser import BytesParser
@@ -6,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from config.settings import APPLE_SEARCH_CRITERIA
+from email_processing.connector import EmailConnector
 from email_processing.parsers.apple_parser import AppleParser
 from email_processing.processor import EmailProcessor
 
@@ -32,7 +34,58 @@ def load_email_data(name: str) -> tuple[bytes, bytes]:
 def test_apple_search_criteria_cover_all_email_types():
     assert set(APPLE_SEARCH_CRITERIA) == {"confirmation", "cancellation", "shipped"}
     assert "orders.apple.com" in APPLE_SEARCH_CRITERIA["confirmation"]["from"]
+    assert APPLE_SEARCH_CRITERIA["confirmation"]["subject"] == (
+        '(OR (SUBJECT "processing your order") (SUBJECT "Thank you for your order"))'
+    )
     assert "Your shipment is on its way" in APPLE_SEARCH_CRITERIA["shipped"]["subject"]
+
+
+class DecodedSubjectSearchConnection:
+    def __init__(self, messages: dict[bytes, bytes]):
+        self.messages = messages
+        self.criteria = []
+
+    def select(self, folder):
+        return "OK", [b""]
+
+    def uid(self, command, *args):
+        assert command == "search"
+        criteria = args[-1].decode("ascii")
+        self.criteria.append(criteria)
+        subjects = re.findall(r'SUBJECT "([^"]+)"', criteria)
+        matches = []
+        for uid, raw_message in self.messages.items():
+            subject = BytesParser(policy=policy.default).parsebytes(raw_message)[
+                "Subject"
+            ]
+            if any(needle.casefold() in str(subject).casefold() for needle in subjects):
+                matches.append(uid)
+        return "OK", [b" ".join(matches)]
+
+
+def test_real_connector_finds_decoded_straight_and_curly_confirmation_subjects():
+    curly = base64.b64encode(
+        "We’re processing your order W9999999999".encode("utf-8")
+    ).decode("ascii")
+    connection = DecodedSubjectSearchConnection(
+        {
+            b"11": b"Subject: =?utf-8?q?We're_processing_your_order_W9999999999?=\r\n\r\n",
+            b"12": (f"Subject: =?utf-8?b?{curly}?=\r\n\r\n".encode("ascii")),
+        }
+    )
+    connector = EmailConnector("buyer@example.test", "unused", "gmail")
+    connector.connection = connection
+    connector.processed_uids.clear()
+
+    found, uids = connector.search_emails(
+        "INBOX", APPLE_SEARCH_CRITERIA["confirmation"]
+    )
+
+    assert found is True
+    assert uids == [b"11", b"12"]
+    assert len(connection.criteria) == 1
+    assert 'SUBJECT "processing your order"' in connection.criteria[0]
+    assert "Were processing your order" not in connection.criteria[0]
 
 
 def test_processor_delegates_apple_confirmation_fixture():
@@ -190,6 +243,80 @@ def test_confirmation_excludes_footer_qty_rows_from_products():
             "quantity": "1",
             "price": "$1,299.00",
         }
+    ]
+
+
+@pytest.mark.parametrize(
+    "kind,subject,wrapper_class,item_class",
+    [
+        (
+            "confirmation",
+            "Thank you for your order W9999999999",
+            "shipment-items",
+            "item-content",
+        ),
+        (
+            "shipment",
+            "Your shipment is on its way W9999999997",
+            "item-wrapper",
+            "shipment-content",
+        ),
+    ],
+)
+def test_nested_eligible_item_wrapper_processes_each_physical_line_once(
+    kind, subject, wrapper_class, item_class
+):
+    lines = """
+      <table class="item-content"><tr><td>Widget A</td><td>$10.00</td></tr>
+        <tr><td>Qty</td><td>1</td></tr></table>
+      <table class="item-content"><tr><td>Widget B</td><td>$20.00</td></tr>
+        <tr><td>Qty</td><td>2</td></tr></table>
+    """.replace('class="item-content"', f'class="{item_class}"')
+    html = f"""
+      <p>{subject.rsplit(" W", 1)[0]}</p>
+      <table class="{wrapper_class}"><tr><td>{lines}</td></tr></table>
+    """
+
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        html,
+        subject=subject,
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+
+    assert result["products"] == [
+        {"title": "Widget A", "quantity": "1", "price": "$10.00"},
+        {"title": "Widget B", "quantity": "2", "price": "$20.00"},
+    ]
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+def test_nested_eligible_item_wrapper_keeps_identical_lines_distinct(kind):
+    subject = (
+        "Thank you for your order W9999999999"
+        if kind == "confirmation"
+        else "Your shipment is on its way W9999999997"
+    )
+    html = f"""
+      <p>{subject.rsplit(" W", 1)[0]}</p>
+      <table class="shipment-items"><tr><td>
+        <table class="item-content"><tr><td>Same Widget</td><td>$10.00</td></tr>
+          <tr><td>Qty</td><td>1</td></tr></table>
+        <table class="item-content"><tr><td>Same Widget</td><td>$10.00</td></tr>
+          <tr><td>Qty</td><td>1</td></tr></table>
+      </td></tr></table>
+    """
+
+    result = getattr(AppleParser(), f"parse_{kind}")(
+        html,
+        subject=subject,
+        email_address="buyer@example.test",
+        email_date="2026-09-19",
+    )
+
+    assert result["products"] == [
+        {"title": "Same Widget", "quantity": "1", "price": "$10.00"},
+        {"title": "Same Widget", "quantity": "1", "price": "$10.00"},
     ]
 
 
@@ -563,6 +690,22 @@ def test_formatted_separate_shipping_label_keeps_adjacent_address(kind):
         """<table><tr><td><b>Shipping Address:</b></td>
 <td>Example Buyer<br>123 MAIN STREET<br>Concord NH 03301</td></tr></table>""",
     )
+
+    assert result["zip_and_state"] == "Concord, NH 03301"
+
+
+@pytest.mark.parametrize("kind", ["confirmation", "shipment"])
+@pytest.mark.parametrize("layout", ["adjacent", "next_row"])
+def test_formatted_label_with_external_colon_keeps_shipping_address(kind, layout):
+    label = "<b>Shipping Address</b>:"
+    buyer = "Example Buyer<br>123 MAIN STREET<br>Concord NH 03301"
+    if layout == "adjacent":
+        block = f"<table><tr><td>{label}</td><td>{buyer}</td></tr></table>"
+    else:
+        block = f"<table><tr><td>{label}</td></tr><tr><td>{buyer}</td></tr></table>"
+    assert "<b>Shipping Address</b>:" in block
+
+    result = parse_minimal_location_case(kind, block)
 
     assert result["zip_and_state"] == "Concord, NH 03301"
 
