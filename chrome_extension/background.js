@@ -540,10 +540,6 @@ function buildTrackingFetchGroups(allOrders) {
   for (const order of allOrders) {
     for (const shipment of order.shipments) {
       if (shipment.skipTrackingFetch) continue;
-      if (!(shipment.trackingUrl || (shipment.shipmentId && (shipment.lineItemId || shipment.itemId)))) {
-        continue;
-      }
-
       const target = { order, shipment, shipmentIndex };
       shipmentIndex++;
 
@@ -1035,7 +1031,46 @@ async function fetchTrackingBatch(batchGroups) {
   return { timedOutCount };
 }
 
+async function discoverMissingTracking(allOrders) {
+  const pending = allOrders.filter(order => !order.detailsScanned
+    && (order.shipments || []).some(shipment => !buildTrackingUrl(order, shipment)));
+  if (!pending.length) return;
+  log(`Opening details for ${pending.length} orders to find hidden shipment tracking...`, 'info');
+  for (let start = 0; start < pending.length && !scrapeState.stopped; start += 4) {
+    await Promise.all(pending.slice(start, start + 4).map(async (order) => {
+      let tabId = null;
+      try {
+        tabId = await openTab(buildOrderDetailUrl(order.orderId));
+        await waitForTabReady();
+        const result = await injectAndRun(tabId, 'order_detail_scraper.js');
+        const detail = result?.orders?.find(entry => entry.orderId === order.orderId);
+        if (result?.issue || !detail?.shipments?.length) {
+          throw new Error(result?.issue || 'No matching order details found');
+        }
+        // Do not replace the list with a partial or unrelated detail result.
+        const asins = new Set(detail.shipments.map(shipment => shipment.asin).filter(Boolean));
+        if (order.shipments.some(shipment => shipment.asin && !asins.has(shipment.asin))) {
+          throw new Error('Order details did not contain all products from the list');
+        }
+        order.shipments = detail.shipments;
+        order.detailsScanned = true;
+        dedupeOrderShipments(order);
+        log(`${order.orderId}: found ${order.shipments.length} shipment items on order details`, 'info');
+      } catch (err) {
+        scrapeState.extractionIncomplete = true;
+        log(`${order.orderId}: could not discover hidden tracking (${err.message})`, 'error');
+      } finally {
+        if (tabId) await closeTab(tabId);
+      }
+    }));
+  }
+  scrapeState.shipments = allOrders.reduce((sum, order) => sum + order.shipments.length, 0);
+  stats();
+}
+
 async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbCache = null) {
+  await discoverMissingTracking(allOrders);
+  if (scrapeState.stopped) return;
   if (dbCache) {
     const skipped = applyDbCacheToOrders(allOrders, dbCache);
     if (skipped) {

@@ -542,6 +542,7 @@
       shippingAddress,
       zipCode: extractZip(shippingAddress),
       shipments: extractShipments(),
+      detailsScanned: true,
     };
 
     if (!order.orderId) {
