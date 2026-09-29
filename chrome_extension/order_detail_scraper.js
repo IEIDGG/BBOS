@@ -207,7 +207,8 @@
       const host = url.hostname.replace(/\.$/, '').toLowerCase();
       if (!/(?:^|\.)amazon\.com$/i.test(host)) return false;
       if (url.pathname.includes('/your-orders/pop')) return false;
-      return url.pathname.includes('/gp/your-account/ship-track') || url.pathname.includes('ship-track');
+      return url.pathname.includes('/gp/your-account/ship-track') || url.pathname.includes('ship-track')
+        || url.pathname === '/progress-tracker/package';
     } catch {
       return false;
     }
@@ -234,7 +235,7 @@
     const links = [];
     const seen = new Set();
 
-    for (const link of root.querySelectorAll('a[href*="ship-track"]')) {
+    for (const link of root.querySelectorAll('a[href*="ship-track"], a[href*="/progress-tracker/package"]')) {
       const parsed = parseShipTrackLink(link.href);
       if (!parsed) continue;
       const key = `${parsed.shipmentId}|${parsed.itemId}|${parsed.trackingUrl}`;
@@ -247,7 +248,7 @@
   }
 
   function extractTrackingLink(container) {
-    for (const link of container.querySelectorAll('a[href*="ship-track"]')) {
+    for (const link of container.querySelectorAll('a[href*="ship-track"], a[href*="/progress-tracker/package"]')) {
       const parsed = parseShipTrackLink(link.href);
       if (parsed?.trackingUrl) return parsed.trackingUrl;
     }
@@ -256,7 +257,7 @@
 
   function extractShipmentIds(container) {
     const ids = {};
-    const candidates = Array.from(container.querySelectorAll('a[href*="ship-track"], a[href*="shipmentId"], a[href*="lineItemId"], a[href*="itemId"]'));
+    const candidates = Array.from(container.querySelectorAll('a[href*="ship-track"], a[href*="/progress-tracker/package"], a[href*="shipmentId"], a[href*="lineItemId"], a[href*="itemId"]'));
 
     for (const link of candidates) {
       const parsed = parseShipTrackLink(link.href);

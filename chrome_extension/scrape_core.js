@@ -22,7 +22,8 @@ function isShipTrackUrl(url) {
   try {
     const parsed = new URL(url);
     if (parsed.pathname.includes('/your-orders/pop')) return false;
-    return parsed.pathname.includes('/gp/your-account/ship-track') || parsed.pathname.includes('ship-track');
+    return parsed.pathname.includes('/gp/your-account/ship-track') || parsed.pathname.includes('ship-track')
+      || parsed.pathname === '/progress-tracker/package';
   } catch {
     return false;
   }

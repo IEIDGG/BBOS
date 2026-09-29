@@ -11,6 +11,25 @@ assert.strictEqual(core.isShipTrackUrl('https://www.amazon.com/gp/your-account/s
 assert.strictEqual(core.isShipTrackUrl('http://www.amazon.com/gp/your-account/ship-track?orderId=1'), false);
 assert.strictEqual(core.isShipTrackUrl('https://evilamazon.com/gp/your-account/ship-track?orderId=1'), false);
 
+// Delivered orders can link directly to the new tracker without an itemId.
+const progressUrl = 'https://www.amazon.com/progress-tracker/package?orderId=111-1111111-1111111&shipmentId=shipmentA&packageIndex=0&vt=NOTIFICATIONS';
+assert.strictEqual(core.isShipTrackUrl(progressUrl), true);
+const normalizedProgress = new URL(core.normalizeTrackingUrl(progressUrl));
+assert.strictEqual(normalizedProgress.pathname, '/progress-tracker/package');
+assert.strictEqual(normalizedProgress.searchParams.get('shipmentId'), 'shipmentA');
+assert.strictEqual(normalizedProgress.searchParams.get('packageIndex'), '0');
+for (const invalid of [
+  progressUrl.replace('https:', 'http:'),
+  progressUrl.replace('www.amazon.com', 'amazon.com.example'),
+  progressUrl.replace('/progress-tracker/package', '/progress-tracker/package-other'),
+  'https://www.amazon.com/your-orders/pop?shipmentId=shipmentA',
+]) {
+  assert.strictEqual(core.isShipTrackUrl(invalid), false);
+  assert.strictEqual(core.normalizeTrackingUrl(invalid), '');
+}
+
+require('./test_tracking_links.js');
+
 const sameAsinDifferentShipments = [
   { order_id: '111', asin: 'B00A', shipment_id: 's1', line_item_id: 'l1', quantity: '1', tracking_number: '1ZAAA' },
   { order_id: '111', asin: 'B00A', shipment_id: 's2', line_item_id: 'l2', quantity: '1', tracking_number: '1ZBBB' },
