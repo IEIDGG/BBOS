@@ -467,7 +467,7 @@
     }
   }
 
-  function getShipmentIdentity(shipment) {
+  function getLocalShipmentIdentity(shipment) {
     if (shipment.asin) {
       const itemId = shipment.itemId || shipment.lineItemId || '';
       const shipmentPart = shipment.shipmentId || shipment.packageId || '';
@@ -519,14 +519,7 @@
     if (typeof getShipmentIdentity === 'function') {
       return getShipmentIdentity({ orderId: '' }, shipment);
     }
-    return [
-      shipment.shipmentId || '',
-      shipment.packageId || '',
-      shipment.itemId || '',
-      shipment.lineItemId || '',
-      shipment.asin || '',
-      shipment.productTitle || '',
-    ].join('|');
+    return getLocalShipmentIdentity(shipment);
   }
 
   function extractSingleItemShipment(itemRoot, container, inheritedStatus) {
@@ -660,9 +653,9 @@
 
       const productShipments = extractProductShipments(container, status);
       for (const shipment of productShipments) {
-        const key = getShipmentIdentity(shipment);
+        const key = shipmentIdentityKey(shipment);
         if (seen.has(key)) {
-          const existing = shipments.find(item => getShipmentIdentity(item) === key);
+          const existing = shipments.find(item => shipmentIdentityKey(item) === key);
           if (existing) mergeShipment(existing, shipment);
           continue;
         }

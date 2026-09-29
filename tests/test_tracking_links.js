@@ -84,3 +84,19 @@ assert.strictEqual(fallbackUrl.searchParams.get('orderId'), orderId);
 assert.strictEqual(fallbackUrl.searchParams.get('shipmentId'), 'shipmentC');
 assert.strictEqual(fallbackUrl.searchParams.get('itemId'), 'itemC');
 console.log('tracking link extraction and queue tests passed');
+
+// The list scraper must not shadow the shared two-argument identity helper
+// with a one-argument local helper, collapsing all items to the same key.
+const listSource = fs.readFileSync(path.join(root, 'scraper.js'), 'utf8');
+for (const sharedCore of [core, {}]) {
+  const helpers = vm.runInNewContext(listSource.replace('return extractOrdersFromPage();',
+    'return { shipmentIdentityKey };'), { ...sharedCore, URL });
+  assert.notStrictEqual(
+    helpers.shipmentIdentityKey({ asin: 'B000000001', shipmentId: 'first', lineItemId: 'shareds' }),
+    helpers.shipmentIdentityKey({ asin: 'B000000001', shipmentId: 'second', lineItemId: 'shareds' }),
+    'Different shipments of the same product must survive list extraction');
+  assert.notStrictEqual(
+    helpers.shipmentIdentityKey({ asin: 'B000000001' }),
+    helpers.shipmentIdentityKey({ asin: 'B000000002' }),
+    'Different products must survive list extraction');
+}
