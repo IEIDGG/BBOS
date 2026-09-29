@@ -740,15 +740,6 @@ function filterOrdersByZip(orders, zipFilters) {
   return { keptOrders, skipped };
 }
 
-function filterCancelledOrdersByZip(cancelledOrders, zipFilters) {
-  if (!zipFilters.length) return cancelledOrders;
-
-  return cancelledOrders.filter((order) => {
-    order.zipCode = normalizeZipCode(order.zipCode || extractZipCodesFromText(order.shippingAddress || '')[0] || '');
-    return zipMatchesFilter(order, zipFilters);
-  });
-}
-
 function mergeCancelledOrders(target, incoming) {
   const seen = new Set(target.map((order) => order.orderId));
   for (const order of incoming) {
@@ -758,41 +749,66 @@ function mergeCancelledOrders(target, incoming) {
   }
 }
 
-async function uploadCancelledOrdersToApi(cancelledOrders, amazonEmail) {
-  if (!cancelledOrders.length) return;
+async function uploadCancelledOrdersToApi(cancelledOrders) {
+  if (!cancelledOrders.length || scrapeState.stopped) return;
 
-  const payload = cancelledOrders.map((order) => buildCancelledPayload(order, amazonEmail));
+  // Cancellation cards omit addresses. Match order numbers against the current
+  // user's database and use update-only requests so unknown orders stay absent.
+  let existingOrders;
+  try {
+    const result = await apiGet('/api/orders/amazon?refresh=true');
+    if (!Array.isArray(result.orders)) throw new Error('Invalid order lookup response');
+    existingOrders = result.orders;
+  } catch (err) {
+    scrapeState.failed += cancelledOrders.length;
+    stats();
+    log(`Could not sync cancellations: ${err.message}`, 'error');
+    return;
+  }
 
-  log(`Sending ${payload.length} cancelled order${payload.length === 1 ? '' : 's'} to API...`, 'info');
+  const rowsByOrderId = new Map();
+  for (const row of existingOrders) {
+    const orderId = String(row.order_id || '').trim();
+    if (!orderId || !row.id) continue;
+    if (!rowsByOrderId.has(orderId)) rowsByOrderId.set(orderId, new Set());
+    rowsByOrderId.get(orderId).add(row.id);
+  }
 
-  const batchSize = 50;
-  for (let i = 0; i < payload.length; i += batchSize) {
+  for (const order of cancelledOrders) {
     if (scrapeState.stopped) break;
-    const batch = payload.slice(i, i + batchSize);
-
-    try {
-      const result = await apiPost('/api/orders/amazon/scrape', { orders: batch });
-      const updated = (result.inserted || 0) + (result.updated || 0);
-      scrapeState.sent += updated;
-      scrapeState.failed += (result.failed || 0);
+    const orderId = String(order.orderId || '').trim();
+    const rowIds = rowsByOrderId.get(orderId);
+    if (!rowIds?.size) {
+      log(`${orderId}: cancelled, not in database (skipped)`, 'info');
+      continue;
+    }
+    for (const rowId of rowIds) {
+      if (scrapeState.stopped) break;
+      try {
+        const result = await authorizedFetch(`/api/orders/amazon/${encodeURIComponent(rowId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_status: 'Cancelled', shipment_status: 'Cancelled' }),
+        });
+        if (!result.success) throw new Error(result.error || 'Cancellation update failed');
+        scrapeState.sent++;
+        log(`${orderId}: marked existing database row cancelled`, 'success');
+      } catch (err) {
+        scrapeState.failed++;
+        log(`${orderId}: cancellation update failed: ${err.message}`, 'error');
+      }
       stats();
-      log(`Cancelled batch ${Math.floor(i / batchSize) + 1}: ${result.inserted || 0} inserted, ${result.updated || 0} updated, ${result.failed || 0} failed`, result.failed ? 'error' : 'success');
-    } catch (err) {
-      scrapeState.failed += batch.length;
-      stats();
-      log(`Cancelled API error (batch ${Math.floor(i / batchSize) + 1}): ${err.message}`, 'error');
     }
   }
 }
 
-function reportCancelledOrders(cancelledOrders, zipFilters) {
-  const filtered = filterCancelledOrdersByZip(cancelledOrders, zipFilters);
-  for (const order of filtered) {
-    log(`${order.orderId}: cancelled (reporting to server)`, 'info');
+function reportCancelledOrders(cancelledOrders) {
+  for (const order of cancelledOrders) {
+    log(`${order.orderId}: cancelled (checking database)`, 'info');
   }
-  scrapeState.cancelled = filtered.length;
+  scrapeState.cancelled = cancelledOrders.length;
   stats();
-  return filtered;
+  return cancelledOrders;
 }
 
 function buildOrderDetailUrl(orderId) {
@@ -1132,7 +1148,7 @@ async function runSingleOrderScrape(config) {
     let cancelledToReport = [];
 
     if (result.cancelledOrders?.length) {
-      cancelledToReport = reportCancelledOrders(result.cancelledOrders, zipFilters);
+      cancelledToReport = reportCancelledOrders(result.cancelledOrders);
     }
 
     for (const order of allOrders) {
@@ -1186,7 +1202,7 @@ async function runSingleOrderScrape(config) {
     }
 
     if (cancelledToReport.length) {
-      await uploadCancelledOrdersToApi(cancelledToReport, amazonEmail);
+      await uploadCancelledOrdersToApi(cancelledToReport);
     }
 
     progress(100, 'Done!');
@@ -1306,13 +1322,12 @@ async function runScrape(config, checkpoint = null) {
       }
 
       let pageOrders = result.orders || [];
-      let pageCancelled = result.cancelledOrders || [];
+      const pageCancelled = result.cancelledOrders || [];
 
       if (zipFilters.length) {
         const { keptOrders, skipped } = filterOrdersByZip(pageOrders, zipFilters);
         pageOrders = keptOrders;
         totalZipSkipped += skipped;
-        pageCancelled = filterCancelledOrdersByZip(pageCancelled, zipFilters);
       }
 
       mergeCancelledOrders(allCancelledOrders, pageCancelled);
@@ -1371,7 +1386,7 @@ async function runScrape(config, checkpoint = null) {
       log(`Removed ${finalDuplicateShipments} duplicate shipment${finalDuplicateShipments === 1 ? '' : 's'} before tracking`, 'info');
     }
 
-    const cancelledToReport = reportCancelledOrders(allCancelledOrders, zipFilters);
+    const cancelledToReport = reportCancelledOrders(allCancelledOrders);
 
     if (allOrders.length === 0 && !cancelledToReport.length) {
       progress(100, 'No orders found');
@@ -1400,7 +1415,7 @@ async function runScrape(config, checkpoint = null) {
     }
 
     if (cancelledToReport.length) {
-      await uploadCancelledOrdersToApi(cancelledToReport, amazonEmail);
+      await uploadCancelledOrdersToApi(cancelledToReport);
     }
 
     progress(100, 'Done!');
