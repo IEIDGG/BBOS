@@ -362,9 +362,6 @@ $('scanSingleOrderBtn').addEventListener('click', async () => {
     action: 'start_single_order_scrape',
     config: {
       orderId: pendingSingleOrderId,
-      fetchTracking: $('fetchTracking').checked,
-      useDbCache: $('useDbCache').checked,
-      zipFilters: $('zipFilters').value,
     },
   });
 });

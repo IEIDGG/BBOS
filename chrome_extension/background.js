@@ -1088,8 +1088,7 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
 }
 
 async function runSingleOrderScrape(config) {
-  const { orderId, fetchTracking, useDbCache } = config;
-  const zipFilters = normalizeZipFilters(config.zipFilters);
+  const { orderId } = config;
 
   if (!orderId) {
     scrapeDone('No order ID provided.', false);
@@ -1101,7 +1100,6 @@ async function runSingleOrderScrape(config) {
   startScrapeKeepAlive();
   openLogTab();
 
-  let dbCache = null;
   let tabId = null;
 
   try {
@@ -1110,10 +1108,6 @@ async function runSingleOrderScrape(config) {
       scrapeDone('Not authenticated. Please sign in first.', false);
       scrapeState.running = false;
       return;
-    }
-
-    if (useDbCache) {
-      dbCache = await loadDbShipmentCache();
     }
 
     const amazonEmail = await detectAmazonAccountEmail();
@@ -1155,14 +1149,6 @@ async function runSingleOrderScrape(config) {
       dedupeOrderShipments(order);
     }
 
-    if (zipFilters.length && allOrders.length) {
-      const { keptOrders, skipped } = filterOrdersByZip(allOrders, zipFilters);
-      allOrders = keptOrders;
-      if (skipped) {
-        log(`Order ${orderId} did not match ZIP filter`, 'info');
-      }
-    }
-
     scrapeState.orders = allOrders.length;
     scrapeState.shipments = allOrders.reduce((n, o) => n + o.shipments.length, 0);
     stats();
@@ -1176,7 +1162,7 @@ async function runSingleOrderScrape(config) {
 
     if (!allOrders.length && !cancelledToReport.length) {
       progress(100, 'No matching order');
-      scrapeDone(`Order ${orderId} did not match the selected ZIP filters.`, false);
+      scrapeDone(`Could not extract order ${orderId}.`, false);
       scrapeState.running = false;
       return;
     }
@@ -1185,8 +1171,9 @@ async function runSingleOrderScrape(config) {
       log(`Extracted ${allOrders.length} order with ${scrapeState.shipments} shipments`, 'success');
     }
 
-    if (fetchTracking && allOrders.length) {
-      await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null);
+    // A manually selected order always gets a fresh tracking lookup.
+    if (allOrders.length) {
+      await fetchTrackingForOrders(allOrders, 50, 80, null);
     }
 
     if (scrapeState.stopped) {

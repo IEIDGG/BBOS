@@ -30,7 +30,9 @@
     {
       "matches": [
         "https://www.amazon.com/your-orders/order-details*",
-        "https://amazon.com/your-orders/order-details*"
+        "https://amazon.com/your-orders/order-details*",
+        "https://www.amazon.com/gp/your-account/order-details*",
+        "https://amazon.com/gp/your-account/order-details*"
       ],
       "js": [
         "order_page.js"

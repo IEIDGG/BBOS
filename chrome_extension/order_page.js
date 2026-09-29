@@ -1,5 +1,5 @@
 (() => {
-  const ORDER_DETAILS_RE = /\/your-orders\/order-details/i;
+  const ORDER_DETAILS_RE = /^\/(?:your-orders|gp\/your-account)\/order-details(?:\/|$)/i;
   const ORDER_ID_PARAM = 'orderID';
 
   function getOrderId() {
