@@ -7,17 +7,17 @@ function link(startIndex, extra = {}) {
   return { textContent: '', href: `https://www.amazon.com/your-orders/orders?orderFilter=year-2026&startIndex=${startIndex}`,
     getAttribute(name) { return extra[name] || null; }, ...extra };
 }
-function extract({ links = [], old = [], roots = [], start = 0 }) {
+function extract({ links = [], old = [], roots = [], start = 0, href }) {
   const document = {
     querySelector: () => null,
     querySelectorAll(selector) {
       if (selector === '.a-pagination li, .a-pagination a, [aria-label*="page" i]') return old;
-      if (selector === 'a[href*="startIndex="]') return links;
+      if (selector.includes('a[href*="startIndex="]')) return links;
       return roots;
     },
   };
   return vm.runInNewContext(source.replace('return extractOrdersFromPage();', 'return extractMaxPage();'), {
-    ...core, document, URL, location: { href: `https://www.amazon.com/your-orders/orders?orderFilter=year-2026&startIndex=${start}` },
+    ...core, document, URL, location: { href: href || `https://www.amazon.com/your-orders/orders?orderFilter=year-2026&startIndex=${start}` },
   });
 }
 assert.strictEqual(extract({ links: [link(10), link(150)] }), 16, 'Last-page URL works without the old CSS class');
@@ -31,6 +31,10 @@ const root = { textContent: 'Previous 1 2 3 4 5 6 7 8 … 16 Next', querySelecto
   { textContent: 'Next', getAttribute: name => name === 'aria-label' ? 'Page 16' : null },
 ] };
 assert.strictEqual(extract({ roots: [root] }), 16, 'Read page labels in modern pagination controls');
+const modern = 'https://www.amazon.com/your-orders/orders?timeFilter=year-2026';
+assert.strictEqual(extract({ href: modern, links: [link(0, { href: modern + '&page=15' })] }), 16);
+assert.strictEqual(extract({ href: modern + '&page=15' }), 16);
+assert.strictEqual(extract({ href: modern, links: [link(0, { href: modern.replace('2026', '2025') + '&page=99' })] }), 1);
 console.log('order pagination tests passed');
 
 // Run the actual list-scan loop with a sliding pager that reveals only the
@@ -45,7 +49,7 @@ async function traverse(limit) {
     zipFilters: ['03063'], totalZipSkipped: 0, allOrders: [], allCancelledOrders: [],
     scrapeState: { stopped: false },
     progress() {}, log() {}, stats() {}, snapshot: () => ({}),
-    async openTab(url) { const page = Number(new URL(url).searchParams.get('startIndex')) / 10 + 1; visited.push(page); return page; },
+    async openTab(url) { const params = new URL(url).searchParams; assert.strictEqual(params.get('timeFilter'), 'year-2026'); assert.ok(params.has('page')); const page = Number(params.get('page')) + 1; visited.push(page); return page; },
     async closeTab() {}, async waitForTabReady() {}, async sleep() {},
     async persistScrapeCheckpoint() {}, randomOrderPageDelay: () => 0,
     async injectAndRun(page) { return { orders: [{ orderId: `order-${page}` }], cancelledOrders: [], maxPage: Math.min(page + 1, 16) }; },

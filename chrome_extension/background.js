@@ -1314,8 +1314,7 @@ async function runScrape(config, checkpoint = null) {
       if (scrapeState.stopped) break;
       if (maxPages > 0 && page > maxPages) break;
 
-      const startIndex = (page - 1) * 10;
-      const url = `https://www.amazon.com/your-orders/orders?orderFilter=${yearFilter}&startIndex=${startIndex}`;
+      const url = `https://www.amazon.com/your-orders/orders?timeFilter=${encodeURIComponent(yearFilter)}&page=${page - 1}`;
 
       progress(0, `Loading page ${page}...`);
       log(`Scraping page ${page}...`);
