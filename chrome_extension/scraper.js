@@ -690,16 +690,39 @@
 
   function extractMaxPage() {
     let maxPage = 1;
-    const paginationText = cleanText(document.querySelector('.a-pagination')?.textContent || '');
-    const pageLinks = document.querySelectorAll('.a-pagination li, .a-pagination a, [aria-label*="page" i]');
-
-    for (const el of pageLinks) {
-      const num = parseInt(cleanText(el.textContent || el.getAttribute('aria-label')), 10);
-      if (!Number.isNaN(num) && num > maxPage) maxPage = num;
+    const currentUrl = new URL(location.href);
+    const currentFilter = currentUrl.searchParams.get('orderFilter');
+    const pageFromUrl = (href) => {
+      try {
+        const url = new URL(href, location.href);
+        if (url.protocol !== 'https:' || !/(?:^|\.)amazon\.com$/i.test(url.hostname)) return;
+        if (!/^\/(?:your-orders\/orders|gp\/your-account\/order-history)(?:\/|$)/i.test(url.pathname)) return;
+        const filter = url.searchParams.get('orderFilter');
+        if (filter && currentFilter && filter !== currentFilter) return;
+        const offset = url.searchParams.get('startIndex');
+        if (offset === null || !/^\d+$/.test(offset)) return;
+        const index = Number(offset);
+        if (Number.isSafeInteger(index)) maxPage = Math.max(maxPage, Math.floor(index / 10) + 1);
+      } catch {
+      }
+    };
+    pageFromUrl(location.href);
+    // Order links remain reliable when Amazon changes pagination CSS or shows
+    // only a sliding range of page buttons. Ignore unrelated carousel links.
+    for (const link of document.querySelectorAll('a[href*="startIndex="]')) {
+      pageFromUrl(link.href);
     }
-
-    const textMatch = paginationText.match(/Page\s+\d+\s+of\s+(\d+)/i);
-    if (textMatch) maxPage = Math.max(maxPage, parseInt(textMatch[1], 10));
+    const roots = document.querySelectorAll('.a-pagination, .s-pagination-container, [class*="pagination"], [aria-label*="pagination" i]');
+    for (const root of roots) {
+      const total = cleanText(root.textContent).match(/Page\s+\d+\s+of\s+(\d+)/i);
+      if (total) maxPage = Math.max(maxPage, Number(total[1]));
+      for (const el of root.querySelectorAll('a, button, li, [aria-label]')) {
+        for (const value of [el.textContent, el.getAttribute('aria-label')]) {
+          const match = cleanText(value).match(/^(?:page\s+)?(\d+)$/i);
+          if (match) maxPage = Math.max(maxPage, Number(match[1]));
+        }
+      }
+    }
     return maxPage;
   }
 

@@ -1349,8 +1349,10 @@ async function runScrape(config, checkpoint = null) {
         break;
       }
 
-      if (page === 1) {
-        totalPages = result.maxPage || 1;
+      // Later pages can reveal additional links in Amazon's sliding pager.
+      const previousTotal = totalPages;
+      totalPages = Math.max(totalPages, page, result.maxPage || 1);
+      if (page === 1 || totalPages > previousTotal) {
         const effectivePages = maxPages > 0 ? Math.min(maxPages, totalPages) : totalPages;
         log(`Found ${totalPages} total pages, will scrape ${effectivePages}`, 'info');
       }
