@@ -394,10 +394,14 @@
   }
 
   function findShipmentContainers() {
-    const purchasedItems = document.querySelector('[data-component="purchasedItems"]');
-    if (purchasedItems) {
-      const itemRows = Array.from(purchasedItems.querySelectorAll(':scope > .a-row > .a-fixed-left-grid, :scope > .a-fixed-left-grid'));
-      if (itemRows.length) return itemRows;
+    const purchasedBlocks = Array.from(document.querySelectorAll('[data-component="purchasedItems"]'));
+    if (purchasedBlocks.length) {
+      // Amazon repeats purchasedItems for each delivery, including split units
+      // of the same product. Keep every block, even if its row layout varies.
+      return purchasedBlocks.flatMap((block) => {
+        const rows = Array.from(block.querySelectorAll(':scope > .a-row > .a-fixed-left-grid, :scope > .a-fixed-left-grid'));
+        return rows.length ? rows : [block];
+      });
     }
 
     const selectors = [

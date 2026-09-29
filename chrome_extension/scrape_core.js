@@ -62,7 +62,9 @@ function matchingShipTrack(ids, links) {
       entry.shipmentId === shipmentId
       && (!itemId || !entry.itemId || entry.itemId === itemId)
     ));
-    if (match) return match;
+    // Item IDs can be reused across split shipments. A known shipment must
+    // never inherit another shipment's tracking URL through the item fallback.
+    return match || null;
   }
   if (itemId) {
     const match = list.find((entry) => entry.itemId === itemId);

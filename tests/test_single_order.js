@@ -49,6 +49,7 @@ let trackingCalls = 0;
 let uploaded;
 let completed;
 const context = vm.createContext({
+  scrapeOutcomeSuccess: require('../chrome_extension/scrape_core.js').scrapeOutcomeSuccess,
   normalizeZipFilters: () => ['03063'],
   clearScrapeLogs() {}, startScrapeKeepAlive() {}, stopScrapeKeepAlive() {}, openLogTab() {},
   log() {}, progress() {}, stats() {}, dedupeOrderShipments() {},

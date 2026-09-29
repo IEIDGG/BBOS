@@ -364,12 +364,14 @@ function buildDbShipmentCache(orders) {
   const cache = new Map();
   for (const row of orders || []) {
     const tracking = normalizeTrackingList(row.tracking_number);
-    if (!tracking.length) continue;
     const key = buildDbCacheKey(row.order_id, row.asin, row.product_name);
     if (!key) continue;
-    if (!cache.has(key)) {
+    if (cache.has(key)) {
+      // More than one database row for this product is ambiguous.
+      cache.set(key, null);
+    } else {
       cache.set(key, {
-        tracking_number: tracking[0],
+        tracking_number: tracking.length === 1 ? tracking[0] : '',
         carrier: row.carrier || '',
         order_status: row.order_status || '',
         shipment_status: row.shipment_status || '',
@@ -397,6 +399,10 @@ function applyDbCacheToShipment(order, shipment, cache) {
   const key = buildDbCacheKey(order.orderId, shipment.asin, shipment.productTitle);
   const cached = cache.get(key);
   if (!cached?.tracking_number) return false;
+  // The API caches by product, not shipment. Split units need fresh tracking.
+  const sameProduct = (order.shipments || []).filter((entry) =>
+    buildDbCacheKey(order.orderId, entry.asin, entry.productTitle) === key);
+  if (sameProduct.length > 1) return false;
 
   shipment.trackingNumber = cached.tracking_number;
   if (cached.carrier && !shipment.carrier) shipment.carrier = cached.carrier;
@@ -845,8 +851,47 @@ function getShipmentTotalOwed(order, shipment) {
   return '';
 }
 
+function aggregateProductPayload(rows) {
+  // The scrape API upserts by order + ASIN. Sending split shipments as separate
+  // writes overwrites that product's earlier tracking, quantity and cost.
+  const products = new Map();
+  for (const row of rows) {
+    const key = row.asin ? `${row.order_id}|${row.asin.toUpperCase()}` : payloadLineItemKey(row);
+    if (!products.has(key)) products.set(key, []);
+    products.get(key).push(row);
+  }
+  return Array.from(products.values(), (group) => {
+    if (group.length === 1) return group[0];
+    const merged = { ...group[0] };
+    merged.quantity = String(group.reduce((sum, row) => sum + (parseInt(row.quantity, 10) || 1), 0));
+    const trackingLists = group.map(row => normalizeTrackingList(row.tracking_number));
+    if (trackingLists.every(list => list.length)) {
+      merged.tracking_number = [...new Set(trackingLists.flat())];
+    } else {
+      // The API replaces arrays. A partial refresh must not erase an already
+      // saved tracking number for a shipment that failed to load this time.
+      delete merged.tracking_number;
+      scrapeState.extractionIncomplete = true;
+      log(`${merged.order_id} ${merged.asin}: incomplete shipment tracking; keeping saved tracking unchanged. Rescan this order to retry.`, 'error');
+    }
+    const amounts = group.map(row => parseMoneyAmount(row.total_owed));
+    if (amounts.every(amount => amount !== null)) {
+      merged.total_owed = formatMoneyAmount(amounts.reduce((sum, amount) => sum + amount, 0));
+    } else {
+      delete merged.total_owed;
+    }
+    // No single shipment identity, carrier or status describes a mixed group.
+    delete merged.shipment_id;
+    delete merged.line_item_id;
+    for (const field of ['carrier', 'order_status', 'shipment_status']) {
+      if (!group.every(row => row[field] === merged[field])) delete merged[field];
+    }
+    return compactScrapeRow(merged);
+  });
+}
+
 async function uploadOrdersToApi(allOrders, amazonEmail) {
-  const payload = dedupePayloadLineItems(allOrders.flatMap((order) => {
+  const payload = aggregateProductPayload(dedupePayloadLineItems(allOrders.flatMap((order) => {
     return order.shipments.map((shipment) => {
       const rawStatus = shipment.status || '';
       return compactScrapeRow({
@@ -867,7 +912,7 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
         email_address: amazonEmail,
       });
     });
-  }));
+  })));
 
   log(`Sending ${payload.length} line items from ${allOrders.length} orders...`, 'info');
 
@@ -1198,9 +1243,11 @@ async function runSingleOrderScrape(config) {
     if (cancelledToReport.length) parts.push(`${cancelledToReport.length} cancelled`);
     parts.push(`${scrapeState.sent} saved`);
     if (scrapeState.failed) parts.push(`${scrapeState.failed} failed`);
-    const doneText = `Complete: ${parts.join(', ')}`;
-    scrapeDone(doneText, scrapeState.failed === 0);
-    chrome.storage.local.remove('pendingSingleOrderId');
+    const complete = scrapeOutcomeSuccess(scrapeState);
+    if (scrapeState.extractionIncomplete) parts.push('incomplete tracking; rescan to retry');
+    const doneText = `${complete ? 'Complete' : 'Incomplete'}: ${parts.join(', ')}`;
+    scrapeDone(doneText, complete);
+    if (complete) chrome.storage.local.remove('pendingSingleOrderId');
   } catch (err) {
     scrapeDone(`Error: ${err.message}`, false);
   } finally {
