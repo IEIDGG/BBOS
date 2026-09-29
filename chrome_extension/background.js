@@ -1048,9 +1048,20 @@ async function discoverMissingTracking(allOrders) {
           throw new Error(result?.issue || 'No matching order details found');
         }
         // Do not replace the list with a partial or unrelated detail result.
-        const asins = new Set(detail.shipments.map(shipment => shipment.asin).filter(Boolean));
-        if (order.shipments.some(shipment => shipment.asin && !asins.has(shipment.asin))) {
-          throw new Error('Order details did not contain all products from the list');
+        const quantitiesByAsin = (shipments) => {
+          const totals = new Map();
+          for (const shipment of shipments) {
+            if (!shipment.asin) continue;
+            const asin = shipment.asin.toUpperCase();
+            totals.set(asin, (totals.get(asin) || 0) + (parseInt(shipment.quantity, 10) || 1));
+          }
+          return totals;
+        };
+        const detailTotals = quantitiesByAsin(detail.shipments);
+        for (const [asin, quantity] of quantitiesByAsin(order.shipments)) {
+          if ((detailTotals.get(asin) || 0) < quantity) {
+            throw new Error('Order details did not contain all product quantities from the list');
+          }
         }
         order.shipments = detail.shipments;
         order.detailsScanned = true;

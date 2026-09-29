@@ -11,6 +11,7 @@ const old = { orderId: 'old', shipments: [{ asin: 'SAME', productTitle: 'Laptop'
 const recent = { orderId: 'recent', shipments: [{ asin: 'OTHER', shipmentId: 'recent-shipment', itemId: 'item' }] };
 const single = { orderId: 'single', detailsScanned: true, shipments: [{ asin: 'SINGLE' }] };
 const failed = { orderId: 'failed', shipments: [{ asin: 'KEEP' }] };
+const splitPartial = { orderId: 'splitPartial', shipments: [{ asin: 'KEEP1', quantity: 2 }] };
 const partial = { orderId: 'partial', shipments: [{ asin: 'KEEP1' }, { asin: 'KEEP2' }] };
 const ctx = vm.createContext({ ...core, URL, URLSearchParams,
   normalizeTrackingUrlForKey: value => value, scrapeState: { stopped: false },
@@ -21,7 +22,7 @@ const ctx = vm.createContext({ ...core, URL, URLSearchParams,
   async injectAndRun(id, file) {
     assert.strictEqual(file, 'order_detail_scraper.js');
     if (id === 'failed') throw new Error('Amazon verification required');
-    if (id === 'partial') return { orders: [{ orderId: id, shipments: [{ asin: 'KEEP1' }] }] };
+    if (id === 'partial' || id === 'splitPartial') return { orders: [{ orderId: id, shipments: [{ asin: 'KEEP1' }] }] };
     return { orders: [{ orderId: id, shipments: [
       { asin: 'SAME', quantity: 1, shipmentId: 'first', lineItemId: 'shareds' },
       { asin: 'SAME', quantity: 1, shipmentId: 'second', lineItemId: 'shareds' },
@@ -31,8 +32,8 @@ const ctx = vm.createContext({ ...core, URL, URLSearchParams,
 vm.runInContext(queue + detailCode, ctx);
 (async () => {
   assert.strictEqual(typeof ctx.discoverMissingTracking, 'function', 'Bulk scans need order-detail fallback');
-  await ctx.discoverMissingTracking([old, recent, single, failed, partial]);
-  assert.deepStrictEqual(opened.sort(), ['failed', 'old', 'partial']);
+  await ctx.discoverMissingTracking([old, recent, single, failed, partial, splitPartial]);
+  assert.deepStrictEqual(opened.sort(), ['failed', 'old', 'partial', 'splitPartial']);
   assert.deepStrictEqual(closed.sort(), opened);
   assert.strictEqual(old.shipments.length, 2, 'Discover split shipments behind the list summary');
   const groups = ctx.buildTrackingFetchGroups([old, recent, single]);
@@ -40,6 +41,7 @@ vm.runInContext(queue + detailCode, ctx);
   assert.strictEqual(groups.noUrlTargets.length, 1, 'Missing tracking must be reported, not silently dropped');
   assert.strictEqual(failed.shipments[0].asin, 'KEEP');
   assert.strictEqual(partial.shipments.length, 2, 'Incomplete details must not drop list items');
+  assert.strictEqual(splitPartial.shipments[0].quantity, 2, 'Partial same-ASIN details cannot drop units or tracking');
   assert.strictEqual(ctx.scrapeState.extractionIncomplete, true);
   assert.ok(groups.groups.some(g => new URL(g.trackUrl).searchParams.get('shipmentId') === 'second'));
   console.log('bulk hidden-tracking detail fallback tests passed');
