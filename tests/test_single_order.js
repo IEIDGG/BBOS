@@ -26,7 +26,7 @@ for (const host of ['www.amazon.com', 'amazon.com']) {
     };
     const context = vm.createContext({ document, location: url, URLSearchParams, console,
       chrome: { storage: { local: { set(data, callback) { callback(); } } },
-        runtime: { sendMessage(message, callback) { messages.push(message); callback(); } } },
+        runtime: { id: 'test-extension', sendMessage(message, callback) { messages.push(message); callback(); } } },
     });
     vm.runInContext(pageScript, context);
     assert.strictEqual(buttons.length, 1);
@@ -37,6 +37,49 @@ for (const host of ['www.amazon.com', 'amazon.com']) {
     vm.runInContext(pageScript, context);
     assert.strictEqual(buttons.length, 1, 'Do not add duplicate scan buttons');
   }
+}
+
+// A page can outlive its extension context after a reload, including while
+// asynchronous storage/message callbacks are pending.
+for (const failure of ['missing-context', 'storage-throw', 'storage-callback', 'message-throw', 'message-callback']) {
+  const buttons = [];
+  let storageCallback;
+  let messageCallback;
+  let reloads = 0;
+  const runtime = { id: failure === 'missing-context' ? undefined : 'test-extension',
+    sendMessage(message, callback) {
+      if (failure === 'message-throw') throw new Error('Extension context invalidated.');
+      messageCallback = callback;
+    },
+  };
+  const ctx = vm.createContext({ URLSearchParams, console,
+    location: { pathname: '/gp/your-account/order-details', search: `?orderID=${orderId}`, reload() { reloads++; } },
+    document: { readyState: 'complete', getElementById: () => null,
+      body: { appendChild(button) { buttons.push(button); } },
+      createElement: () => ({ style: {}, listeners: {}, addEventListener(event, callback) { this.listeners[event] = callback; } }),
+    },
+    chrome: { runtime, storage: { local: { set(data, callback) {
+      if (failure === 'storage-throw') throw new Error('Extension context invalidated.');
+      storageCallback = callback;
+    } } } },
+  });
+  vm.runInContext(pageScript, ctx);
+  assert.doesNotThrow(() => buttons[0].listeners.click(), failure);
+  if (storageCallback) {
+    if (failure === 'storage-callback') runtime.lastError = { message: 'Extension context invalidated.' };
+    assert.doesNotThrow(() => storageCallback(), failure);
+    delete runtime.lastError;
+  }
+  if (messageCallback) {
+    runtime.lastError = { message: 'Extension context invalidated.' };
+    assert.doesNotThrow(() => messageCallback(), failure);
+    delete runtime.lastError;
+  }
+  assert.strictEqual(buttons[0].disabled, false, failure);
+  assert.strictEqual(buttons[0].textContent, 'Refresh page to scan', failure);
+  assert.strictEqual(reloads, 0, 'Do not unexpectedly reload the page');
+  buttons[0].listeners.click();
+  assert.strictEqual(reloads, 1, 'User can explicitly refresh the stale page');
 }
 
 // A single-order refresh must fetch tracking even when bulk settings disable
