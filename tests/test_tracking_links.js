@@ -40,6 +40,14 @@ for (const [file, entry] of [
     assert.strictEqual(helpers.extractTrackingLink(container), progressUrl, file);
     assert.strictEqual(helpers.extractShipmentIds(container).shipmentId, 'shipmentA', file);
     assert.strictEqual(helpers.extractTrackingLink(anchors([legacyUrl])), legacyUrl, file);
+    // Old delivered orders can expose only a View your item link, with no
+    // visible Track package button. Preserve its IDs for the URL fallback.
+    const itemLinks = anchors([
+      `https://www.amazon.com/your-orders/pop?orderId=${orderId}&lineItemId=itemCs&shipmentId=shipmentC`,
+    ]);
+    assert.strictEqual(helpers.extractTrackingLink(itemLinks), '', file);
+    assert.strictEqual(helpers.extractShipmentIds(itemLinks).shipmentId, 'shipmentC', file);
+    assert.strictEqual(helpers.extractShipmentIds(itemLinks).lineItemId, 'itemCs', file);
     assert.strictEqual(helpers.extractTrackingLink(anchors([
       progressUrl.replace('www.amazon.com', 'evilamazon.com'),
     ])), '', file);
@@ -66,4 +74,13 @@ assert.strictEqual(queued.shipmentCount, 2);
 assert.strictEqual(queued.groups.length, 2);
 assert.strictEqual(queued.noUrlTargets.length, 0);
 assert.strictEqual(new URL(queued.groups[0].trackUrl).pathname, '/progress-tracker/package');
+const fallbackQueue = context.buildTrackingFetchGroups([{ orderId, shipments: [
+  { shipmentId: 'shipmentC', lineItemId: 'itemCs' },
+] }]);
+assert.strictEqual(fallbackQueue.groups.length, 1);
+const fallbackUrl = new URL(fallbackQueue.groups[0].trackUrl);
+assert.strictEqual(fallbackUrl.pathname, '/gp/your-account/ship-track');
+assert.strictEqual(fallbackUrl.searchParams.get('orderId'), orderId);
+assert.strictEqual(fallbackUrl.searchParams.get('shipmentId'), 'shipmentC');
+assert.strictEqual(fallbackUrl.searchParams.get('itemId'), 'itemC');
 console.log('tracking link extraction and queue tests passed');
