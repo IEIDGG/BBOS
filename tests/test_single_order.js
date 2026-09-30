@@ -101,7 +101,7 @@ const context = vm.createContext({
   async detectAmazonAccountEmail() { return 'test@example.com'; },
   buildOrderDetailUrl: id => `https://www.amazon.com/your-orders/order-details?orderID=${id}`,
   async openTab() { return 1; }, async sleep() {}, async closeTab() {},
-  async injectAndRun() { return { orders: [extracted] }; },
+  async readOrderDetail() { return { orders: [extracted] }; },
   filterOrdersByZip() { return { keptOrders: [], skipped: 1 }; },
   async fetchTrackingForOrders(orders, start, end, cache) {
     assert.strictEqual(cache, null);

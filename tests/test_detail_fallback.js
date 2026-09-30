@@ -4,7 +4,7 @@ const vm = require('vm');
 const core = require('../chrome_extension/scrape_core.js');
 const source = fs.readFileSync(require.resolve('../chrome_extension/background.js'), 'utf8');
 const queue = source.slice(source.indexOf('function buildTrackingUrl('), source.indexOf('function normalizeComparable('));
-const detailCode = source.slice(source.indexOf('async function discoverMissingTracking('), source.indexOf('async function fetchTrackingForOrders('));
+const detailCode = source.slice(source.indexOf('function validateDetailedOrder('), source.indexOf('async function fetchTrackingForOrders('));
 const closed = [];
 const opened = [];
 const old = { orderId: 'old', shipments: [{ asin: 'SAME', productTitle: 'Laptop', quantity: 2 }] };
@@ -29,6 +29,11 @@ const ctx = vm.createContext({ ...core, URL, URLSearchParams,
     ] }] };
   },
 });
+ctx.readAmazonPage = async (url, kind, accept) => {
+  const id = await ctx.openTab(url);
+  try { return await ctx.injectAndRun(id, 'order_detail_scraper.js'); }
+  finally { await ctx.closeTab(id); }
+};
 vm.runInContext(queue + detailCode, ctx);
 (async () => {
   assert.strictEqual(typeof ctx.discoverMissingTracking, 'function', 'Bulk scans need order-detail fallback');

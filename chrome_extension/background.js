@@ -1,4 +1,4 @@
-importScripts('update_helpers.js', 'scrape_core.js');
+importScripts('update_helpers.js', 'scrape_core.js', 'amazon_requests.js', 'shipment_cache.js');
 
 const API_BASE = 'https://ieidgg.com';
 const UPDATE_CHECK_ALARM = 'extensionUpdateCheck';
@@ -954,9 +954,8 @@ function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error)
   shipment.carrier = trackResult.carrier || '';
   shipment.trackingNumber = trackResult.trackingId || '';
   shipment.trackingEvents = trackResult.events || [];
-  scrapeState.tracked++;
-
   if (trackResult.trackingId) {
+    scrapeState.tracked++;
     log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> ${trackResult.trackingId}`, 'success');
     return { timedOut: false };
   }
@@ -981,88 +980,70 @@ function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error)
 }
 
 async function fetchTrackingBatch(batchGroups) {
-  if (!batchGroups.length) return { timedOutCount: 0 };
-
-  const tabIds = [];
-  let timedOutCount = 0;
-  activeTrackingTabIds = tabIds;
-
-  try {
-    const openResults = await Promise.all(
-      batchGroups.map(async (group) => {
-        try {
-          return await openTab(group.trackUrl);
-        } catch (err) {
-          log(`Failed to open tracking tab: ${err.message}`, 'error');
-          return null;
-        }
-      })
-    );
-
-    tabIds.push(...openResults.filter(Boolean));
-    await waitForTabReady();
-
-    const scrapeResults = await Promise.all(
-      batchGroups.map(async (group, index) => {
-        const tabId = openResults[index];
-        if (!tabId) {
-          return { group, trackResult: null, error: 'Failed to open tab' };
-        }
-        try {
-          const trackResult = await injectAndRun(tabId, 'tracking_scraper.js');
-          return { group, trackResult, error: null };
-        } catch (err) {
-          return { group, trackResult: null, error: err.message };
-        }
-      })
-    );
-
-    for (const { group, trackResult, error } of scrapeResults) {
-      for (const target of group.targets) {
-        const result = applyTrackingResult(target.order, target.shipment, target.shipmentIndex, trackResult, error);
-        if (result.timedOut) timedOutCount++;
-      }
+  const results = await Promise.all(batchGroups.map(async (group) => {
+    try {
+      const trackResult = await readAmazonPage(group.trackUrl, 'tracking',
+        result => Boolean(result?.trackingId && !result.issue));
+      return { group, trackResult, error: null };
+    } catch (err) {
+      return { group, trackResult: null, error: err.message };
     }
-  } finally {
-    await Promise.all(tabIds.map((tabId) => closeTab(tabId)));
-    activeTrackingTabIds = activeTrackingTabIds.filter((id) => !tabIds.includes(id));
+  }));
+  let timedOutCount = 0;
+  for (const { group, trackResult, error } of results) {
+    for (const target of group.targets) {
+      const result = applyTrackingResult(target.order, target.shipment, target.shipmentIndex, trackResult, error);
+      if (result.timedOut) timedOutCount++;
+    }
   }
-
   return { timedOutCount };
+}
+
+function validateDetailedOrder(result, order) {
+  const detail = result?.orders?.find(entry => entry.orderId === order.orderId);
+  if (result?.issue || !detail?.shipments?.length) {
+    throw new Error(result?.issue || 'No matching order details found');
+  }
+  const quantitiesByAsin = (shipments) => {
+    const totals = new Map();
+    for (const shipment of shipments || []) {
+      if (!shipment.asin) continue;
+      const asin = shipment.asin.toUpperCase();
+      totals.set(asin, (totals.get(asin) || 0) + (parseInt(shipment.quantity, 10) || 1));
+    }
+    return totals;
+  };
+  const detailTotals = quantitiesByAsin(detail.shipments);
+  for (const [asin, quantity] of quantitiesByAsin(order.shipments)) {
+    if ((detailTotals.get(asin) || 0) < quantity) {
+      throw new Error('Order details did not contain all product quantities from the list');
+    }
+  }
+  return detail;
+}
+
+async function readOrderDetail(order) {
+  return readAmazonPage(buildOrderDetailUrl(order.orderId), 'detail', result => {
+    if (!result?.issue && result?.cancelledOrders?.some(entry => entry.orderId === order.orderId)) return true;
+    try {
+      const detail = validateDetailedOrder(result, order);
+      return detail.shipments.every(shipment => Boolean(buildTrackingUrl(detail, shipment)));
+    } catch {
+      return false;
+    }
+  });
 }
 
 async function discoverMissingTracking(allOrders) {
   const pending = allOrders.filter(order => !order.detailsScanned
     && (order.shipments || []).some(shipment => !buildTrackingUrl(order, shipment)));
   if (!pending.length) return;
-  log(`Opening details for ${pending.length} orders to find hidden shipment tracking...`, 'info');
+  log(`Requesting details for ${pending.length} orders to find hidden shipment tracking...`, 'info');
   for (let start = 0; start < pending.length && !scrapeState.stopped; start += 4) {
     await Promise.all(pending.slice(start, start + 4).map(async (order) => {
-      let tabId = null;
       try {
-        tabId = await openTab(buildOrderDetailUrl(order.orderId));
-        await waitForTabReady();
-        const result = await injectAndRun(tabId, 'order_detail_scraper.js');
-        const detail = result?.orders?.find(entry => entry.orderId === order.orderId);
-        if (result?.issue || !detail?.shipments?.length) {
-          throw new Error(result?.issue || 'No matching order details found');
-        }
-        // Do not replace the list with a partial or unrelated detail result.
-        const quantitiesByAsin = (shipments) => {
-          const totals = new Map();
-          for (const shipment of shipments) {
-            if (!shipment.asin) continue;
-            const asin = shipment.asin.toUpperCase();
-            totals.set(asin, (totals.get(asin) || 0) + (parseInt(shipment.quantity, 10) || 1));
-          }
-          return totals;
-        };
-        const detailTotals = quantitiesByAsin(detail.shipments);
-        for (const [asin, quantity] of quantitiesByAsin(order.shipments)) {
-          if ((detailTotals.get(asin) || 0) < quantity) {
-            throw new Error('Order details did not contain all product quantities from the list');
-          }
-        }
+        const result = await readOrderDetail(order);
+        const detail = validateDetailedOrder(result, order);
         order.shipments = detail.shipments;
         order.detailsScanned = true;
         dedupeOrderShipments(order);
@@ -1070,8 +1051,6 @@ async function discoverMissingTracking(allOrders) {
       } catch (err) {
         scrapeState.extractionIncomplete = true;
         log(`${order.orderId}: could not discover hidden tracking (${err.message})`, 'error');
-      } finally {
-        if (tabId) await closeTab(tabId);
       }
     }));
   }
@@ -1079,7 +1058,8 @@ async function discoverMissingTracking(allOrders) {
   stats();
 }
 
-async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbCache = null) {
+async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbCache = null, amazonEmail = '') {
+  await restoreShipmentDiscovery(allOrders, amazonEmail);
   await discoverMissingTracking(allOrders);
   if (scrapeState.stopped) return;
   if (dbCache) {
@@ -1095,7 +1075,10 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
     applyTrackingResult(target.order, target.shipment, target.shipmentIndex, null, 'no ship-track URL');
   }
 
-  if (!groups.length) return;
+  if (!groups.length) {
+    await saveShipmentDiscovery(allOrders, amazonEmail);
+    return;
+  }
 
   let concurrency = TRACKING_TAB_CONCURRENCY;
   let timeoutBatchStreak = 0;
@@ -1108,7 +1091,7 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
     log(`Deduped tracking: ${trackedShipments} shipments -> ${uniqueFetches} unique fetches`, 'info');
   }
 
-  log(`Fetching tracking for ${trackedShipments} shipments (${uniqueFetches} URLs, ${concurrency} tabs at a time)...`, 'info');
+  log(`Fetching tracking for ${trackedShipments} shipments (${uniqueFetches} URLs, ${concurrency} requests at a time; tabs only if needed)...`, 'info');
 
   let processedShipments = noUrlTargets.length;
   let batchNumber = 0;
@@ -1176,6 +1159,7 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
     stats();
     log(`Removed ${postTrackingDuplicateShipments} duplicate shipment${postTrackingDuplicateShipments === 1 ? '' : 's'} after tracking lookup`, 'info');
   }
+  await saveShipmentDiscovery(allOrders, amazonEmail);
 }
 
 async function runSingleOrderScrape(config) {
@@ -1191,8 +1175,6 @@ async function runSingleOrderScrape(config) {
   startScrapeKeepAlive();
   openLogTab();
 
-  let tabId = null;
-
   try {
     const token = await getAuthCookie();
     if (!token) {
@@ -1206,16 +1188,7 @@ async function runSingleOrderScrape(config) {
     log(`Starting single order scan for ${orderId}...`, 'info');
     progress(15, `Loading order ${orderId}...`);
 
-    const url = buildOrderDetailUrl(orderId);
-    let result = null;
-    try {
-      tabId = await openTab(url);
-      await sleep(2000);
-      result = await injectAndRun(tabId, 'order_detail_scraper.js');
-    } finally {
-      if (tabId) await closeTab(tabId);
-      tabId = null;
-    }
+    const result = await readOrderDetail({ orderId, shipments: [] });
 
     if (result?.issue) {
       scrapeDone(result.issue, false);
@@ -1264,7 +1237,7 @@ async function runSingleOrderScrape(config) {
 
     // A manually selected order always gets a fresh tracking lookup.
     if (allOrders.length) {
-      await fetchTrackingForOrders(allOrders, 50, 80, null);
+      await fetchTrackingForOrders(allOrders, 50, 80, null, amazonEmail);
     }
 
     if (scrapeState.stopped) {
@@ -1483,7 +1456,7 @@ async function runScrape(config, checkpoint = null) {
     if (phase !== 'upload' && fetchTracking && allOrders.length) {
       phase = 'tracking';
       await persistScrapeCheckpoint(snapshot());
-      await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null);
+      await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null, amazonEmail);
     }
 
     phase = 'upload';
@@ -1598,6 +1571,7 @@ async function openExtensionPopup() {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.target === 'ieid-html-parser') return false;
   if (msg.action === 'start_scrape') {
     if (!scrapeState.running) {
       runScrape(msg.config);

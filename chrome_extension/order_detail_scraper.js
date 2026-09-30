@@ -1,4 +1,5 @@
 (() => {
+  function ieidExtractOrderDetail(document, location) {
   const ORDER_ID_RE = /\b\d{3}-\d{7}-\d{7}\b/;
   const ASIN_RE = /\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})(?:[/?#]|$)/i;
 
@@ -103,7 +104,7 @@
   }
 
   function textAfterShippingLabel() {
-    const bodyText = cleanText(document.body?.innerText || '');
+    const bodyText = cleanText(document.body?.innerText || document.body?.textContent || '');
     const match = bodyText.match(/Shipping Address\s+(.+?)(?:Payment Method|Order Summary|Billing address|Items Ordered|Transactions|Shipment|Need to return|Archive order|$)/i);
     return cleanText(match?.[1] || '');
   }
@@ -125,14 +126,14 @@
     const fromLabel = findValueAfterLabel(document, ['Order #', 'Order number']);
     const labelMatch = cleanText(fromLabel).match(ORDER_ID_RE);
     if (labelMatch) return labelMatch[0];
-    const bodyMatch = cleanText(document.body?.innerText || '').match(ORDER_ID_RE);
+    const bodyMatch = cleanText(document.body?.innerText || document.body?.textContent || '').match(ORDER_ID_RE);
     return bodyMatch?.[0] || '';
   }
 
   function extractOrderDate() {
     const fromLabel = findValueAfterLabel(document, ['Order placed', 'Placed on']);
     if (fromLabel) return fromLabel;
-    const bodyText = cleanText(document.body?.innerText || '');
+    const bodyText = cleanText(document.body?.innerText || document.body?.textContent || '');
     return (
       bodyText.match(/Order placed\s+(.+?)\s+(?:Order #|Total|Ship to|Payment)/i)?.[1]
       || bodyText.match(/Placed on\s+(.+?)\s+(?:Order #|Total|Ship to|Payment)/i)?.[1]
@@ -158,7 +159,7 @@
     const fromLabel = cleanMoney(findValueAfterLabel(document, ['Grand Total', 'Order total', 'Total']));
     if (fromLabel) return fromLabel;
 
-    const bodyText = cleanText(document.body?.innerText || '');
+    const bodyText = cleanText(document.body?.innerText || document.body?.textContent || '');
     return cleanMoney(
       bodyText.match(/Grand Total\s+(\$[\d,]+(?:\.\d{2})?)/i)?.[1]
       || bodyText.match(/Order total\s+(\$[\d,]+(?:\.\d{2})?)/i)?.[1]
@@ -518,7 +519,7 @@
   }
 
   function detectPageIssue() {
-    const bodyText = cleanText(document.body?.innerText || '');
+    const bodyText = cleanText(document.body?.innerText || document.body?.textContent || '');
     if (/enter the characters you see below|sorry, we just need to make sure you're not a robot/i.test(bodyText)) {
       return 'Amazon is showing a verification page. Open Amazon in the browser tab and complete the check, then try again.';
     }
@@ -550,7 +551,7 @@
     }
 
     if (!order.shipments.length) {
-      const bodyText = cleanText(document.body?.innerText || '');
+      const bodyText = cleanText(document.body?.innerText || document.body?.textContent || '');
       const isCancelled = /cancel(?:led|ed)/i.test(bodyText)
         && !/(delivered|arriving|shipped|on the way|out for delivery)/i.test(bodyText);
       if (isCancelled) {
@@ -573,4 +574,7 @@
   }
 
   return extractOrderFromDetailPage();
+  }
+  globalThis.ieidExtractOrderDetail = ieidExtractOrderDetail;
+  if (!globalThis.IEID_PARSE_ONLY) return ieidExtractOrderDetail(globalThis.document, globalThis.location);
 })();

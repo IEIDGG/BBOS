@@ -34,6 +34,8 @@ require('./test_single_order.js');
 require('./test_multi_shipment.js');
 require('./test_pagination.js');
 require('./test_detail_fallback.js');
+require('./test_request_first.js');
+require('./test_shipment_cache.js');
 
 const sameAsinDifferentShipments = [
   { order_id: '111', asin: 'B00A', shipment_id: 's1', line_item_id: 'l1', quantity: '1', tracking_number: '1ZAAA' },
