@@ -16,7 +16,7 @@ function fixture(mode) {
     }, offscreen: { async createDocument() { calls.created++; } } },
     async fetch(request, options) { calls.fetch++; assert.strictEqual(options.credentials, 'include');
       if (mode === 'network') throw new Error('network');
-      return { ok: true, url: mode === 'signin' ? 'https://www.amazon.com/ap/signin' : mode === 'wrong-order' ? 'https://www.amazon.com/progress-tracker/package?orderId=other' : mode === 'missing-shipment' ? request.replace('&shipmentId=first', '') : request, headers: { get: () => 'text/html' }, async text() { return '<html>order</html>'; } };
+      return { ok: true, url: mode === 'wrong-page' ? request.replace('page=15', 'page=0') : mode === 'signin' ? 'https://www.amazon.com/ap/signin' : mode === 'wrong-order' ? 'https://www.amazon.com/progress-tracker/package?orderId=other' : mode === 'missing-shipment' ? request.replace('&shipmentId=first', '') : request, headers: { get: () => 'text/html' }, async text() { return '<html>order</html>'; } };
     },
     async openTab() { calls.tabs++; return 10; }, async closeTab() { calls.closed++; }, async waitForTabReady() {},
     async injectAndRun() { if (mode === 'tab-error') throw new Error('tab extraction failed'); return { valid: true, tab: true }; },
@@ -32,6 +32,15 @@ function fixture(mode) {
     assert.strictEqual(calls.tabs, mode === 'success' ? 0 : 1);
     assert.strictEqual(calls.closed, calls.tabs);
   }
+  const listRead = fixture('success');
+  await listRead.ctx.readAmazonPage('https://www.amazon.com/your-orders/orders?timeFilter=year-2026&page=15', 'list', value => value?.valid);
+  assert.strictEqual(listRead.calls.tabs, 0);
+  const wrongPage = fixture('wrong-page');
+  await assert.rejects(() => wrongPage.ctx.requestAmazonPage('https://www.amazon.com/your-orders/orders?timeFilter=year-2026&page=15', 'list'));
+  const listFallback = fixture('network');
+  await listFallback.ctx.readAmazonPage('https://www.amazon.com/your-orders/orders?timeFilter=year-2026&page=15', 'list', value => value?.valid);
+  assert.strictEqual(listFallback.calls.tabs, 1);
+  assert.strictEqual(listFallback.calls.closed, 1);
   const referral = fixture('success');
   await referral.ctx.readAmazonPage('https://www.amazon.com/gp/your-account/ship-track/ref=ppx_yo_dt_b_track_package?orderId=111&shipmentId=first', 'tracking', value => value?.valid);
   assert.strictEqual(referral.calls.tabs, 0, 'Legitimate referral paths use the request transport');

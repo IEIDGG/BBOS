@@ -3,7 +3,7 @@ globalThis.IEID_PARSE_ONLY = true;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message.target !== 'ieid-html-parser' || sender.id !== chrome.runtime.id) return;
   try {
-    if (!['detail', 'tracking'].includes(message.kind) || typeof message.html !== 'string') {
+    if (!['detail', 'tracking', 'list'].includes(message.kind) || typeof message.html !== 'string') {
       throw new Error('Invalid HTML parsing request');
     }
     const url = new URL(message.url);
@@ -25,9 +25,29 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         throw new Error('Requested order is not present in the response');
       }
     }
-    const result = message.kind === 'detail'
+    const result = message.kind === 'list'
+      ? globalThis.ieidExtractOrderList(doc, url)
+      : message.kind === 'detail'
       ? globalThis.ieidExtractOrderDetail(doc, url)
       : globalThis.ieidExtractTracking(doc, false);
+    if (message.kind === 'list' && !result.issue) {
+      const count = (result.orders?.length || 0) + (result.cancelledOrders?.length || 0);
+      const totalMatch = (doc.body?.textContent || '').match(/([\d,]+)\s+orders?\s+placed/i);
+      const total = totalMatch ? Number(totalMatch[1].replace(/,/g, '')) : null;
+      const hasPager = Array.from(doc.querySelectorAll('a[href]')).some(link => {
+        try {
+          const target = new URL(link.getAttribute('href'), url);
+          return target.origin === url.origin
+            && /^\/(?:your-orders\/orders|gp\/your-account\/order-history)(?:\/|$)/i.test(target.pathname)
+            && ['page', 'startIndex'].some(key => /^\d+$/.test(target.searchParams.get(key) || ''))
+            && (target.searchParams.get('timeFilter') || target.searchParams.get('orderFilter'))
+              === (url.searchParams.get('timeFilter') || url.searchParams.get('orderFilter'));
+        } catch { return false; }
+      });
+      if (count && !hasPager && !(total !== null && total === count && !(Number(url.searchParams.get('page')) || Number(url.searchParams.get('startIndex'))))) {
+        result.issue = 'Order-list pagination is incomplete or unrecognized';
+      }
+    }
     respond({ result });
   } catch (err) {
     respond({ error: err.message });

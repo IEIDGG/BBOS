@@ -6,7 +6,9 @@ function validateAmazonReadUrl(value, kind) {
   if (url.protocol !== 'https:' || !['www.amazon.com', 'amazon.com'].includes(url.hostname)) {
     throw new Error('Unapproved Amazon request URL');
   }
-  const validPath = kind === 'detail'
+  const validPath = kind === 'list'
+    ? /^\/(?:your-orders\/orders|gp\/your-account\/order-history)(?:\/ref=[^/]+)?\/?$/i.test(url.pathname)
+    : kind === 'detail'
     ? /^\/(?:your-orders|gp\/your-account)\/order-details(?:\/ref=[^/]+)?\/?$/i.test(url.pathname)
     : /^(?:\/gp\/your-account\/ship-track|\/progress-tracker\/package)(?:\/ref=[^/]+)?\/?$/i.test(url.pathname);
   if (!validPath) throw new Error('Unexpected Amazon page type');
@@ -43,7 +45,7 @@ async function requestAmazonPage(url, kind) {
     validateAmazonReadUrl(responseUrl, kind); // Sign-in redirects need the browser fallback.
     const requested = new URL(url);
     const returned = new URL(responseUrl);
-    for (const aliases of [['orderID', 'orderId'], ['shipmentId'], ['packageId'], ['packageIndex']]) {
+    for (const aliases of [['orderID', 'orderId'], ['shipmentId'], ['packageId'], ['packageIndex'], ['timeFilter', 'orderFilter'], ['page'], ['startIndex']]) {
       const expected = aliases.map(key => requested.searchParams.get(key)).filter(value => value !== null);
       const actual = aliases.map(key => returned.searchParams.get(key)).filter(value => value !== null);
       if (expected.length && (!actual.length || expected.some(value => value !== expected[0])
@@ -78,11 +80,11 @@ async function readAmazonPage(url, kind, accept) {
     const result = await requestAmazonPage(url, kind);
     if (scrapeState.stopped) throw new Error('Scan stopped');
     if (!accept(result)) throw new Error(result?.issue || 'HTML has incomplete shipment data');
-    log(`${kind === 'detail' ? 'Order details' : 'Tracking'} read by background request`, 'info');
+    log(`${kind === 'list' ? 'Order list' : kind === 'detail' ? 'Order details' : 'Tracking'} read by background request`, 'info');
     return result;
   } catch (err) {
     if (scrapeState.stopped) throw err;
-    log(`${kind === 'detail' ? 'Order details' : 'Tracking'} request needs tab fallback (${err.message})`, 'info');
+    log(`${kind === 'list' ? 'Order list' : kind === 'detail' ? 'Order details' : 'Tracking'} request needs tab fallback (${err.message})`, 'info');
   }
   let tabId = null;
   try {
@@ -90,7 +92,7 @@ async function readAmazonPage(url, kind, accept) {
     if (kind === 'tracking') activeTrackingTabIds.push(tabId);
     if (scrapeState.stopped) throw new Error('Scan stopped');
     await waitForTabReady();
-    return await injectAndRun(tabId, kind === 'detail' ? 'order_detail_scraper.js' : 'tracking_scraper.js');
+    return await injectAndRun(tabId, kind === 'list' ? 'scraper.js' : kind === 'detail' ? 'order_detail_scraper.js' : 'tracking_scraper.js');
   } finally {
     if (tabId) await closeTab(tabId);
     if (kind === 'tracking') activeTrackingTabIds = activeTrackingTabIds.filter(id => id !== tabId);

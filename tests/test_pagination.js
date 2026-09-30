@@ -49,10 +49,8 @@ async function traverse(limit) {
     zipFilters: ['03063'], totalZipSkipped: 0, allOrders: [], allCancelledOrders: [],
     scrapeState: { stopped: false },
     progress() {}, log() {}, stats() {}, snapshot: () => ({}),
-    async openTab(url) { const params = new URL(url).searchParams; assert.strictEqual(params.get('timeFilter'), 'year-2026'); assert.ok(params.has('page')); const page = Number(params.get('page')) + 1; visited.push(page); return page; },
-    async closeTab() {}, async waitForTabReady() {}, async sleep() {},
-    async persistScrapeCheckpoint() {}, randomOrderPageDelay: () => 0,
-    async injectAndRun(page) { return { orders: [{ orderId: `order-${page}` }], cancelledOrders: [], maxPage: Math.min(page + 1, 16) }; },
+    async readAmazonPage(url, kind, accept) { assert.strictEqual(kind, 'list'); const params = new URL(url).searchParams; assert.strictEqual(params.get('timeFilter'), 'year-2026'); const page = Number(params.get('page')) + 1; visited.push(page); const result = { orders: [{ orderId: `order-${page}` }], cancelledOrders: [], maxPage: Math.min(page + 1, 16) }; assert.ok(accept(result)); return result; },
+    async sleep() {}, async persistScrapeCheckpoint() {}, randomOrderPageDelay: () => 0,
     filterOrdersByZip: () => ({ keptOrders: [], skipped: 1 }),
     mergeCancelledOrders() {}, dedupeOrderShipments() {},
   });

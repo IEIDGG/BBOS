@@ -3,6 +3,7 @@
 // serves different order markup across accounts, years, and experiments.
 
 (() => {
+  function ieidExtractOrderList(document, location) {
   const ORDER_ID_RE = /\b\d{3}-\d{7}-\d{7}\b/;
   const ASIN_RE = /\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})(?:[/?#]|$)/i;
 
@@ -725,7 +726,7 @@
   }
 
   function detectPageIssue() {
-    const text = cleanText(document.body?.innerText || '');
+    const text = cleanText(document.body?.innerText || document.body?.textContent || '');
     if (/enter the characters you see below|sorry, we just need to make sure you're not a robot/i.test(text)) {
       return 'Amazon is showing a verification page. Open Amazon in the browser tab and complete the check, then try again.';
     }
@@ -770,8 +771,11 @@
       orders.push(order);
     }
 
-    return { orders, cancelledOrders, maxPage: extractMaxPage(), issue: orders.length || cancelledOrders.length ? '' : detectPageIssue() };
+    return { orders, cancelledOrders, maxPage: extractMaxPage(), issue: orders.length || cancelledOrders.length || /(?:you (?:have not|haven.t) placed any orders|no orders (?:placed|found)|haven.t ordered anything)/i.test(document.body?.textContent || '') ? '' : (detectPageIssue() || 'Amazon order list is incomplete or unrecognized') };
   }
 
   return extractOrdersFromPage();
+  }
+  globalThis.ieidExtractOrderList = ieidExtractOrderList;
+  if (!globalThis.IEID_PARSE_ONLY) return ieidExtractOrderList(globalThis.document, globalThis.location);
 })();

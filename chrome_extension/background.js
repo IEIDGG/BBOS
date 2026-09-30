@@ -1338,19 +1338,15 @@ async function runScrape(config, checkpoint = null) {
       progress(0, `Loading page ${page}...`);
       log(`Scraping page ${page}...`);
 
-      let tabId = null;
       let result = null;
       try {
-        tabId = await openTab(url);
-        await waitForTabReady();
-        result = await injectAndRun(tabId, 'scraper.js');
+        result = await readAmazonPage(url, 'list', value => value && !value.issue
+          && Array.isArray(value.orders) && Array.isArray(value.cancelledOrders));
       } catch (err) {
         scrapeState.extractionIncomplete = true;
         scrapeState.failed += 1;
         log(`Failed to extract page ${page}: ${err.message}`, 'error');
         break;
-      } finally {
-        if (tabId) await closeTab(tabId);
       }
 
       if (result?.issue) {
