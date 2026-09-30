@@ -13,10 +13,10 @@ function shipmentDiscoveryCacheKey(account) {
   return account ? `amazonShipmentDiscovery:v1:${String(account).trim().toLowerCase()}` : '';
 }
 
-async function restoreShipmentDiscovery(allOrders, account) {
+async function restoreShipmentDiscovery(allOrders, account, enabled = true) {
   const key = shipmentDiscoveryCacheKey(account);
   for (const order of allOrders) order.discoverySignature = shipmentDiscoverySignature(order);
-  if (!key) return;
+  if (!key || !enabled) return;
   try {
     const entries = (await chrome.storage.local.get(key))[key] || {};
     for (const order of allOrders) {

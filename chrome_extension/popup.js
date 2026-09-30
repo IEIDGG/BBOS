@@ -249,7 +249,7 @@ $('signOutBtn').addEventListener('click', async () => {
 });
 
 // --- Settings ---
-const SETTINGS_KEYS = ['yearFilter', 'maxPages', 'fetchTracking', 'useDbCache', 'zipFilters', 'lastAmazonEmail'];
+const SETTINGS_KEYS = ['yearFilter', 'maxPages', 'fetchTracking', 'useDbCache', 'useShipmentCache', 'zipFilters', 'lastAmazonEmail'];
 
 async function loadSettings() {
   const data = await chrome.storage.local.get(SETTINGS_KEYS);
@@ -257,6 +257,7 @@ async function loadSettings() {
   if (data.maxPages !== undefined) $('maxPages').value = data.maxPages;
   if (data.fetchTracking !== undefined) $('fetchTracking').checked = data.fetchTracking;
   if (data.useDbCache !== undefined) $('useDbCache').checked = data.useDbCache;
+  if (data.useShipmentCache !== undefined) $('useShipmentCache').checked = data.useShipmentCache;
   if (data.zipFilters !== undefined) $('zipFilters').value = data.zipFilters;
   if (data.lastAmazonEmail) $('amazonAccountEmail').textContent = data.lastAmazonEmail;
 }
@@ -267,6 +268,7 @@ function saveSettings() {
     maxPages: parseInt($('maxPages').value) || 0,
     fetchTracking: $('fetchTracking').checked,
     useDbCache: $('useDbCache').checked,
+    useShipmentCache: $('useShipmentCache').checked,
     zipFilters: $('zipFilters').value,
   });
 }
@@ -345,6 +347,7 @@ $('startBtn').addEventListener('click', async () => {
       maxPages: parseInt($('maxPages').value) || 0,
       fetchTracking: $('fetchTracking').checked,
       useDbCache: $('useDbCache').checked,
+    useShipmentCache: $('useShipmentCache').checked,
       zipFilters: $('zipFilters').value,
     },
   });
@@ -435,4 +438,14 @@ chrome.runtime.sendMessage({ action: 'scrape_status' }, (resp) => {
   if (resp.running) {
     setScrapingUi(true);
   }
+});
+
+// Native buttons keep explanations accessible by keyboard and touch.
+document.querySelectorAll('.info-button').forEach(button => {
+  button.addEventListener('click', () => {
+    const panel = document.getElementById(button.getAttribute('aria-controls'));
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!expanded));
+    panel.hidden = expanded;
+  });
 });

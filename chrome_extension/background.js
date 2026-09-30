@@ -1058,8 +1058,8 @@ async function discoverMissingTracking(allOrders) {
   stats();
 }
 
-async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbCache = null, amazonEmail = '') {
-  await restoreShipmentDiscovery(allOrders, amazonEmail);
+async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbCache = null, amazonEmail = '', useShipmentCache = true) {
+  await restoreShipmentDiscovery(allOrders, amazonEmail, useShipmentCache);
   await discoverMissingTracking(allOrders);
   if (scrapeState.stopped) return;
   if (dbCache) {
@@ -1452,7 +1452,7 @@ async function runScrape(config, checkpoint = null) {
     if (phase !== 'upload' && fetchTracking && allOrders.length) {
       phase = 'tracking';
       await persistScrapeCheckpoint(snapshot());
-      await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null, amazonEmail);
+      await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null, amazonEmail, config.useShipmentCache !== false);
     }
 
     phase = 'upload';
