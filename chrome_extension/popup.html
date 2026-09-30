@@ -53,6 +53,9 @@
     .log-entry.error { color: #f85149; }
     .log-entry.info { color: #79c0ff; }
     .checkbox-field { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+    .info-button { width: 22px; height: 22px; padding: 0; flex-shrink: 0; border: 1px solid #667eea; border-radius: 50%; background: transparent; color: #b9c3ff; cursor: pointer; }
+    .info-button:focus-visible { outline: 2px solid #b9c3ff; outline-offset: 2px; }
+    .cache-hint { margin-top: -6px; margin-bottom: 12px; }
     .checkbox-field input { width: auto; }
     .checkbox-field label { margin-bottom: 0; }
     .zip-field-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
@@ -119,6 +122,7 @@
 
     <div class="single-order-section hidden" id="singleOrderSection">
       <div class="single-order-title">Scan current order</div>
+      <p>Refresh order details and tracking in IEID. Bulk ZIP filters and cached tracking do not apply.</p>
       <div class="single-order-id" id="pendingOrderId"></div>
       <button id="scanSingleOrderBtn">Scan This Order</button>
       <button class="dismiss-single-order" id="dismissSingleOrderBtn" type="button">Dismiss</button>
@@ -152,8 +156,16 @@
     <div class="checkbox-field">
       <input type="checkbox" id="useDbCache" />
       <label for="useDbCache">Skip tracked shipments already in IEID</label>
+      <button type="button" class="info-button" aria-label="About skipping tracked shipments" aria-expanded="false" aria-controls="dbCacheInfo">ⓘ</button>
     </div>
-    <div class="field-hint" style="margin-top: -8px; margin-bottom: 12px;">Only skips tracking-page tabs. Amazon list scrape and upload still run.</div>
+    <div id="dbCacheInfo" class="field-hint cache-hint" hidden>Skips tracking requests and fallback tabs for shipments already tracked in IEID. Amazon list scanning and upload still run.</div>
+
+    <div class="checkbox-field">
+      <input type="checkbox" id="useShipmentCache" checked />
+      <label for="useShipmentCache">Reuse cached shipment links</label>
+      <button type="button" class="info-button" aria-label="About cached shipment links" aria-expanded="false" aria-controls="shipmentCacheInfo">ⓘ</button>
+    </div>
+    <div id="shipmentCacheInfo" class="field-hint cache-hint" hidden>Reuses shipment links saved for this Amazon account for up to 7 days, avoiding repeat order-detail requests. Tracking is still fetched unless skipped above. Turn off to discover fresh links; successful discoveries are saved for future scans. Single-order scans always refresh details.</div>
 
     <div class="field">
       <div class="zip-field-header">

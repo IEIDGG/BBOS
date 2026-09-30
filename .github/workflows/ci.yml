@@ -75,6 +75,12 @@ jobs:
           node tests/test_scrape_core.js
           node tests/test_package_integrity.js
 
+      - name: Detached Amazon HTML parser tests
+        run: |
+          npm install --prefix "$RUNNER_TEMP/html-tests" --no-audit --no-fund linkedom@0.18.12
+          NODE_PATH="$RUNNER_TEMP/html-tests/node_modules" node tests/test_html_parser.js
+          NODE_PATH="$RUNNER_TEMP/html-tests/node_modules" node tests/test_log_rendering.js
+
       - name: Trailing whitespace
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}

@@ -3,6 +3,7 @@
 // serves different order markup across accounts, years, and experiments.
 
 (() => {
+  function ieidExtractOrderList(document, location) {
   const ORDER_ID_RE = /\b\d{3}-\d{7}-\d{7}\b/;
   const ASIN_RE = /\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})(?:[/?#]|$)/i;
 
@@ -227,7 +228,10 @@
   }
 
   function getStatusFromContainer(container) {
+    container = container.cloneNode(true);
+    container.querySelectorAll('script, style, noscript, template').forEach(node => node.remove());
     const selectors = [
+      '.yohtmlc-shipment-status-primaryText',
       '.delivery-box__primary-text',
       '[data-test-id*="delivery"]',
       '[class*="delivery"] .a-size-medium',
@@ -273,7 +277,8 @@
       const host = url.hostname.replace(/\.$/, '').toLowerCase();
       if (!/(?:^|\.)amazon\.com$/i.test(host)) return false;
       if (url.pathname.includes('/your-orders/pop')) return false;
-      return url.pathname.includes('/gp/your-account/ship-track') || url.pathname.includes('ship-track');
+      return url.pathname.includes('/gp/your-account/ship-track') || url.pathname.includes('ship-track')
+        || url.pathname === '/progress-tracker/package';
     } catch {
       return false;
     }
@@ -297,7 +302,7 @@
   }
 
   function extractTrackingLink(container) {
-    for (const link of container.querySelectorAll('a[href*="ship-track"]')) {
+    for (const link of container.querySelectorAll('a[href*="ship-track"], a[href*="/progress-tracker/package"]')) {
       const parsed = parseShipTrackLink(link.href);
       if (parsed?.trackingUrl) return parsed.trackingUrl;
     }
@@ -306,7 +311,7 @@
 
   function extractShipmentIds(container) {
     const ids = {};
-    const candidates = Array.from(container.querySelectorAll('a[href*="ship-track"], a[href*="shipmentId"], a[href*="lineItemId"], a[href*="itemId"]'));
+    const candidates = Array.from(container.querySelectorAll('a[href*="ship-track"], a[href*="/progress-tracker/package"], a[href*="shipmentId"], a[href*="lineItemId"], a[href*="itemId"]'));
     for (const link of candidates) {
       const parsed = parseShipTrackLink(link.href);
       if (parsed) {
@@ -466,7 +471,7 @@
     }
   }
 
-  function getShipmentIdentity(shipment) {
+  function getLocalShipmentIdentity(shipment) {
     if (shipment.asin) {
       const itemId = shipment.itemId || shipment.lineItemId || '';
       const shipmentPart = shipment.shipmentId || shipment.packageId || '';
@@ -518,14 +523,7 @@
     if (typeof getShipmentIdentity === 'function') {
       return getShipmentIdentity({ orderId: '' }, shipment);
     }
-    return [
-      shipment.shipmentId || '',
-      shipment.packageId || '',
-      shipment.itemId || '',
-      shipment.lineItemId || '',
-      shipment.asin || '',
-      shipment.productTitle || '',
-    ].join('|');
+    return getLocalShipmentIdentity(shipment);
   }
 
   function extractSingleItemShipment(itemRoot, container, inheritedStatus) {
@@ -659,9 +657,9 @@
 
       const productShipments = extractProductShipments(container, status);
       for (const shipment of productShipments) {
-        const key = getShipmentIdentity(shipment);
+        const key = shipmentIdentityKey(shipment);
         if (seen.has(key)) {
-          const existing = shipments.find(item => getShipmentIdentity(item) === key);
+          const existing = shipments.find(item => shipmentIdentityKey(item) === key);
           if (existing) mergeShipment(existing, shipment);
           continue;
         }
@@ -689,21 +687,49 @@
 
   function extractMaxPage() {
     let maxPage = 1;
-    const paginationText = cleanText(document.querySelector('.a-pagination')?.textContent || '');
-    const pageLinks = document.querySelectorAll('.a-pagination li, .a-pagination a, [aria-label*="page" i]');
-
-    for (const el of pageLinks) {
-      const num = parseInt(cleanText(el.textContent || el.getAttribute('aria-label')), 10);
-      if (!Number.isNaN(num) && num > maxPage) maxPage = num;
+    const currentUrl = new URL(location.href);
+    const currentFilter = currentUrl.searchParams.get('timeFilter') || currentUrl.searchParams.get('orderFilter');
+    const pageFromUrl = (href) => {
+      try {
+        const url = new URL(href, location.href);
+        if (url.protocol !== 'https:' || !/(?:^|\.)amazon\.com$/i.test(url.hostname)) return;
+        if (!/^\/(?:your-orders\/orders|gp\/your-account\/order-history)(?:\/|$)/i.test(url.pathname)) return;
+        const filter = url.searchParams.get('timeFilter') || url.searchParams.get('orderFilter');
+        if (filter && currentFilter && filter !== currentFilter) return;
+        const pageIndex = url.searchParams.get('page');
+        if (pageIndex !== null && /^\d+$/.test(pageIndex) && Number.isSafeInteger(Number(pageIndex))) {
+          maxPage = Math.max(maxPage, Number(pageIndex) + 1);
+          return;
+        }
+        const offset = url.searchParams.get('startIndex');
+        if (offset === null || !/^\d+$/.test(offset)) return;
+        const index = Number(offset);
+        if (Number.isSafeInteger(index)) maxPage = Math.max(maxPage, Math.floor(index / 10) + 1);
+      } catch {
+      }
+    };
+    pageFromUrl(location.href);
+    // Order links remain reliable when Amazon changes pagination CSS or shows
+    // only a sliding range of page buttons. Ignore unrelated carousel links.
+    for (const link of document.querySelectorAll('a[href*="startIndex="], a[href*="page="]')) {
+      pageFromUrl(link.href);
     }
-
-    const textMatch = paginationText.match(/Page\s+\d+\s+of\s+(\d+)/i);
-    if (textMatch) maxPage = Math.max(maxPage, parseInt(textMatch[1], 10));
+    const roots = document.querySelectorAll('.a-pagination, .s-pagination-container, [class*="pagination"], [aria-label*="pagination" i]');
+    for (const root of roots) {
+      const total = cleanText(root.textContent).match(/Page\s+\d+\s+of\s+(\d+)/i);
+      if (total) maxPage = Math.max(maxPage, Number(total[1]));
+      for (const el of root.querySelectorAll('a, button, li, [aria-label]')) {
+        for (const value of [el.textContent, el.getAttribute('aria-label')]) {
+          const match = cleanText(value).match(/^(?:page\s+)?(\d+)$/i);
+          if (match) maxPage = Math.max(maxPage, Number(match[1]));
+        }
+      }
+    }
     return maxPage;
   }
 
   function detectPageIssue() {
-    const text = cleanText(document.body?.innerText || '');
+    const text = cleanText(document.body?.innerText || document.body?.textContent || '');
     if (/enter the characters you see below|sorry, we just need to make sure you're not a robot/i.test(text)) {
       return 'Amazon is showing a verification page. Open Amazon in the browser tab and complete the check, then try again.';
     }
@@ -726,7 +752,9 @@
       const order = extractOrderHeader(card);
       if (!order.orderId || seenOrders.has(order.orderId) || seenCancelled.has(order.orderId)) continue;
 
-      const cardText = cleanText(card.textContent);
+      const statusCard = card.cloneNode(true);
+      statusCard.querySelectorAll('script, style, noscript, template').forEach(node => node.remove());
+      const cardText = cleanText(statusCard.textContent);
       const hasOnlyCancelledStatuses = /cancel(?:led|ed)/i.test(cardText)
         && !/(delivered|arriving|shipped|on the way|out for delivery)/i.test(cardText);
       if (hasOnlyCancelledStatuses) {
@@ -748,8 +776,11 @@
       orders.push(order);
     }
 
-    return { orders, cancelledOrders, maxPage: extractMaxPage(), issue: orders.length || cancelledOrders.length ? '' : detectPageIssue() };
+    return { orders, cancelledOrders, maxPage: extractMaxPage(), issue: orders.length || cancelledOrders.length || /(?:you (?:have not|haven.t) placed any orders|no orders (?:placed|found)|haven.t ordered anything)/i.test(document.body?.textContent || '') ? '' : (detectPageIssue() || 'Amazon order list is incomplete or unrecognized') };
   }
 
   return extractOrdersFromPage();
+  }
+  globalThis.ieidExtractOrderList = ieidExtractOrderList;
+  if (!globalThis.IEID_PARSE_ONLY) return ieidExtractOrderList(globalThis.document, globalThis.location);
 })();

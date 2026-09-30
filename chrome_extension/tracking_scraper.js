@@ -1,4 +1,5 @@
 (() => {
+  function ieidExtractTracking(document, waitForUpdates = true) {
   function cleanText(value) {
     return (value || '').replace(/\s+/g, ' ').trim();
   }
@@ -147,7 +148,7 @@
   }
 
   function detectPageIssue() {
-    const text = cleanText(document.body?.innerText || '');
+    const text = cleanText(document.body?.innerText || document.body?.textContent || '');
     if (/enter the characters you see below|sorry, we just need to make sure you're not a robot/i.test(text)) {
       return 'Amazon verification page';
     }
@@ -159,7 +160,7 @@
   }
 
   function detectCancelled() {
-    const text = cleanText(document.body?.innerText || '');
+    const text = cleanText(document.body?.innerText || document.body?.textContent || '');
     if (/cancel(?:led|ed)/i.test(text) && !/tracking id:/i.test(text)) {
       return 'order cancelled';
     }
@@ -205,12 +206,12 @@
   }
 
   function detectNoTrackingAvailable() {
-    if (/tracking id:/i.test(cleanText(document.body?.innerText || ''))) return '';
+    if (/tracking id:/i.test(cleanText(document.body?.innerText || document.body?.textContent || ''))) return '';
 
     const fromDom = detectNotShippedFromDom();
     if (fromDom) return fromDom;
 
-    const text = cleanText(document.body?.innerText || '');
+    const text = cleanText(document.body?.innerText || document.body?.textContent || '');
     if (/cancel(?:led|ed)/i.test(text)) return 'order cancelled';
     if (/not yet shipped|preparing for shipment|shipping info (?:will be )?available|has(?:n't| not) shipped yet|we'?re getting your (?:order|package) ready|no tracking information|tracking will be updated|package has not left|tracking info is not available|available once the package ships|order received|processing your order|pending shipment|awaiting shipment|shipment delayed|delivery estimate unavailable|delivery status:\s*ordered\b|\barriving\s+(?:today|tomorrow|\w+\s+\d{1,2}|\d)/i.test(text)) {
       return 'no tracking available yet';
@@ -219,7 +220,7 @@
   }
 
   function extractTrackingSnapshot() {
-    const bodyText = cleanText(document.body?.innerText || '');
+    const bodyText = cleanText(document.body?.innerText || document.body?.textContent || '');
     const html = document.documentElement?.innerHTML || '';
     const trackingId = extractTrackingIdFromDom()
       || extractTrackingIdFromText(bodyText)
@@ -262,5 +263,8 @@
     return latest;
   }
 
-  return waitForTrackingData();
+  return waitForUpdates ? waitForTrackingData() : extractTrackingSnapshot();
+  }
+  globalThis.ieidExtractTracking = ieidExtractTracking;
+  if (!globalThis.IEID_PARSE_ONLY) return ieidExtractTracking(globalThis.document, true);
 })();

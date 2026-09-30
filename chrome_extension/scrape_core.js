@@ -22,7 +22,8 @@ function isShipTrackUrl(url) {
   try {
     const parsed = new URL(url);
     if (parsed.pathname.includes('/your-orders/pop')) return false;
-    return parsed.pathname.includes('/gp/your-account/ship-track') || parsed.pathname.includes('ship-track');
+    return parsed.pathname.includes('/gp/your-account/ship-track') || parsed.pathname.includes('ship-track')
+      || parsed.pathname === '/progress-tracker/package';
   } catch {
     return false;
   }
@@ -61,7 +62,9 @@ function matchingShipTrack(ids, links) {
       entry.shipmentId === shipmentId
       && (!itemId || !entry.itemId || entry.itemId === itemId)
     ));
-    if (match) return match;
+    // Item IDs can be reused across split shipments. A known shipment must
+    // never inherit another shipment's tracking URL through the item fallback.
+    return match || null;
   }
   if (itemId) {
     const match = list.find((entry) => entry.itemId === itemId);
@@ -152,6 +155,9 @@ function buildCancelledPayload(order, amazonEmail) {
 
 function referencedManifestFiles(manifest) {
   const paths = ['manifest.json'];
+  if (manifest?.permissions?.includes('offscreen')) {
+    paths.push('shipment_cache.js', 'amazon_requests.js', 'amazon_parser.html', 'amazon_parser.js', 'scrape_core.js', 'order_detail_scraper.js', 'tracking_scraper.js');
+  }
   const worker = manifest?.background?.service_worker;
   if (worker) paths.push(String(worker));
   const popup = manifest?.action?.default_popup;

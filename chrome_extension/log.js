@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 
 let autoScroll = true;
-let renderedCount = 0;
+let renderedSnapshot = '';
 let pollTimer = null;
 
 const logEl = $('log');
@@ -20,18 +20,14 @@ function renderLogEntry(entry) {
   logEl.appendChild(node);
 }
 
-function appendLog(text, level, time) {
-  renderLogEntry({ text, level, time });
-  $('logCount').textContent = `${logEl.children.length} entries`;
-  if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
-}
-
-function renderLogs(logs, fromIndex = 0) {
-  if (!logs?.length) return;
-  for (let i = fromIndex; i < logs.length; i++) {
+function renderLogs(logs) {
+  const snapshot = JSON.stringify(logs);
+  if (snapshot === renderedSnapshot) return;
+  renderedSnapshot = snapshot;
+  logEl.replaceChildren();
+  for (let i = 0; i < logs.length; i++) {
     renderLogEntry(logs[i]);
   }
-  renderedCount = logs.length;
   $('logCount').textContent = `${logEl.children.length} entries`;
   if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
 }
@@ -66,8 +62,8 @@ function applyStatus(resp) {
   updateRunning(resp.running);
   updateProgress(resp.pct, resp.statusText);
   updateStats(resp);
-  if (resp.logs?.length > renderedCount) {
-    renderLogs(resp.logs, renderedCount);
+  if (Array.isArray(resp.logs)) {
+    renderLogs(resp.logs);
   }
 }
 
@@ -85,7 +81,6 @@ function startPoll() {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'scrape_log') {
-    appendLog(msg.text, msg.level || '');
     startPoll();
   }
   if (msg.type === 'scrape_progress') {
@@ -95,7 +90,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'scrape_stats') updateStats(msg);
   if (msg.type === 'scrape_done') {
     updateRunning(false);
-    stopPoll();
+    pollStatus();
   }
 });
 

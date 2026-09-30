@@ -1,4 +1,4 @@
-importScripts('update_helpers.js', 'scrape_core.js');
+importScripts('update_helpers.js', 'scrape_core.js', 'amazon_requests.js', 'shipment_cache.js');
 
 const API_BASE = 'https://ieidgg.com';
 const UPDATE_CHECK_ALARM = 'extensionUpdateCheck';
@@ -364,12 +364,14 @@ function buildDbShipmentCache(orders) {
   const cache = new Map();
   for (const row of orders || []) {
     const tracking = normalizeTrackingList(row.tracking_number);
-    if (!tracking.length) continue;
     const key = buildDbCacheKey(row.order_id, row.asin, row.product_name);
     if (!key) continue;
-    if (!cache.has(key)) {
+    if (cache.has(key)) {
+      // More than one database row for this product is ambiguous.
+      cache.set(key, null);
+    } else {
       cache.set(key, {
-        tracking_number: tracking[0],
+        tracking_number: tracking.length === 1 ? tracking[0] : '',
         carrier: row.carrier || '',
         order_status: row.order_status || '',
         shipment_status: row.shipment_status || '',
@@ -397,6 +399,10 @@ function applyDbCacheToShipment(order, shipment, cache) {
   const key = buildDbCacheKey(order.orderId, shipment.asin, shipment.productTitle);
   const cached = cache.get(key);
   if (!cached?.tracking_number) return false;
+  // The API caches by product, not shipment. Split units need fresh tracking.
+  const sameProduct = (order.shipments || []).filter((entry) =>
+    buildDbCacheKey(order.orderId, entry.asin, entry.productTitle) === key);
+  if (sameProduct.length > 1) return false;
 
   shipment.trackingNumber = cached.tracking_number;
   if (cached.carrier && !shipment.carrier) shipment.carrier = cached.carrier;
@@ -534,10 +540,6 @@ function buildTrackingFetchGroups(allOrders) {
   for (const order of allOrders) {
     for (const shipment of order.shipments) {
       if (shipment.skipTrackingFetch) continue;
-      if (!(shipment.trackingUrl || (shipment.shipmentId && (shipment.lineItemId || shipment.itemId)))) {
-        continue;
-      }
-
       const target = { order, shipment, shipmentIndex };
       shipmentIndex++;
 
@@ -740,15 +742,6 @@ function filterOrdersByZip(orders, zipFilters) {
   return { keptOrders, skipped };
 }
 
-function filterCancelledOrdersByZip(cancelledOrders, zipFilters) {
-  if (!zipFilters.length) return cancelledOrders;
-
-  return cancelledOrders.filter((order) => {
-    order.zipCode = normalizeZipCode(order.zipCode || extractZipCodesFromText(order.shippingAddress || '')[0] || '');
-    return zipMatchesFilter(order, zipFilters);
-  });
-}
-
 function mergeCancelledOrders(target, incoming) {
   const seen = new Set(target.map((order) => order.orderId));
   for (const order of incoming) {
@@ -758,41 +751,66 @@ function mergeCancelledOrders(target, incoming) {
   }
 }
 
-async function uploadCancelledOrdersToApi(cancelledOrders, amazonEmail) {
-  if (!cancelledOrders.length) return;
+async function uploadCancelledOrdersToApi(cancelledOrders) {
+  if (!cancelledOrders.length || scrapeState.stopped) return;
 
-  const payload = cancelledOrders.map((order) => buildCancelledPayload(order, amazonEmail));
+  // Cancellation cards omit addresses. Match order numbers against the current
+  // user's database and use update-only requests so unknown orders stay absent.
+  let existingOrders;
+  try {
+    const result = await apiGet('/api/orders/amazon?refresh=true');
+    if (!Array.isArray(result.orders)) throw new Error('Invalid order lookup response');
+    existingOrders = result.orders;
+  } catch (err) {
+    scrapeState.failed += cancelledOrders.length;
+    stats();
+    log(`Could not sync cancellations: ${err.message}`, 'error');
+    return;
+  }
 
-  log(`Sending ${payload.length} cancelled order${payload.length === 1 ? '' : 's'} to API...`, 'info');
+  const rowsByOrderId = new Map();
+  for (const row of existingOrders) {
+    const orderId = String(row.order_id || '').trim();
+    if (!orderId || !row.id) continue;
+    if (!rowsByOrderId.has(orderId)) rowsByOrderId.set(orderId, new Set());
+    rowsByOrderId.get(orderId).add(row.id);
+  }
 
-  const batchSize = 50;
-  for (let i = 0; i < payload.length; i += batchSize) {
+  for (const order of cancelledOrders) {
     if (scrapeState.stopped) break;
-    const batch = payload.slice(i, i + batchSize);
-
-    try {
-      const result = await apiPost('/api/orders/amazon/scrape', { orders: batch });
-      const updated = (result.inserted || 0) + (result.updated || 0);
-      scrapeState.sent += updated;
-      scrapeState.failed += (result.failed || 0);
+    const orderId = String(order.orderId || '').trim();
+    const rowIds = rowsByOrderId.get(orderId);
+    if (!rowIds?.size) {
+      log(`${orderId}: cancelled, not in database (skipped)`, 'info');
+      continue;
+    }
+    for (const rowId of rowIds) {
+      if (scrapeState.stopped) break;
+      try {
+        const result = await authorizedFetch(`/api/orders/amazon/${encodeURIComponent(rowId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order_status: 'Cancelled', shipment_status: 'Cancelled' }),
+        });
+        if (!result.success) throw new Error(result.error || 'Cancellation update failed');
+        scrapeState.sent++;
+        log(`${orderId}: marked existing database row cancelled`, 'success');
+      } catch (err) {
+        scrapeState.failed++;
+        log(`${orderId}: cancellation update failed: ${err.message}`, 'error');
+      }
       stats();
-      log(`Cancelled batch ${Math.floor(i / batchSize) + 1}: ${result.inserted || 0} inserted, ${result.updated || 0} updated, ${result.failed || 0} failed`, result.failed ? 'error' : 'success');
-    } catch (err) {
-      scrapeState.failed += batch.length;
-      stats();
-      log(`Cancelled API error (batch ${Math.floor(i / batchSize) + 1}): ${err.message}`, 'error');
     }
   }
 }
 
-function reportCancelledOrders(cancelledOrders, zipFilters) {
-  const filtered = filterCancelledOrdersByZip(cancelledOrders, zipFilters);
-  for (const order of filtered) {
-    log(`${order.orderId}: cancelled (reporting to server)`, 'info');
+function reportCancelledOrders(cancelledOrders) {
+  for (const order of cancelledOrders) {
+    log(`${order.orderId}: cancelled (checking database)`, 'info');
   }
-  scrapeState.cancelled = filtered.length;
+  scrapeState.cancelled = cancelledOrders.length;
   stats();
-  return filtered;
+  return cancelledOrders;
 }
 
 function buildOrderDetailUrl(orderId) {
@@ -829,8 +847,47 @@ function getShipmentTotalOwed(order, shipment) {
   return '';
 }
 
+function aggregateProductPayload(rows) {
+  // The scrape API upserts by order + ASIN. Sending split shipments as separate
+  // writes overwrites that product's earlier tracking, quantity and cost.
+  const products = new Map();
+  for (const row of rows) {
+    const key = row.asin ? `${row.order_id}|${row.asin.toUpperCase()}` : payloadLineItemKey(row);
+    if (!products.has(key)) products.set(key, []);
+    products.get(key).push(row);
+  }
+  return Array.from(products.values(), (group) => {
+    if (group.length === 1) return group[0];
+    const merged = { ...group[0] };
+    merged.quantity = String(group.reduce((sum, row) => sum + (parseInt(row.quantity, 10) || 1), 0));
+    const trackingLists = group.map(row => normalizeTrackingList(row.tracking_number));
+    if (trackingLists.every(list => list.length)) {
+      merged.tracking_number = [...new Set(trackingLists.flat())];
+    } else {
+      // The API replaces arrays. A partial refresh must not erase an already
+      // saved tracking number for a shipment that failed to load this time.
+      delete merged.tracking_number;
+      scrapeState.extractionIncomplete = true;
+      log(`${merged.order_id} ${merged.asin}: incomplete shipment tracking; keeping saved tracking unchanged. Rescan this order to retry.`, 'error');
+    }
+    const amounts = group.map(row => parseMoneyAmount(row.total_owed));
+    if (amounts.every(amount => amount !== null)) {
+      merged.total_owed = formatMoneyAmount(amounts.reduce((sum, amount) => sum + amount, 0));
+    } else {
+      delete merged.total_owed;
+    }
+    // No single shipment identity, carrier or status describes a mixed group.
+    delete merged.shipment_id;
+    delete merged.line_item_id;
+    for (const field of ['carrier', 'order_status', 'shipment_status']) {
+      if (!group.every(row => row[field] === merged[field])) delete merged[field];
+    }
+    return compactScrapeRow(merged);
+  });
+}
+
 async function uploadOrdersToApi(allOrders, amazonEmail) {
-  const payload = dedupePayloadLineItems(allOrders.flatMap((order) => {
+  const payload = aggregateProductPayload(dedupePayloadLineItems(allOrders.flatMap((order) => {
     return order.shipments.map((shipment) => {
       const rawStatus = shipment.status || '';
       return compactScrapeRow({
@@ -851,7 +908,7 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
         email_address: amazonEmail,
       });
     });
-  }));
+  })));
 
   log(`Sending ${payload.length} line items from ${allOrders.length} orders...`, 'info');
 
@@ -897,9 +954,8 @@ function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error)
   shipment.carrier = trackResult.carrier || '';
   shipment.trackingNumber = trackResult.trackingId || '';
   shipment.trackingEvents = trackResult.events || [];
-  scrapeState.tracked++;
-
   if (trackResult.trackingId) {
+    scrapeState.tracked++;
     log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> ${trackResult.trackingId}`, 'success');
     return { timedOut: false };
   }
@@ -924,57 +980,88 @@ function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error)
 }
 
 async function fetchTrackingBatch(batchGroups) {
-  if (!batchGroups.length) return { timedOutCount: 0 };
-
-  const tabIds = [];
-  let timedOutCount = 0;
-  activeTrackingTabIds = tabIds;
-
-  try {
-    const openResults = await Promise.all(
-      batchGroups.map(async (group) => {
-        try {
-          return await openTab(group.trackUrl);
-        } catch (err) {
-          log(`Failed to open tracking tab: ${err.message}`, 'error');
-          return null;
-        }
-      })
-    );
-
-    tabIds.push(...openResults.filter(Boolean));
-    await waitForTabReady();
-
-    const scrapeResults = await Promise.all(
-      batchGroups.map(async (group, index) => {
-        const tabId = openResults[index];
-        if (!tabId) {
-          return { group, trackResult: null, error: 'Failed to open tab' };
-        }
-        try {
-          const trackResult = await injectAndRun(tabId, 'tracking_scraper.js');
-          return { group, trackResult, error: null };
-        } catch (err) {
-          return { group, trackResult: null, error: err.message };
-        }
-      })
-    );
-
-    for (const { group, trackResult, error } of scrapeResults) {
-      for (const target of group.targets) {
-        const result = applyTrackingResult(target.order, target.shipment, target.shipmentIndex, trackResult, error);
-        if (result.timedOut) timedOutCount++;
-      }
+  const results = await Promise.all(batchGroups.map(async (group) => {
+    try {
+      const trackResult = await readAmazonPage(group.trackUrl, 'tracking',
+        result => Boolean(result?.trackingId && !result.issue));
+      return { group, trackResult, error: null };
+    } catch (err) {
+      return { group, trackResult: null, error: err.message };
     }
-  } finally {
-    await Promise.all(tabIds.map((tabId) => closeTab(tabId)));
-    activeTrackingTabIds = activeTrackingTabIds.filter((id) => !tabIds.includes(id));
+  }));
+  let timedOutCount = 0;
+  for (const { group, trackResult, error } of results) {
+    for (const target of group.targets) {
+      const result = applyTrackingResult(target.order, target.shipment, target.shipmentIndex, trackResult, error);
+      if (result.timedOut) timedOutCount++;
+    }
   }
-
   return { timedOutCount };
 }
 
-async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbCache = null) {
+function validateDetailedOrder(result, order) {
+  const detail = result?.orders?.find(entry => entry.orderId === order.orderId);
+  if (result?.issue || !detail?.shipments?.length) {
+    throw new Error(result?.issue || 'No matching order details found');
+  }
+  const quantitiesByAsin = (shipments) => {
+    const totals = new Map();
+    for (const shipment of shipments || []) {
+      if (!shipment.asin) continue;
+      const asin = shipment.asin.toUpperCase();
+      totals.set(asin, (totals.get(asin) || 0) + (parseInt(shipment.quantity, 10) || 1));
+    }
+    return totals;
+  };
+  const detailTotals = quantitiesByAsin(detail.shipments);
+  for (const [asin, quantity] of quantitiesByAsin(order.shipments)) {
+    if ((detailTotals.get(asin) || 0) < quantity) {
+      throw new Error('Order details did not contain all product quantities from the list');
+    }
+  }
+  return detail;
+}
+
+async function readOrderDetail(order) {
+  return readAmazonPage(buildOrderDetailUrl(order.orderId), 'detail', result => {
+    if (!result?.issue && result?.cancelledOrders?.some(entry => entry.orderId === order.orderId)) return true;
+    try {
+      const detail = validateDetailedOrder(result, order);
+      return detail.shipments.every(shipment => Boolean(buildTrackingUrl(detail, shipment)));
+    } catch {
+      return false;
+    }
+  });
+}
+
+async function discoverMissingTracking(allOrders) {
+  const pending = allOrders.filter(order => !order.detailsScanned
+    && (order.shipments || []).some(shipment => !buildTrackingUrl(order, shipment)));
+  if (!pending.length) return;
+  log(`Requesting details for ${pending.length} orders to find hidden shipment tracking...`, 'info');
+  for (let start = 0; start < pending.length && !scrapeState.stopped; start += 4) {
+    await Promise.all(pending.slice(start, start + 4).map(async (order) => {
+      try {
+        const result = await readOrderDetail(order);
+        const detail = validateDetailedOrder(result, order);
+        order.shipments = detail.shipments;
+        order.detailsScanned = true;
+        dedupeOrderShipments(order);
+        log(`${order.orderId}: found ${order.shipments.length} shipment items on order details`, 'info');
+      } catch (err) {
+        scrapeState.extractionIncomplete = true;
+        log(`${order.orderId}: could not discover hidden tracking (${err.message})`, 'error');
+      }
+    }));
+  }
+  scrapeState.shipments = allOrders.reduce((sum, order) => sum + order.shipments.length, 0);
+  stats();
+}
+
+async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbCache = null, amazonEmail = '', useShipmentCache = true) {
+  await restoreShipmentDiscovery(allOrders, amazonEmail, useShipmentCache);
+  await discoverMissingTracking(allOrders);
+  if (scrapeState.stopped) return;
   if (dbCache) {
     const skipped = applyDbCacheToOrders(allOrders, dbCache);
     if (skipped) {
@@ -988,7 +1075,10 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
     applyTrackingResult(target.order, target.shipment, target.shipmentIndex, null, 'no ship-track URL');
   }
 
-  if (!groups.length) return;
+  if (!groups.length) {
+    await saveShipmentDiscovery(allOrders, amazonEmail);
+    return;
+  }
 
   let concurrency = TRACKING_TAB_CONCURRENCY;
   let timeoutBatchStreak = 0;
@@ -1001,7 +1091,7 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
     log(`Deduped tracking: ${trackedShipments} shipments -> ${uniqueFetches} unique fetches`, 'info');
   }
 
-  log(`Fetching tracking for ${trackedShipments} shipments (${uniqueFetches} URLs, ${concurrency} tabs at a time)...`, 'info');
+  log(`Fetching tracking for ${trackedShipments} shipments (${uniqueFetches} URLs, ${concurrency} requests at a time; tabs only if needed)...`, 'info');
 
   let processedShipments = noUrlTargets.length;
   let batchNumber = 0;
@@ -1069,11 +1159,11 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
     stats();
     log(`Removed ${postTrackingDuplicateShipments} duplicate shipment${postTrackingDuplicateShipments === 1 ? '' : 's'} after tracking lookup`, 'info');
   }
+  await saveShipmentDiscovery(allOrders, amazonEmail);
 }
 
 async function runSingleOrderScrape(config) {
-  const { orderId, fetchTracking, useDbCache } = config;
-  const zipFilters = normalizeZipFilters(config.zipFilters);
+  const { orderId } = config;
 
   if (!orderId) {
     scrapeDone('No order ID provided.', false);
@@ -1085,9 +1175,6 @@ async function runSingleOrderScrape(config) {
   startScrapeKeepAlive();
   openLogTab();
 
-  let dbCache = null;
-  let tabId = null;
-
   try {
     const token = await getAuthCookie();
     if (!token) {
@@ -1096,25 +1183,12 @@ async function runSingleOrderScrape(config) {
       return;
     }
 
-    if (useDbCache) {
-      dbCache = await loadDbShipmentCache();
-    }
-
     const amazonEmail = await detectAmazonAccountEmail();
 
     log(`Starting single order scan for ${orderId}...`, 'info');
     progress(15, `Loading order ${orderId}...`);
 
-    const url = buildOrderDetailUrl(orderId);
-    let result = null;
-    try {
-      tabId = await openTab(url);
-      await sleep(2000);
-      result = await injectAndRun(tabId, 'order_detail_scraper.js');
-    } finally {
-      if (tabId) await closeTab(tabId);
-      tabId = null;
-    }
+    const result = await readOrderDetail({ orderId, shipments: [] });
 
     if (result?.issue) {
       scrapeDone(result.issue, false);
@@ -1132,19 +1206,11 @@ async function runSingleOrderScrape(config) {
     let cancelledToReport = [];
 
     if (result.cancelledOrders?.length) {
-      cancelledToReport = reportCancelledOrders(result.cancelledOrders, zipFilters);
+      cancelledToReport = reportCancelledOrders(result.cancelledOrders);
     }
 
     for (const order of allOrders) {
       dedupeOrderShipments(order);
-    }
-
-    if (zipFilters.length && allOrders.length) {
-      const { keptOrders, skipped } = filterOrdersByZip(allOrders, zipFilters);
-      allOrders = keptOrders;
-      if (skipped) {
-        log(`Order ${orderId} did not match ZIP filter`, 'info');
-      }
     }
 
     scrapeState.orders = allOrders.length;
@@ -1160,7 +1226,7 @@ async function runSingleOrderScrape(config) {
 
     if (!allOrders.length && !cancelledToReport.length) {
       progress(100, 'No matching order');
-      scrapeDone(`Order ${orderId} did not match the selected ZIP filters.`, false);
+      scrapeDone(`Could not extract order ${orderId}.`, false);
       scrapeState.running = false;
       return;
     }
@@ -1169,8 +1235,9 @@ async function runSingleOrderScrape(config) {
       log(`Extracted ${allOrders.length} order with ${scrapeState.shipments} shipments`, 'success');
     }
 
-    if (fetchTracking && allOrders.length) {
-      await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null);
+    // A manually selected order always gets a fresh tracking lookup.
+    if (allOrders.length) {
+      await fetchTrackingForOrders(allOrders, 50, 80, null, amazonEmail);
     }
 
     if (scrapeState.stopped) {
@@ -1186,7 +1253,7 @@ async function runSingleOrderScrape(config) {
     }
 
     if (cancelledToReport.length) {
-      await uploadCancelledOrdersToApi(cancelledToReport, amazonEmail);
+      await uploadCancelledOrdersToApi(cancelledToReport);
     }
 
     progress(100, 'Done!');
@@ -1195,9 +1262,11 @@ async function runSingleOrderScrape(config) {
     if (cancelledToReport.length) parts.push(`${cancelledToReport.length} cancelled`);
     parts.push(`${scrapeState.sent} saved`);
     if (scrapeState.failed) parts.push(`${scrapeState.failed} failed`);
-    const doneText = `Complete: ${parts.join(', ')}`;
-    scrapeDone(doneText, scrapeState.failed === 0);
-    chrome.storage.local.remove('pendingSingleOrderId');
+    const complete = scrapeOutcomeSuccess(scrapeState);
+    if (scrapeState.extractionIncomplete) parts.push('incomplete tracking; rescan to retry');
+    const doneText = `${complete ? 'Complete' : 'Incomplete'}: ${parts.join(', ')}`;
+    scrapeDone(doneText, complete);
+    if (complete) chrome.storage.local.remove('pendingSingleOrderId');
   } catch (err) {
     scrapeDone(`Error: ${err.message}`, false);
   } finally {
@@ -1264,25 +1333,20 @@ async function runScrape(config, checkpoint = null) {
       if (scrapeState.stopped) break;
       if (maxPages > 0 && page > maxPages) break;
 
-      const startIndex = (page - 1) * 10;
-      const url = `https://www.amazon.com/your-orders/orders?orderFilter=${yearFilter}&startIndex=${startIndex}`;
+      const url = `https://www.amazon.com/your-orders/orders?timeFilter=${encodeURIComponent(yearFilter)}&page=${page - 1}`;
 
       progress(0, `Loading page ${page}...`);
       log(`Scraping page ${page}...`);
 
-      let tabId = null;
       let result = null;
       try {
-        tabId = await openTab(url);
-        await waitForTabReady();
-        result = await injectAndRun(tabId, 'scraper.js');
+        result = await readAmazonPage(url, 'list', value => value && !value.issue
+          && Array.isArray(value.orders) && Array.isArray(value.cancelledOrders));
       } catch (err) {
         scrapeState.extractionIncomplete = true;
         scrapeState.failed += 1;
         log(`Failed to extract page ${page}: ${err.message}`, 'error');
         break;
-      } finally {
-        if (tabId) await closeTab(tabId);
       }
 
       if (result?.issue) {
@@ -1299,20 +1363,21 @@ async function runScrape(config, checkpoint = null) {
         break;
       }
 
-      if (page === 1) {
-        totalPages = result.maxPage || 1;
+      // Later pages can reveal additional links in Amazon's sliding pager.
+      const previousTotal = totalPages;
+      totalPages = Math.max(totalPages, page, result.maxPage || 1);
+      if (page === 1 || totalPages > previousTotal) {
         const effectivePages = maxPages > 0 ? Math.min(maxPages, totalPages) : totalPages;
         log(`Found ${totalPages} total pages, will scrape ${effectivePages}`, 'info');
       }
 
       let pageOrders = result.orders || [];
-      let pageCancelled = result.cancelledOrders || [];
+      const pageCancelled = result.cancelledOrders || [];
 
       if (zipFilters.length) {
         const { keptOrders, skipped } = filterOrdersByZip(pageOrders, zipFilters);
         pageOrders = keptOrders;
         totalZipSkipped += skipped;
-        pageCancelled = filterCancelledOrdersByZip(pageCancelled, zipFilters);
       }
 
       mergeCancelledOrders(allCancelledOrders, pageCancelled);
@@ -1371,7 +1436,7 @@ async function runScrape(config, checkpoint = null) {
       log(`Removed ${finalDuplicateShipments} duplicate shipment${finalDuplicateShipments === 1 ? '' : 's'} before tracking`, 'info');
     }
 
-    const cancelledToReport = reportCancelledOrders(allCancelledOrders, zipFilters);
+    const cancelledToReport = reportCancelledOrders(allCancelledOrders);
 
     if (allOrders.length === 0 && !cancelledToReport.length) {
       progress(100, 'No orders found');
@@ -1387,7 +1452,7 @@ async function runScrape(config, checkpoint = null) {
     if (phase !== 'upload' && fetchTracking && allOrders.length) {
       phase = 'tracking';
       await persistScrapeCheckpoint(snapshot());
-      await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null);
+      await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null, amazonEmail, config.useShipmentCache !== false);
     }
 
     phase = 'upload';
@@ -1400,7 +1465,7 @@ async function runScrape(config, checkpoint = null) {
     }
 
     if (cancelledToReport.length) {
-      await uploadCancelledOrdersToApi(cancelledToReport, amazonEmail);
+      await uploadCancelledOrdersToApi(cancelledToReport);
     }
 
     progress(100, 'Done!');
@@ -1502,6 +1567,7 @@ async function openExtensionPopup() {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.target === 'ieid-html-parser') return false;
   if (msg.action === 'start_scrape') {
     if (!scrapeState.running) {
       runScrape(msg.config);

@@ -1,5 +1,5 @@
 (() => {
-  const ORDER_DETAILS_RE = /\/your-orders\/order-details/i;
+  const ORDER_DETAILS_RE = /^\/(?:your-orders|gp\/your-account)\/order-details(?:\/|$)/i;
   const ORDER_ID_PARAM = 'orderID';
 
   function getOrderId() {
@@ -45,23 +45,57 @@
       btn.style.transform = 'translateY(0)';
     });
 
+    let needsRefresh = false;
+    function offerRefresh() {
+      needsRefresh = true;
+      btn.disabled = false;
+      btn.textContent = 'Refresh page to scan';
+      btn.title = 'Refresh this Amazon page to reconnect to IEID, then scan again.';
+    }
+
     btn.addEventListener('click', () => {
+      if (needsRefresh) {
+        location.reload();
+        return;
+      }
       btn.disabled = true;
       btn.textContent = 'Opening IEID...';
-      console.log('[IEID] Scan requested for order', orderId);
 
-      chrome.storage.local.set({ pendingSingleOrderId: orderId }, () => {
-        chrome.runtime.sendMessage(
-          { action: 'prepare_single_order_scan', orderId },
-          () => {
-            btn.disabled = false;
-            btn.textContent = 'Scan with IEID';
-            if (chrome.runtime.lastError) {
-              console.error('[IEID] Failed to open extension:', chrome.runtime.lastError.message);
+      // Open Amazon tabs can retain an old content script after an extension
+      // reload. Catch both immediate API failures and later callback failures.
+      try {
+        if (!chrome.runtime?.id) {
+          offerRefresh();
+          return;
+        }
+        chrome.storage.local.set({ pendingSingleOrderId: orderId }, () => {
+          try {
+            if (chrome.runtime.lastError || !chrome.runtime.id) {
+              offerRefresh();
+              return;
             }
+            chrome.runtime.sendMessage(
+              { action: 'prepare_single_order_scan', orderId },
+              () => {
+                try {
+                  if (chrome.runtime.lastError || !chrome.runtime.id) {
+                    offerRefresh();
+                    return;
+                  }
+                  btn.disabled = false;
+                  btn.textContent = 'Scan with IEID';
+                } catch {
+                  offerRefresh();
+                }
+              }
+            );
+          } catch {
+            offerRefresh();
           }
-        );
-      });
+        });
+      } catch {
+        offerRefresh();
+      }
     });
 
     document.body.appendChild(btn);
