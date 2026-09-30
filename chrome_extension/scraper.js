@@ -228,7 +228,10 @@
   }
 
   function getStatusFromContainer(container) {
+    container = container.cloneNode(true);
+    container.querySelectorAll('script, style, noscript, template').forEach(node => node.remove());
     const selectors = [
+      '.yohtmlc-shipment-status-primaryText',
       '.delivery-box__primary-text',
       '[data-test-id*="delivery"]',
       '[class*="delivery"] .a-size-medium',
@@ -749,7 +752,9 @@
       const order = extractOrderHeader(card);
       if (!order.orderId || seenOrders.has(order.orderId) || seenCancelled.has(order.orderId)) continue;
 
-      const cardText = cleanText(card.textContent);
+      const statusCard = card.cloneNode(true);
+      statusCard.querySelectorAll('script, style, noscript, template').forEach(node => node.remove());
+      const cardText = cleanText(statusCard.textContent);
       const hasOnlyCancelledStatuses = /cancel(?:led|ed)/i.test(cardText)
         && !/(delivered|arriving|shipped|on the way|out for delivery)/i.test(cardText);
       if (hasOnlyCancelledStatuses) {

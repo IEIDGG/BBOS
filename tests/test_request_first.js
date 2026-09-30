@@ -15,6 +15,7 @@ function fixture(mode) {
       async sendMessage(message) { assert.strictEqual(message.target, 'ieid-html-parser'); return { result: ['incomplete', 'tab-error'].includes(mode) ? { incomplete: true } : mode === 'verification' ? { issue: 'Amazon verification page' } : { valid: true } }; },
     }, offscreen: { async createDocument() { calls.created++; } } },
     async fetch(request, options) { calls.fetch++; assert.strictEqual(options.credentials, 'include');
+      if (new URL(request).pathname === '/your-orders/orders') assert.strictEqual(new URL(request).searchParams.get('disableCsd'), 'no-js', 'Use Amazon-provided plain HTML fallback');
       if (mode === 'network') throw new Error('network');
       return { ok: true, url: mode === 'wrong-page' ? request.replace('page=15', 'page=0') : mode === 'signin' ? 'https://www.amazon.com/ap/signin' : mode === 'wrong-order' ? 'https://www.amazon.com/progress-tracker/package?orderId=other' : mode === 'missing-shipment' ? request.replace('&shipmentId=first', '') : request, headers: { get: () => 'text/html' }, async text() { return '<html>order</html>'; } };
     },

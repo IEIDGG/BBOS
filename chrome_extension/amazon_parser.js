@@ -18,7 +18,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     doc.head.prepend(base);
     // Keep script text out of body-text extraction. HTML regex extraction can
     // still read data in the head, but nothing in this detached document runs.
-    doc.body?.querySelectorAll('script, style, noscript').forEach(node => node.remove());
+    doc.body?.querySelectorAll('script, style, noscript').forEach(node => {
+      if (node.tagName === 'SCRIPT' && node.type === 'text/template' && node.id.startsWith('shipToData-shippingAddress')) return;
+      node.remove();
+    });
     if (message.kind === 'detail') {
       const orderId = url.searchParams.get('orderID') || url.searchParams.get('orderId');
       if (!orderId || !doc.body?.textContent.includes(orderId)) {

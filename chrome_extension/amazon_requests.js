@@ -33,7 +33,10 @@ async function ensureAmazonHtmlParser() {
 }
 
 async function requestAmazonPage(url, kind) {
-  validateAmazonReadUrl(url, kind);
+  const requestUrl = validateAmazonReadUrl(url, kind);
+  // Amazon supplies this URL in its noscript fallback for encrypted order cards.
+  if (kind === 'list') requestUrl.searchParams.set('disableCsd', 'no-js');
+  url = requestUrl.href;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
   let html;
