@@ -35,6 +35,14 @@ class ShouldBumpExtensionTests(unittest.TestCase):
             module.should_bump_extension(["chrome_extension/manifest.json"])
         )
 
+    def test_preserves_explicit_release_version_with_code_changes(self):
+        module = load_bump_script()
+        self.assertFalse(module.should_bump_extension(
+            ["chrome_extension/manifest.json", "chrome_extension/popup.js"],
+            old_manifest_text=json.dumps({"version": "1.1.8"}),
+            new_manifest_text=json.dumps({"version": "1.1.9"}),
+        ))
+
     def test_bumps_on_code_change(self):
         module = load_bump_script()
         self.assertTrue(module.should_bump_extension(["chrome_extension/popup.js"]))

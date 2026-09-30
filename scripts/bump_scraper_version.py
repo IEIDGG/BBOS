@@ -40,6 +40,15 @@ def should_bump_extension(
         logger.info("Scraper version bump skipped: no chrome_extension changes")
         return False
     non_manifest = [path for path in relevant if path != normalized_manifest_path]
+    if old_manifest_text is not None and new_manifest_text is not None:
+        try:
+            old_version = tuple(int(part) for part in json.loads(old_manifest_text)["version"].split("."))
+            new_version = tuple(int(part) for part in json.loads(new_manifest_text)["version"].split("."))
+            if new_version > old_version:
+                logger.info("Scraper version already increased explicitly; preserving it")
+                return False
+        except (ValueError, KeyError, TypeError, AttributeError):
+            pass
     if non_manifest:
         return True
     if old_manifest_text is not None and new_manifest_text is not None:
@@ -83,7 +92,7 @@ def load_manifest_texts(
     non_manifest = [
         path for path in relevant if path != "chrome_extension/manifest.json"
     ]
-    if "chrome_extension/manifest.json" not in relevant or non_manifest:
+    if "chrome_extension/manifest.json" not in relevant:
         return None, None
     try:
         old_manifest_text = subprocess.run(
