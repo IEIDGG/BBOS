@@ -57,8 +57,8 @@ assert.strictEqual(activeList.result.orders[0].shipments[0].asin, 'B0F1B8Q5GT');
 // links belong to one item, even when several cards share an outer a-row.
 const enhancedList = parse('list', `<html><body><div class="order-card">Order # 114-8512719-3097055 Order placed October 1, 2025
   <div class="shipment"><h2>Delivered</h2><div class="a-row"><div class="yo-enhanced-flex">
-    <div class="yo-enhanced-flex-card"><div class="yo-enhanced-flex-image"><a href="/dp/B0F1B8Q5GT"><img src="https://m.media-amazon.com/images/I/test.jpg"></a></div><div class="yo-enhanced-title"><a class="a-link-normal" href="/dp/B0F1B8Q5GT">Laptop</a></div><span class="item-view-qty">3</span></div>
-    <div class="yo-enhanced-flex-card"><div class="yo-enhanced-flex-image"><a href="/dp/B0F1B8Q5GU"><img src="https://m.media-amazon.com/images/I/other.jpg"></a></div><div class="yo-enhanced-title"><a class="a-link-normal" href="/dp/B0F1B8Q5GU">Tablet</a></div></div>
+    <div class="yo-enhanced-flex-card"><div class="yo-enhanced-flex-image"><a class="a-link-normal" href="/dp/B0F1B8Q5GT"><img src="https://m.media-amazon.com/images/I/test.jpg"></a></div><div class="yo-enhanced-title"><a class="a-link-normal" href="/dp/B0F1B8Q5GT">Laptop</a></div><span class="item-view-qty">3</span></div>
+    <div class="yo-enhanced-flex-card"><div class="yo-enhanced-flex-image"><a class="a-link-normal" href="/dp/B0F1B8Q5GU"><img src="https://m.media-amazon.com/images/I/other.jpg"></a></div><div class="yo-enhanced-title"><a class="a-link-normal" href="/dp/B0F1B8Q5GU">Tablet</a></div></div>
   </div></div></div></div></body></html>`, listUrl);
 assert.deepStrictEqual(Array.from(enhancedList.result.orders[0].shipments, s => [s.asin, s.productTitle, s.quantity]), [['B0F1B8Q5GT', 'Laptop', 3], ['B0F1B8Q5GU', 'Tablet', 1]], 'Image and title links must not double older-order quantities');
 const partialList = parse('list', '<html><body>160 orders placed in 2026<div class="order-card">Order # 112-8839569-9788250 Cancelled</div><div class="a-pagination">Loading...</div></body></html>', listUrl);

@@ -442,8 +442,10 @@
     ];
 
     for (const selector of selectors) {
-      const text = cleanText(container.querySelector(selector)?.textContent);
-      if (text && !/^\d+$/.test(text)) return text;
+      for (const candidate of container.querySelectorAll(selector)) {
+        const text = cleanText(candidate.textContent);
+        if (text && !/^\d+$/.test(text)) return text;
+      }
     }
 
     return cleanText(link?.getAttribute('aria-label') || link?.textContent || '');
