@@ -371,6 +371,7 @@
   function getProductRoot(link, container) {
     const selectors = [
       '.item-box',
+      '.yo-enhanced-flex-card',
       '.a-fixed-left-grid',
       '[data-itemid]',
       '[data-asin]',
