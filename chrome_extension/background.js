@@ -997,7 +997,7 @@ async function fetchTrackingBatch(batchGroups) {
   const results = await Promise.all(batchGroups.map(async (group) => {
     try {
       const trackResult = await readAmazonPage(group.trackUrl, 'tracking',
-        result => Boolean(!result?.issue && (result?.trackingId || result?.unavailable || result?.noTracking || result?.cancelled)));
+        result => Boolean(!result?.issue && (result?.trackingId || result?.unavailable)));
       return { group, trackResult, error: null };
     } catch (err) {
       return { group, trackResult: null, error: err.message };
