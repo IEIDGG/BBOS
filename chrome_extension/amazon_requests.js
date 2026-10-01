@@ -15,6 +15,19 @@ function validateAmazonReadUrl(value, kind) {
   return url;
 }
 
+function validateAmazonResponseUrl(requestUrl, responseUrl, kind) {
+  const requested = validateAmazonReadUrl(requestUrl, kind);
+  const returned = validateAmazonReadUrl(responseUrl, kind);
+  for (const aliases of [['orderID', 'orderId'], ['shipmentId'], ['packageId'], ['packageIndex'], ['timeFilter', 'orderFilter'], ['page'], ['startIndex']]) {
+    const expected = aliases.map(key => requested.searchParams.get(key)).filter(value => value !== null);
+    const actual = aliases.map(key => returned.searchParams.get(key)).filter(value => value !== null);
+    if (expected.length && (!actual.length || expected.some(value => value !== expected[0])
+        || actual.some(value => value !== expected[0]))) {
+      throw new Error('Amazon redirected to another order, shipment, date range or page');
+    }
+  }
+}
+
 async function ensureAmazonHtmlParser() {
   if (amazonParserCreation) return amazonParserCreation;
   amazonParserCreation = (async () => {
@@ -45,17 +58,7 @@ async function requestAmazonPage(url, kind) {
     const response = await fetch(url, { credentials: 'include', signal: controller.signal, cache: 'no-store' });
     if (!response.ok) throw new Error(`Amazon HTTP ${response.status}`);
     responseUrl = response.url;
-    validateAmazonReadUrl(responseUrl, kind); // Sign-in redirects need the browser fallback.
-    const requested = new URL(url);
-    const returned = new URL(responseUrl);
-    for (const aliases of [['orderID', 'orderId'], ['shipmentId'], ['packageId'], ['packageIndex'], ['timeFilter', 'orderFilter'], ['page'], ['startIndex']]) {
-      const expected = aliases.map(key => requested.searchParams.get(key)).filter(value => value !== null);
-      const actual = aliases.map(key => returned.searchParams.get(key)).filter(value => value !== null);
-      if (expected.length && (!actual.length || expected.some(value => value !== expected[0])
-          || actual.some(value => value !== expected[0]))) {
-        throw new Error('Amazon redirected to another order or shipment');
-      }
-    }
+    validateAmazonResponseUrl(url, responseUrl, kind); // Sign-in redirects need the browser fallback.
     if (!/text\/html/i.test(response.headers.get('content-type') || '')) throw new Error('Expected Amazon HTML');
     html = await response.text();
     if (!html || html.length > 8 * 1024 * 1024) throw new Error('Unexpected Amazon HTML size');
@@ -95,7 +98,11 @@ async function readAmazonPage(url, kind, accept) {
     if (kind === 'tracking') activeTrackingTabIds.push(tabId);
     if (scrapeState.stopped) throw new Error('Scan stopped');
     await waitForTabReady();
-    return await injectAndRun(tabId, kind === 'list' ? 'scraper.js' : kind === 'detail' ? 'order_detail_scraper.js' : 'tracking_scraper.js');
+    validateAmazonResponseUrl(url, (await chrome.tabs.get(tabId)).url, kind);
+    const result = await injectAndRun(tabId, kind === 'list' ? 'scraper.js' : kind === 'detail' ? 'order_detail_scraper.js' : 'tracking_scraper.js');
+    // Tracking pages can redirect while waiting for rendered data.
+    validateAmazonResponseUrl(url, (await chrome.tabs.get(tabId)).url, kind);
+    return result;
   } finally {
     if (tabId) await closeTab(tabId);
     if (kind === 'tracking') activeTrackingTabIds = activeTrackingTabIds.filter(id => id !== tabId);

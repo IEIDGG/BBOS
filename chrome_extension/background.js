@@ -1,4 +1,4 @@
-importScripts('update_helpers.js', 'scrape_core.js', 'amazon_requests.js', 'shipment_cache.js');
+importScripts('update_helpers.js', 'scrape_core.js', 'order_history.js', 'amazon_requests.js', 'shipment_cache.js');
 
 const API_BASE = 'https://ieidgg.com';
 const UPDATE_CHECK_ALARM = 'extensionUpdateCheck';
@@ -942,25 +942,37 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
 
 function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error) {
   if (error === 'no ship-track URL') {
+    scrapeState.extractionIncomplete = true;
     log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> no ship-track URL`, 'error');
     return { timedOut: false };
   }
   if (error) {
+    scrapeState.extractionIncomplete = true;
     log(`  Failed tracking for ${order.orderId}: ${error}`, 'error');
     return { timedOut: false };
   }
-  if (!trackResult) return { timedOut: false };
+  if (!trackResult) {
+    scrapeState.extractionIncomplete = true;
+    return { timedOut: false };
+  }
 
-  shipment.carrier = trackResult.carrier || '';
-  shipment.trackingNumber = trackResult.trackingId || '';
-  shipment.trackingEvents = trackResult.events || [];
   if (trackResult.trackingId) {
+    shipment.carrier = trackResult.carrier || shipment.carrier || '';
+    shipment.trackingNumber = trackResult.trackingId;
+    shipment.trackingEvents = trackResult.events || [];
     scrapeState.tracked++;
     log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> ${trackResult.trackingId}`, 'success');
     return { timedOut: false };
   }
   if (trackResult.issue) {
+    scrapeState.extractionIncomplete = true;
     log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> no tracking# (${trackResult.issue})`, 'error');
+    return { timedOut: false };
+  }
+  if (trackResult.unavailable) {
+    scrapeState.extractionIncomplete = true;
+    scrapeState.trackingUnavailable = (scrapeState.trackingUnavailable || 0) + 1;
+    log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> ${trackResult.unavailable}; saved tracking kept unchanged`, 'error');
     return { timedOut: false };
   }
   if (trackResult.cancelled) {
@@ -972,9 +984,11 @@ function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error)
     return { timedOut: false };
   }
   if (trackResult.timedOut) {
+    scrapeState.extractionIncomplete = true;
     log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> no tracking# (timeout)`, 'error');
     return { timedOut: true };
   }
+  scrapeState.extractionIncomplete = true;
   log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> no tracking#`, 'error');
   return { timedOut: false };
 }
@@ -983,7 +997,7 @@ async function fetchTrackingBatch(batchGroups) {
   const results = await Promise.all(batchGroups.map(async (group) => {
     try {
       const trackResult = await readAmazonPage(group.trackUrl, 'tracking',
-        result => Boolean(result?.trackingId && !result.issue));
+        result => Boolean(!result?.issue && (result?.trackingId || result?.unavailable)));
       return { group, trackResult, error: null };
     } catch (err) {
       return { group, trackResult: null, error: err.message };
@@ -1295,6 +1309,9 @@ async function runScrape(config, checkpoint = null) {
   let phase = checkpoint?.phase || 'list';
 
   try {
+    const historyPlan = checkpoint?.historyPlan || createOrderHistoryPlan(yearFilter);
+    let filterIndex = checkpoint?.filterIndex || 0;
+    let pagesRead = checkpoint?.pagesRead || Math.max(0, page - 1);
     const token = await getAuthCookie();
     if (!token) {
       scrapeDone('Not authenticated. Please sign in first.', false);
@@ -1313,6 +1330,9 @@ async function runScrape(config, checkpoint = null) {
       kind: 'bulk',
       phase,
       config,
+      historyPlan,
+      filterIndex,
+      pagesRead,
       page,
       totalPages,
       allOrders,
@@ -1324,19 +1344,25 @@ async function runScrape(config, checkpoint = null) {
 
     if (phase === 'list') {
       log(checkpoint ? `Resuming order list scrape at page ${page}...` : 'Starting order list scrape...', 'info');
+      log(`Date range: ${historyPlan.cutoffDate ? `past 12 months since ${historyPlan.cutoffDate}` : historyPlan.filters[0]}; ${maxPages > 0 ? `maximum ${maxPages} pages across the range` : 'all pages'}`, 'info');
       if (zipFilters.length) {
         log(`Keeping only orders for ZIP ${zipFilters.join(', ')} during list scan`, 'info');
       }
       await persistScrapeCheckpoint(snapshot());
 
-    while (page <= totalPages) {
+    while (filterIndex < historyPlan.filters.length) {
       if (scrapeState.stopped) break;
-      if (maxPages > 0 && page > maxPages) break;
+      if (maxPages > 0 && pagesRead >= maxPages) {
+        scrapeState.rangeLimited = true;
+        log('Page limit reached; the selected date range has not been fully scanned. Set Max Pages to 0 to fetch all orders.', 'info');
+        break;
+      }
 
-      const url = `https://www.amazon.com/your-orders/orders?timeFilter=${encodeURIComponent(yearFilter)}&page=${page - 1}`;
+      const activeFilter = historyPlan.filters[filterIndex];
+      const url = `https://www.amazon.com/your-orders/orders?timeFilter=${encodeURIComponent(activeFilter)}&page=${page - 1}`;
 
       progress(0, `Loading page ${page}...`);
-      log(`Scraping page ${page}...`);
+      log(`Scraping ${activeFilter} page ${page}...`);
 
       let result = null;
       try {
@@ -1367,12 +1393,11 @@ async function runScrape(config, checkpoint = null) {
       const previousTotal = totalPages;
       totalPages = Math.max(totalPages, page, result.maxPage || 1);
       if (page === 1 || totalPages > previousTotal) {
-        const effectivePages = maxPages > 0 ? Math.min(maxPages, totalPages) : totalPages;
-        log(`Found ${totalPages} total pages, will scrape ${effectivePages}`, 'info');
+        log(`Found ${totalPages} pages in ${activeFilter}; ${maxPages > 0 ? `${maxPages - pagesRead} pages remain in the scan limit` : 'scanning all pages'}`, 'info');
       }
 
-      let pageOrders = result.orders || [];
-      const pageCancelled = result.cancelledOrders || [];
+      let pageOrders = filterOrderHistory(result.orders || [], historyPlan);
+      const pageCancelled = filterOrderHistory(result.cancelledOrders || [], historyPlan);
 
       if (zipFilters.length) {
         const { keptOrders, skipped } = filterOrdersByZip(pageOrders, zipFilters);
@@ -1396,12 +1421,17 @@ async function runScrape(config, checkpoint = null) {
       scrapeState.shipments = allOrders.reduce((n, o) => n + o.shipments.length, 0);
       stats();
 
-      const effectiveTotal = maxPages > 0 ? Math.min(maxPages, totalPages) : totalPages;
-      progress(Math.round((page / effectiveTotal) * 50), `Page ${page}/${effectiveTotal} done (${allOrders.length} orders)`);
+      progress(Math.round(((filterIndex + page / totalPages) / historyPlan.filters.length) * 50), `${activeFilter} page ${page}/${totalPages} done (${allOrders.length} orders)`);
 
       page++;
+      pagesRead++;
+      if (page > totalPages) {
+        filterIndex++;
+        page = 1;
+        totalPages = 1;
+      }
       await persistScrapeCheckpoint(snapshot());
-      if (page <= effectiveTotal) {
+      if (filterIndex < historyPlan.filters.length) {
         await sleep(randomOrderPageDelay());
       }
     }
@@ -1474,10 +1504,12 @@ async function runScrape(config, checkpoint = null) {
     if (cancelledToReport.length) parts.push(`${cancelledToReport.length} cancelled`);
     parts.push(`${scrapeState.sent} saved`);
     if (scrapeState.failed) parts.push(`${scrapeState.failed} failed`);
+    if (scrapeState.trackingUnavailable) parts.push(`${scrapeState.trackingUnavailable} tracking unavailable from Amazon`);
     const doneText = scrapeState.extractionIncomplete
       ? `Incomplete: ${parts.join(', ')}`
+      : scrapeState.rangeLimited ? `Page limit reached: ${parts.join(', ')}`
       : `Complete: ${parts.join(', ')}`;
-    scrapeDone(doneText, scrapeState.failed === 0);
+    scrapeDone(doneText, scrapeOutcomeSuccess(scrapeState));
   } catch (err) {
     scrapeDone(`Error: ${err.message}`, false);
   } finally {

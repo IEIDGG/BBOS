@@ -29,6 +29,12 @@ const files = {};
 collectFiles(root, '', files);
 const validated = core.validatePackagePayload({ version: manifest.version, files });
 assert.strictEqual(validated.version, manifest.version);
+const missingHistory = { ...files };
+delete missingHistory['order_history.js'];
+assert.throws(() => core.validatePackagePayload({ version: manifest.version, files: missingHistory }), /missing required files: order_history\.js/, 'Reject packages that would break the background history import');
+const missingListParser = { ...files };
+delete missingListParser['scraper.js'];
+assert.throws(() => core.validatePackagePayload({ version: manifest.version, files: missingListParser }), /missing required files: scraper\.js/, 'Reject packages that would break the offscreen list parser');
 
 const jsFiles = Object.keys(files).filter((rel) => rel.endsWith('.js'));
 for (const rel of jsFiles) {

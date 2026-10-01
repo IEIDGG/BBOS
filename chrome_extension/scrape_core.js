@@ -156,7 +156,7 @@ function buildCancelledPayload(order, amazonEmail) {
 function referencedManifestFiles(manifest) {
   const paths = ['manifest.json'];
   if (manifest?.permissions?.includes('offscreen')) {
-    paths.push('shipment_cache.js', 'amazon_requests.js', 'amazon_parser.html', 'amazon_parser.js', 'scrape_core.js', 'order_detail_scraper.js', 'tracking_scraper.js');
+    paths.push('shipment_cache.js', 'order_history.js', 'amazon_requests.js', 'amazon_parser.html', 'amazon_parser.js', 'scrape_core.js', 'order_detail_scraper.js', 'tracking_scraper.js', 'scraper.js');
   }
   const worker = manifest?.background?.service_worker;
   if (worker) paths.push(String(worker));

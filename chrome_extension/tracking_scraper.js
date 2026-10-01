@@ -227,6 +227,8 @@
       || extractTrackingIdFromHtml(html);
     const carrier = extractCarrierFromDom() || extractCarrierFromText(bodyText) || extractCarrierFromText(html);
     const issue = detectPageIssue();
+    const unavailable = !trackingId && !issue && /unable to get (?:the )?tracking information|tracking information (?:is|was) (?:unavailable|no longer available)/i.test(bodyText)
+      ? 'Amazon tracking information unavailable for this shipment' : '';
     const cancelled = issue ? '' : detectCancelled();
     const noTracking = issue || cancelled ? '' : detectNoTrackingAvailable();
 
@@ -235,6 +237,7 @@
       trackingId: cleanText(trackingId),
       events: extractEvents(),
       issue,
+      unavailable,
       cancelled,
       noTracking,
     };
@@ -252,12 +255,13 @@
       latest = extractTrackingSnapshot();
       if (latest.trackingId) return latest;
       if (latest.issue) return latest;
+      if (latest.unavailable) return latest;
       if (latest.cancelled) return latest;
       if (latest.noTracking) return latest;
       await sleep(intervalMs);
     }
 
-    if (!latest.trackingId && !latest.issue && !latest.cancelled && !latest.noTracking) {
+    if (!latest.trackingId && !latest.issue && !latest.unavailable && !latest.cancelled && !latest.noTracking) {
       latest.timedOut = true;
     }
     return latest;

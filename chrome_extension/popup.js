@@ -253,6 +253,15 @@ const SETTINGS_KEYS = ['yearFilter', 'maxPages', 'fetchTracking', 'useDbCache', 
 
 async function loadSettings() {
   const data = await chrome.storage.local.get(SETTINGS_KEYS);
+  const currentYear = new Date().getFullYear();
+  const savedYear = /^year-(\d{4})$/.exec(data.yearFilter || '')?.[1];
+  const oldestYear = Math.min(currentYear - 12, Number(savedYear) || currentYear);
+  for (let year = currentYear; year >= oldestYear; year--) {
+    const option = document.createElement('option');
+    option.value = `year-${year}`;
+    option.textContent = String(year);
+    $('yearFilter').appendChild(option);
+  }
   if (data.yearFilter) $('yearFilter').value = data.yearFilter;
   if (data.maxPages !== undefined) $('maxPages').value = data.maxPages;
   if (data.fetchTracking !== undefined) $('fetchTracking').checked = data.fetchTracking;
@@ -260,7 +269,20 @@ async function loadSettings() {
   if (data.useShipmentCache !== undefined) $('useShipmentCache').checked = data.useShipmentCache;
   if (data.zipFilters !== undefined) $('zipFilters').value = data.zipFilters;
   if (data.lastAmazonEmail) $('amazonAccountEmail').textContent = data.lastAmazonEmail;
+  updateHistoryRangeHint();
 }
+
+function updateHistoryRangeHint() {
+  const limited = Number($('maxPages').value) > 0;
+  $('historyRangeHint').textContent = limited
+    ? `Limited to ${$('maxPages').value} pages across the range. Set 0 to fetch the entire selected range.`
+    : $('yearFilter').value === 'months-12'
+    ? "Scans both calendar years for the past 12 months. Amazon's 3-month page default does not apply."
+    : 'Scans every page in the selected calendar year.';
+}
+
+$('maxPages').addEventListener('input', updateHistoryRangeHint);
+$('yearFilter').addEventListener('change', updateHistoryRangeHint);
 
 function saveSettings() {
   chrome.storage.local.set({

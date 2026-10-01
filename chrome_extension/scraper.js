@@ -371,6 +371,7 @@
   function getProductRoot(link, container) {
     const selectors = [
       '.item-box',
+      '.yo-enhanced-flex-card',
       '.a-fixed-left-grid',
       '[data-itemid]',
       '[data-asin]',
@@ -441,8 +442,10 @@
     ];
 
     for (const selector of selectors) {
-      const text = cleanText(container.querySelector(selector)?.textContent);
-      if (text && !/^\d+$/.test(text)) return text;
+      for (const candidate of container.querySelectorAll(selector)) {
+        const text = cleanText(candidate.textContent);
+        if (text && !/^\d+$/.test(text)) return text;
+      }
     }
 
     return cleanText(link?.getAttribute('aria-label') || link?.textContent || '');
@@ -729,6 +732,13 @@
   }
 
   function detectPageIssue() {
+    const requestedFilter = new URL(location.href).searchParams.get('timeFilter')
+      || new URL(location.href).searchParams.get('orderFilter');
+    const filterSelect = document.querySelector('select#time-filter, select[name="timeFilter"], select[name="orderFilter"]');
+    const actualFilter = filterSelect?.value || filterSelect?.querySelector('option[selected]')?.getAttribute('value');
+    if (requestedFilter && actualFilter && requestedFilter !== actualFilter) {
+      return `Amazon displayed a different date filter (${actualFilter}) than requested (${requestedFilter}).`;
+    }
     const text = cleanText(document.body?.innerText || document.body?.textContent || '');
     if (/enter the characters you see below|sorry, we just need to make sure you're not a robot/i.test(text)) {
       return 'Amazon is showing a verification page. Open Amazon in the browser tab and complete the check, then try again.';

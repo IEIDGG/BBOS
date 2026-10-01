@@ -80,6 +80,7 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/html-tests" --no-audit --no-fund linkedom@0.18.12
           NODE_PATH="$RUNNER_TEMP/html-tests/node_modules" node tests/test_html_parser.js
           NODE_PATH="$RUNNER_TEMP/html-tests/node_modules" node tests/test_log_rendering.js
+          NODE_PATH="$RUNNER_TEMP/html-tests/node_modules" node tests/test_popup_history.js
 
       - name: Trailing whitespace
         env:
