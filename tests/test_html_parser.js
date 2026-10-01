@@ -34,9 +34,14 @@ for (const id of ['1ZY469E40307962229', 'TBA332296109428', '93395897252688562403
 const challenge = parse('tracking', '<html><body>Enter the characters you see below</body></html>', trackingUrl);
 assert.strictEqual(challenge.result.issue, 'Amazon verification page');
 assert.strictEqual(parse('tracking', '<html><body>Loading...</body></html>', trackingUrl).result.trackingId, '');
+const archived = parse('tracking', '<html><body>Sorry, we are unable to get the tracking information right now. Redirecting to Order Details in 7 seconds.</body></html>', trackingUrl).result;
+assert.match(archived.unavailable || '', /Amazon.*unavailable/i, 'Recognize Amazon unavailable tracking instead of timing out or treating it as not shipped');
+assert.strictEqual(archived.noTracking, '');
 console.log('detached HTML detail/tracking parser tests passed');
 
 const listUrl = 'https://www.amazon.com/your-orders/orders?timeFilter=year-2026&page=0';
+const wrongRange = parse('list', '<html><body><select id="time-filter"><option value="months-3" selected>past 3 months</option></select><div class="order-card">Order # 112-8839569-9788250 Cancelled</div></body></html>', listUrl);
+assert.match(wrongRange.result.issue, /date filter/i, 'A response displaying the wrong range must trigger fallback');
 const list = parse('list', `<html><body><div class="order-card">Order # 112-8839569-9788250 Cancelled</div><a href="/your-orders/orders?timeFilter=year-2026&page=15">16</a></body></html>`, listUrl);
 assert.ok(!list.error, list.error);
 assert.strictEqual(list.result.cancelledOrders[0].orderId, '112-8839569-9788250');

@@ -40,12 +40,14 @@ console.log('order pagination tests passed');
 // Run the actual list-scan loop with a sliding pager that reveals only the
 // next page. ZIP filtering must not end traversal when a page keeps no orders.
 const background = fs.readFileSync(require.resolve('../chrome_extension/background.js'), 'utf8');
-const loop = background.slice(background.indexOf('    while (page <= totalPages)'),
+const loop = background.slice(background.indexOf('    while (filterIndex < historyPlan.filters.length)'),
   background.indexOf('      if (!scrapeState.stopped && !scrapeState.extractionIncomplete)'));
 async function traverse(limit) {
   const visited = [];
   const ctx = vm.createContext({
     page: 1, totalPages: 1, maxPages: limit, yearFilter: 'year-2026',
+    historyPlan: { filters: ['year-2026'], cutoffDate: '' }, filterIndex: 0, pagesRead: 0,
+    filterOrderHistory: require('../chrome_extension/order_history.js').filterOrderHistory,
     zipFilters: ['03063'], totalZipSkipped: 0, allOrders: [], allCancelledOrders: [],
     scrapeState: { stopped: false },
     progress() {}, log() {}, stats() {}, snapshot: () => ({}),

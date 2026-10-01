@@ -33,6 +33,8 @@ require('./test_cancelled_orders.js');
 require('./test_single_order.js');
 require('./test_multi_shipment.js');
 require('./test_pagination.js');
+require('./test_order_history.js');
+require('./test_tracking_outcome.js');
 require('./test_detail_fallback.js');
 require('./test_request_first.js');
 require('./test_shipment_cache.js');

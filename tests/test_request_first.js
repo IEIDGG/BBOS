@@ -12,14 +12,16 @@ function fixture(mode) {
     scrapeState: { stopped: false }, activeTrackingTabIds: [], log() {},
     chrome: { runtime: { getURL: p => 'chrome-extension://test/' + p,
       async getContexts() { return []; },
-      async sendMessage(message) { assert.strictEqual(message.target, 'ieid-html-parser'); return { result: ['incomplete', 'tab-error'].includes(mode) ? { incomplete: true } : mode === 'verification' ? { issue: 'Amazon verification page' } : { valid: true } }; },
-    }, offscreen: { async createDocument() { calls.created++; } } },
+      async sendMessage(message) { assert.strictEqual(message.target, 'ieid-html-parser'); return { result: ['incomplete', 'tab-error'].includes(mode) ? { incomplete: true } : mode === 'verification' ? { issue: 'Amazon verification page' } : mode === 'unavailable' ? { unavailable: 'Amazon tracking information unavailable for this shipment' } : { valid: true } }; },
+    }, offscreen: { async createDocument() { calls.created++; } }, tabs: { async get() {
+      return { url: mode === 'tab-wrong-year' ? 'https://www.amazon.com/your-orders/orders?timeFilter=months-3&page=15' : calls.tabUrl };
+    } } },
     async fetch(request, options) { calls.fetch++; assert.strictEqual(options.credentials, 'include');
       if (new URL(request).pathname === '/your-orders/orders') assert.strictEqual(new URL(request).searchParams.get('disableCsd'), 'no-js', 'Use Amazon-provided plain HTML fallback');
-      if (mode === 'network') throw new Error('network');
+      if (mode === 'network' || mode === 'tab-wrong-year') throw new Error('network');
       return { ok: true, url: mode === 'wrong-page' ? request.replace('page=15', 'page=0') : mode === 'signin' ? 'https://www.amazon.com/ap/signin' : mode === 'wrong-order' ? 'https://www.amazon.com/progress-tracker/package?orderId=other' : mode === 'missing-shipment' ? request.replace('&shipmentId=first', '') : request, headers: { get: () => 'text/html' }, async text() { return '<html>order</html>'; } };
     },
-    async openTab() { calls.tabs++; return 10; }, async closeTab() { calls.closed++; }, async waitForTabReady() {},
+    async openTab(url) { calls.tabs++; calls.tabUrl = url; return 10; }, async closeTab() { calls.closed++; }, async waitForTabReady() {},
     async injectAndRun() { if (mode === 'tab-error') throw new Error('tab extraction failed'); return { valid: true, tab: true }; },
   });
   vm.runInContext(source, ctx);
@@ -42,6 +44,13 @@ function fixture(mode) {
   await listFallback.ctx.readAmazonPage('https://www.amazon.com/your-orders/orders?timeFilter=year-2026&page=15', 'list', value => value?.valid);
   assert.strictEqual(listFallback.calls.tabs, 1);
   assert.strictEqual(listFallback.calls.closed, 1);
+  const wrongTabRange = fixture('tab-wrong-year');
+  await assert.rejects(() => wrongTabRange.ctx.readAmazonPage('https://www.amazon.com/your-orders/orders?timeFilter=year-2025&page=15', 'list', value => value?.valid));
+  assert.strictEqual(wrongTabRange.calls.closed, 1, 'Close redirected fallback tabs instead of accepting the wrong date range');
+  const unavailable = fixture('unavailable');
+  const unavailableResult = await unavailable.ctx.readAmazonPage('https://www.amazon.com/progress-tracker/package?orderId=111&shipmentId=first', 'tracking', value => Boolean(value?.unavailable));
+  assert.ok(unavailableResult.unavailable);
+  assert.strictEqual(unavailable.calls.tabs, 0, 'A definitive unavailable response does not need a tab');
   const referral = fixture('success');
   await referral.ctx.readAmazonPage('https://www.amazon.com/gp/your-account/ship-track/ref=ppx_yo_dt_b_track_package?orderId=111&shipmentId=first', 'tracking', value => value?.valid);
   assert.strictEqual(referral.calls.tabs, 0, 'Legitimate referral paths use the request transport');
