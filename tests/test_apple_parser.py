@@ -1095,3 +1095,19 @@ def test_event_evidence_still_requires_an_order_number(kind):
         email_date="2026-09-19",
     )
     assert result == {}
+
+
+def test_tracking_labels_with_words_only_are_ignored():
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(
+        """<table><tr><td>Tracking Number:</td><td>
+        <p>or hold for</p><p>local pickup</p><p>ShipmentPending</p>
+        <p>1Z999AA10123456784</p><p>123456789012</p>
+        </td></tr></table>""",
+        "html.parser",
+    )
+    assert AppleParser()._tracking_numbers(soup, "W9999999997") == [
+        "1Z999AA10123456784",
+        "123456789012",
+    ]
