@@ -176,7 +176,11 @@ $('signInBtn').addEventListener('click', async () => {
 });
 
 $('signOutBtn').addEventListener('click', async () => {
-  await IEIDAuth.disconnect(); showSignedOut();
+  const button = $('signOutBtn'); button.disabled = true;
+  $('authStatus').textContent = '';
+  try { await IEIDAuth.disconnect(); showSignedOut(); }
+  catch { $('authStatus').textContent = 'Unable to sign out on the server. Try again.'; }
+  finally { button.disabled = false; }
 });
 
 // --- Settings ---

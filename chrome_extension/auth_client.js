@@ -47,7 +47,11 @@
   }
   async function disconnect() {
     const {accountGrant:grant} = await chrome.storage.session.get('accountGrant');
-    if (grant) await extensionFetch(base + '/api/auth/extensions/logout', {method:'POST', credentials:'omit', headers:{'X-Auth-Token':grant.access_token}});
+    if (grant) {
+      const response = await extensionFetch(base + '/api/auth/extensions/logout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({refresh_token:grant.refresh_token})});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success !== true) throw new Error('Unable to sign out: server disconnect unavailable. Try again.');
+    }
     await chrome.storage.session.remove(['accountGrant','accountHandoff']);
   }
   const message = (type, fields = {}) => chrome.runtime.sendMessage({type, ...fields}).then(result => {

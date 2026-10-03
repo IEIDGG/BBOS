@@ -7,6 +7,8 @@ async function main() {
   let listener;
   let refreshes = 0;
   let live = false;
+  let logoutStatus = 200;
+  let logoutSuccess = true;
   const calls = [];
   const data = {accountGrant:{access_token:'old-extension-access', refresh_token:'independent-extension-refresh', expires_at:new Date(Date.now()+86400000).toISOString()}};
   const storage = {
@@ -20,6 +22,7 @@ async function main() {
     assert.equal(options.credentials,'omit');
     assert.equal(new Headers(options.headers).get('X-Extension-Origin'),'chrome-extension://'+'a'.repeat(32));
     if (url.endsWith('/api/user')) return new Response('{}',{status:live?200:401});
+    if (url.endsWith('/logout')) {return Response.json({success:logoutSuccess},{status:logoutStatus});}
     if (url.endsWith('/refresh')) {refreshes++; live=true; return Response.json({...data.accountGrant, access_token:'new-extension-access'});}
     if (url.endsWith('/exchange')) {live=true; return Response.json({access_token:'handoff-access', refresh_token:'handoff-refresh',expires_at:new Date(Date.now()+86400000).toISOString()});}
     return Response.json({success:true});
@@ -51,6 +54,35 @@ async function main() {
     assert.equal(source.includes('chrome.cookies'),false,name+' cannot copy browser credentials');
     assert.ok(source.includes('IEIDAuth.getToken'),name+' uses maintained shared session client');
   }
+  live = false; // Stored access expired: logout must use independent refresh credential.
+  logoutStatus = 503;
+  await assert.rejects(scope.IEIDAuth.disconnect(), /disconnect|unavailable|sign out/i);
+  assert.ok(data.accountGrant, 'failed server revocation retains the credential for retry');
+  logoutStatus = 200; logoutSuccess = false;
+  await assert.rejects(scope.IEIDAuth.disconnect());
+  assert.ok(data.accountGrant);
+  logoutSuccess = true;
+  await Promise.all([scope.IEIDAuth.disconnect(), scope.IEIDAuth.disconnect()]);
+  assert.equal(data.accountGrant, undefined);
+  const logoutCall = calls.filter(c=>c.url?.endsWith('/logout')).at(-1);
+  assert.equal(new Headers(logoutCall.options.headers).has('X-Auth-Token'), false);
+  assert.equal(JSON.parse(logoutCall.options.body).refresh_token, 'handoff-refresh');
+  assert.equal(calls.filter(c=>c.url?.endsWith('/logout')).length, 3, 'serialized disconnect sends one successful revocation');
+  const popupSource = fs.readFileSync(require('node:path').join(__dirname,'../chrome_extension/popup.js'),'utf8');
+  const elements = new Map();
+  const element = id => {
+    if (!elements.has(id)) elements.set(id, {textContent:'',disabled:false,style:{},listeners:{},classList:{add(){},remove(){}},addEventListener(type, fn){this.listeners[type]=fn;}});
+    return elements.get(id);
+  };
+  const popupScope = {$:element, API_BASE:'https://ieidgg.com', IEIDAuth:{disconnect:async()=>{throw new Error('outage');}}, fetch, setInterval, clearInterval, setTimeout};
+  vm.runInNewContext(popupSource.slice(popupSource.indexOf('// --- Auth ---'),popupSource.indexOf('// --- Settings ---')),popupScope);
+  await element('signOutBtn').listeners.click();
+  assert.match(element('authStatus').textContent,/sign out.*try again/i);
+  assert.equal(element('signOutBtn').disabled,false);
+  popupScope.IEIDAuth.disconnect=async()=>{};
+  await element('signOutBtn').listeners.click();
+  assert.equal(element('authStatus').textContent,'');
+  assert.equal(element('scrapeSection').style.display,'none');
   console.log('Extension auth client: serialized refresh, exact sender/state/PKCE handoff, all three clients passed');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
