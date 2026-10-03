@@ -24,6 +24,21 @@ assert.strictEqual(detail.result.orders[0].shipments.length, 2);
 assert.deepStrictEqual(Array.from(detail.result.orders[0].shipments, s => s.shipmentId), ['first', 'second']);
 assert.deepStrictEqual(Array.from(detail.result.orders[0].shipments, s => s.quantity), [1, 1]);
 assert.strictEqual(ctx.remoteExecuted, undefined, 'Remote scripts must remain inert');
+const productPrices = parse('detail', `<html><body><main id="orderDetails">
+  Order # 112-9246572-5333850
+  <div data-component="purchasedItems"><div class="a-row">
+  ${[['B000000001', '399.99'], ['B000000002', '49.95']].map(([asin, price]) => `
+    <div class="a-fixed-left-grid"><div class="a-fixed-left-grid-inner">
+      <div class="a-fixed-left-grid-col a-col-left"><div class="product-image"><a href="/dp/${asin}">Image</a><span class="product-image__qty">3</span></div></div>
+      <div data-component="purchasedItemsRightGrid"><div class="a-fixed-left-grid-col a-col-right">
+        <div data-component="itemTitle"><div class="a-row"><a class="a-link-normal" href="/dp/${asin}">Product ${asin}</a></div></div>
+        <div data-component="unitPrice"><span class="a-price a-text-price"><span class="a-offscreen">$${price}</span><span aria-hidden="true">$${price}</span></span></div>
+      </div></div>
+    </div></div>`).join('')}
+  </div></div></main></body></html>`, detailUrl);
+assert.deepStrictEqual(Array.from(productPrices.result.orders[0].shipments, s => [s.asin, s.quantity, s.unitPrice]), [
+  ['B000000001', 3, '$399.99'], ['B000000002', 3, '$49.95'],
+], 'Read each product’s own unit price and quantity from the current purchased-items grid');
 assert.ok(parse('detail', '<html><body>Sign in</body></html>', detailUrl).error);
 assert.ok(parse('detail', html.replaceAll('112-9246572-5333850', '111-1111111-1111111'), detailUrl).error);
 const trackingUrl = 'https://www.amazon.com/progress-tracker/package?orderId=112-9246572-5333850&shipmentId=first';

@@ -876,6 +876,15 @@ function aggregateProductPayload(rows) {
     } else {
       delete merged.total_owed;
     }
+    // Unit cost is a rounded weighted average for differently priced split
+    // purchases. The exact sum stays in total_owed; omission would preserve a
+    // misleading prior unit price through the API’s sparse-update behavior.
+    const unitPrices = group.map(row => parseMoneyAmount(row.unit_price));
+    if (unitPrices.every(price => price !== null) && amounts.every(amount => amount !== null)) {
+      merged.unit_price = formatMoneyAmount(amounts.reduce((sum, amount) => sum + amount, 0) / Number(merged.quantity));
+    } else {
+      delete merged.unit_price;
+    }
     // No single shipment identity, carrier or status describes a mixed group.
     delete merged.shipment_id;
     delete merged.line_item_id;
@@ -890,9 +899,11 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
   const payload = aggregateProductPayload(dedupePayloadLineItems(allOrders.flatMap((order) => {
     return order.shipments.map((shipment) => {
       const rawStatus = shipment.status || '';
+      const unitPrice = parseMoneyAmount(shipment.unitPrice);
       return compactScrapeRow({
         order_id: order.orderId,
         order_date: order.orderDate || '',
+        unit_price: unitPrice !== null ? formatMoneyAmount(unitPrice) : '',
         total_owed: getShipmentTotalOwed(order, shipment),
         shipping_address: resolveShippingAddress(order),
         order_status: normalizeOrderStatus(rawStatus),
@@ -1037,34 +1048,51 @@ function validateDetailedOrder(result, order) {
 }
 
 async function readOrderDetail(order) {
-  return readAmazonPage(buildOrderDetailUrl(order.orderId), 'detail', result => {
+  const result = await readAmazonPage(buildOrderDetailUrl(order.orderId), 'detail', result => {
     if (!result?.issue && result?.cancelledOrders?.some(entry => entry.orderId === order.orderId)) return true;
     try {
       const detail = validateDetailedOrder(result, order);
-      return detail.shipments.every(shipment => Boolean(buildTrackingUrl(detail, shipment)));
+      return detail.shipments.every(shipment => Boolean(buildTrackingUrl(detail, shipment))
+        && parseMoneyAmount(shipment.unitPrice) !== null);
     } catch {
       return false;
     }
   });
+  const detail = result?.orders?.find(entry => entry.orderId === order.orderId);
+  // A resumed upload may already have fresh tracking or a known product price.
+  // Recover missing data without borrowing another product/shipment’s values.
+  for (const shipment of detail?.shipments || []) {
+    const matches = (order.shipments || []).filter(previous =>
+      previous.asin === shipment.asin
+      && getShipmentIdentity(order, previous) === getShipmentIdentity(order, shipment)
+      && (parseInt(previous.quantity, 10) || 1) === (parseInt(shipment.quantity, 10) || 1));
+    if (matches.length === 1) mergeShipment(shipment, matches[0]);
+  }
+  if (detail?.shipments?.some(shipment => parseMoneyAmount(shipment.unitPrice) === null)) {
+    scrapeState.extractionIncomplete = true;
+    log(`${order.orderId}: Amazon did not expose every product price after the detail-page retry; saved costs kept unchanged`, 'error');
+  }
+  return result;
 }
 
 async function discoverMissingTracking(allOrders) {
-  const pending = allOrders.filter(order => !order.detailsScanned
-    && (order.shipments || []).some(shipment => !buildTrackingUrl(order, shipment)));
+  const pending = allOrders.filter(order => (order.shipments || []).some(shipment =>
+    (!order.detailsScanned && !buildTrackingUrl(order, shipment))
+    || parseMoneyAmount(shipment.unitPrice) === null));
   if (!pending.length) return;
-  log(`Requesting details for ${pending.length} orders to find hidden shipment tracking...`, 'info');
+  log(`Requesting details for ${pending.length} orders to recover missing product prices or shipment links...`, 'info');
   for (let start = 0; start < pending.length && !scrapeState.stopped; start += 4) {
     await Promise.all(pending.slice(start, start + 4).map(async (order) => {
       try {
         const result = await readOrderDetail(order);
         const detail = validateDetailedOrder(result, order);
         order.shipments = detail.shipments;
-        order.detailsScanned = true;
+        order.detailsScanned = detail.shipments.every(shipment => parseMoneyAmount(shipment.unitPrice) !== null);
         dedupeOrderShipments(order);
         log(`${order.orderId}: found ${order.shipments.length} shipment items on order details`, 'info');
       } catch (err) {
         scrapeState.extractionIncomplete = true;
-        log(`${order.orderId}: could not discover hidden tracking (${err.message})`, 'error');
+        log(`${order.orderId}: could not recover order details (${err.message})`, 'error');
       }
     }));
   }
@@ -1483,6 +1511,10 @@ async function runScrape(config, checkpoint = null) {
       phase = 'tracking';
       await persistScrapeCheckpoint(snapshot());
       await fetchTrackingForOrders(allOrders, 50, 80, useDbCache ? dbCache : null, amazonEmail, config.useShipmentCache !== false);
+    } else if (allOrders.length) {
+      // Product costs still need details when tracking is disabled or a saved
+      // scan resumes directly at upload.
+      await discoverMissingTracking(allOrders);
     }
 
     phase = 'upload';
