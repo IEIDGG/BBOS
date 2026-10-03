@@ -5,6 +5,7 @@ const source = fs.readFileSync(require.resolve('../chrome_extension/shipment_cac
 const storage = {};
 const ctx = vm.createContext({ Date, Map, log() {}, scrapeState: { stopped: false },
   buildTrackingUrl: (order, shipment) => shipment.shipmentId ? 'https://www.amazon.com/track' : '',
+  parseMoneyAmount: value => value ? parseFloat(String(value).replace('$', '')) : null,
   validateDetailedOrder: result => result.orders[0],
   chrome: { storage: { local: { async get(key) { return { [key]: storage[key] }; }, async set(value) { Object.assign(storage, value); } } } },
 });

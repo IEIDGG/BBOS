@@ -23,7 +23,7 @@ assert.throws(() => history.filterOrderHistory([{ orderDate: '' }], plan), /orde
 const background = fs.readFileSync(path.join(root, 'background.js'), 'utf8');
 const bulk = background.slice(background.indexOf('async function runScrape('), background.indexOf('function normalizeCarrier('));
 async function scan(limit = 0, checkpoint = null, tracking = false, now = [2026, 9, 1]) {
-  const visited = [], saved = [], uploaded = [], completions = [];
+  const visited = [], saved = [], uploaded = [], completions = [], detailRecovery = [];
   const ctx = vm.createContext({ ...history, createOrderHistoryPlan: filter => history.createOrderHistoryPlan(filter, new Date(...now)),
   scrapeOutcomeSuccess: require('../chrome_extension/scrape_core.js').scrapeOutcomeSuccess,
   chrome: {}, normalizeZipFilters: () => [], clearScrapeLogs() {}, startScrapeKeepAlive() {},
@@ -34,6 +34,7 @@ async function scan(limit = 0, checkpoint = null, tracking = false, now = [2026,
   mergeCancelledOrders(target, incoming) { target.push(...incoming); }, reportCancelledOrders: orders => orders,
   async uploadCancelledOrdersToApi(orders) { uploaded.push(...orders); },
   async uploadOrdersToApi(orders) { uploaded.push(...orders); ctx.scrapeState.sent = orders.length; },
+  async discoverMissingTracking(orders) { detailRecovery.push(orders.map(order => order.orderId)); },
   async readAmazonPage(url, kind, accept) {
     if (kind === 'tracking') { const result = { unavailable: 'Amazon tracking information unavailable for this shipment' }; assert.ok(accept(result)); return result; }
     const params = new URL(url).searchParams, year = params.get('timeFilter');
@@ -50,16 +51,19 @@ async function scan(limit = 0, checkpoint = null, tracking = false, now = [2026,
     await ctx.fetchTrackingBatch(orders.map((order, shipmentIndex) => ({ trackUrl: 'https://www.amazon.com/progress-tracker/package', targets: [{ order, shipment: order.shipments[0], shipmentIndex }] })));
   };
   await ctx.runScrape({ yearFilter: 'months-12', maxPages: limit, fetchTracking: tracking }, checkpoint);
-  return { visited, saved, uploaded, completions };
+  return { visited, saved, uploaded, completions, detailRecovery };
 }
 (async () => {
   const all = await scan();
   assert.deepStrictEqual(all.visited, ['year-2026:1', 'year-2026:2', 'year-2025:1', 'year-2025:2']);
   assert.strictEqual(all.completions[0].success, true, all.completions[0].message);
+  assert.strictEqual(all.detailRecovery.length, 1, 'Retrieve missing product costs even with tracking disabled');
   assert.deepStrictEqual(all.uploaded.map(o => o.orderId), ['year-2026-1', 'year-2026-2', 'year-2025-1', 'cancel-1']);
   const resumed = await scan(0, all.saved.find(s => s.filterIndex === 1 && s.page === 1 && s.phase === 'list'), false, [2027, 0, 1]);
   assert.deepStrictEqual(resumed.visited, ['year-2025:1', 'year-2025:2']);
   assert.strictEqual(resumed.completions[0].success, true);
+  const uploadResume = await scan(0, all.saved.find(s => s.phase === 'upload'));
+  assert.strictEqual(uploadResume.detailRecovery.length, 1, 'An upload checkpoint still retrieves missing prices');
   const limited = await scan(2);
   assert.deepStrictEqual(limited.visited, ['year-2026:1', 'year-2026:2']);
   assert.match(limited.completions[0].message, /limit/i, 'Do not label limited coverage as a full history');
