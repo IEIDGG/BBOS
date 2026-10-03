@@ -480,6 +480,7 @@ class AppleParser:
         compact = re.sub(r"\s+", "", value)
         return (
             compact != order_number
+            and bool(re.search(r"[0-9]", compact))
             and not re.search(r"[•*xX]{3,}", compact)
             and not re.fullmatch(r"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}", compact)
             and bool(re.fullmatch(r"[A-Za-z0-9]{8,35}", compact))

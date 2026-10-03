@@ -8,13 +8,14 @@ const detailCode = source.slice(source.indexOf('function validateDetailedOrder('
 const closed = [];
 const opened = [];
 const old = { orderId: 'old', shipments: [{ asin: 'SAME', productTitle: 'Laptop', quantity: 2 }] };
-const recent = { orderId: 'recent', shipments: [{ asin: 'OTHER', shipmentId: 'recent-shipment', itemId: 'item' }] };
-const single = { orderId: 'single', detailsScanned: true, shipments: [{ asin: 'SINGLE' }] };
+const recent = { orderId: 'recent', shipments: [{ asin: 'OTHER', shipmentId: 'recent-shipment', itemId: 'item', unitPrice: '$20.00' }] };
+const single = { orderId: 'single', detailsScanned: true, shipments: [{ asin: 'SINGLE', unitPrice: '$20.00' }] };
 const failed = { orderId: 'failed', shipments: [{ asin: 'KEEP' }] };
 const splitPartial = { orderId: 'splitPartial', shipments: [{ asin: 'KEEP1', quantity: 2 }] };
 const partial = { orderId: 'partial', shipments: [{ asin: 'KEEP1' }, { asin: 'KEEP2' }] };
 const ctx = vm.createContext({ ...core, URL, URLSearchParams,
   normalizeTrackingUrlForKey: value => value, scrapeState: { stopped: false },
+  parseMoneyAmount: value => value ? parseFloat(String(value).replace('$', '')) : null,
   log() {}, stats() {}, buildOrderDetailUrl: id => id,
   async openTab(id) { opened.push(id); return id; },
   async closeTab(id) { closed.push(id); }, async waitForTabReady() {},

@@ -27,7 +27,9 @@ async function restoreShipmentDiscovery(allOrders, account, enabled = true) {
       const detail = validateDetailedOrder(result, order);
       if (!detail.shipments.every(shipment => buildTrackingUrl(order, shipment))) continue;
       order.shipments = detail.shipments.map(shipment => ({ ...shipment, trackingNumber: '', skipTrackingFetch: false }));
-      order.detailsScanned = true;
+      // Older cache entries can have shipment links without product prices.
+      // Reuse those links, but still retrieve fresh details to fill the costs.
+      order.detailsScanned = detail.shipments.every(shipment => parseMoneyAmount(shipment.unitPrice) !== null);
       log(`${order.orderId}: reused saved shipment links for this Amazon account`, 'info');
     }
   } catch (err) {
