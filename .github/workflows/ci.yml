@@ -82,6 +82,7 @@ jobs:
           node tests/test_product_cost_recovery.js
           NODE_PATH="$RUNNER_TEMP/html-tests/node_modules" node tests/test_log_rendering.js
           NODE_PATH="$RUNNER_TEMP/html-tests/node_modules" node tests/test_popup_history.js
+          NODE_PATH="$RUNNER_TEMP/html-tests/node_modules" node tests/test_update_flow.js
 
       - name: Trailing whitespace
         env:
