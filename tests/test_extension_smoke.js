@@ -41,14 +41,25 @@ try {
     return browser;
   }
   async function getWorker() {
-    if (context.serviceWorkers()[0]) return context.serviceWorkers()[0];
-    const ready = context.waitForEvent('serviceworker', {timeout:20000});
-    ready.catch(() => {});
-    if (extensionHome) {
-      const wake = await context.newPage();
-      await wake.goto(extensionHome+'popup.html');
+    let worker = context.serviceWorkers()[0];
+    if (!worker) {
+      const ready = context.waitForEvent('serviceworker', {timeout:20000});
+      ready.catch(() => {});
+      if (extensionHome) {
+        const wake = await context.newPage();
+        await wake.goto(extensionHome+'popup.html');
+      }
+      worker = await ready;
     }
-    return ready;
+    // The CDP worker target can appear before its importScripts finishes.
+    await worker.evaluate(async () => {
+      const deadline = Date.now()+10000;
+      while (!globalThis.IEIDAuth) {
+        if (Date.now() >= deadline) throw new Error('Extension auth client did not initialize');
+        await new Promise(resolve=>setTimeout(resolve,25));
+      }
+    });
+    return worker;
   }
   try {
     context = await launch();
