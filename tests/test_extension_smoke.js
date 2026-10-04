@@ -8,6 +8,8 @@ assert.ok(fs.existsSync(path.join(extPath, 'manifest.json')));
 
 let playwright;
 try {
+  // Playwright 1.55 requires this flag to route service-worker API requests.
+  process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = '1';
   playwright = require('playwright');
 } catch (err) {
   console.error('playwright is required for the unpacked extension smoke test');
@@ -104,7 +106,10 @@ try {
     console.log(`extension smoke passed (service worker v${version})`);
     console.log('Chromium auth persistence, content-script isolation, order button and disconnect passed');
   } finally {
-    if (context) await context.close();
+    if (context) {
+      await Promise.all(context.pages().map(open => open.close()));
+      await context.close();
+    }
     fs.rmSync(userDataDir, { recursive: true, force: true });
   }
 })().catch((err) => {

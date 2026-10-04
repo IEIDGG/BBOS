@@ -207,6 +207,8 @@ async function copyStagingToLive(root, staging, files, lastPackageFiles) {
 }
 
 async function applyPackage(handle, payload) {
+  // Recheck recovered packages too, before mutating state or extension files.
+  parsePackagedManifest(payload);
   const installed = chrome.runtime.getManifest().version;
   if (!isVersionNewer(payload.version, installed)) {
     logUpdate('package is not newer', payload.version);
