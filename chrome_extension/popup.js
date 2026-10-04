@@ -170,9 +170,12 @@ function showSignedOut() {
 }
 
 $('signInBtn').addEventListener('click', async () => {
-  await IEIDAuth.connect();
-  const interval = setInterval(async () => {if (await checkAuth()) clearInterval(interval);}, 2000);
-  setTimeout(() => clearInterval(interval), 300000);
+  $('authStatus').textContent = '';
+  try {
+    await IEIDAuth.connect();
+    const interval = setInterval(async () => {if (await checkAuth()) clearInterval(interval);}, 2000);
+    setTimeout(() => clearInterval(interval), 300000);
+  } catch { $('authStatus').textContent = 'Unable to connect on the server. Try again.'; }
 });
 
 $('signOutBtn').addEventListener('click', async () => {

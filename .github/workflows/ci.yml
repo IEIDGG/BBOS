@@ -72,6 +72,9 @@ jobs:
 
       - name: JavaScript syntax and scrape helpers
         run: |
+          node tests/test_extension_auth_client.js
+          node tests/test_extension_auth_lifecycle.js
+          node tests/test_extension_message_security.js
           node tests/test_scrape_core.js
           node tests/test_package_integrity.js
 

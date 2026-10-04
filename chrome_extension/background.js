@@ -1600,8 +1600,20 @@ async function openExtensionPopup() {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.target === 'ieid-html-parser') return false;
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.target === 'ieid-html-parser' || msg.type) return false;
+  const internal = sender.id === chrome.runtime.id && (sender.url || '').startsWith(chrome.runtime.getURL(''));
+  if (!internal) {
+    let orderPage = false;
+    try {
+      const url = new URL(sender.url);
+      orderPage = sender.id === chrome.runtime.id && sender.frameId === 0 && ['https://www.amazon.com', 'https://amazon.com'].includes(url.origin) && /^\/(?:your-orders|gp\/your-account)\/order-details(?:\/|$)/i.test(url.pathname);
+    } catch {}
+    if (msg.action !== 'prepare_single_order_scan' || !orderPage) {
+      sendResponse({error:'Invalid sender'});
+      return false;
+    }
+  }
   if (msg.action === 'start_scrape') {
     if (!scrapeState.running) {
       runScrape(msg.config);
@@ -1613,11 +1625,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     sendResponse({ ok: true, running: scrapeState.running });
   } else if (msg.action === 'prepare_single_order_scan') {
-    if (msg.orderId) {
-      chrome.storage.local.set({ pendingSingleOrderId: msg.orderId });
+    if (typeof msg.orderId !== 'string' || !msg.orderId) {
+      sendResponse({error:'Missing order ID'});
+      return false;
     }
-    openExtensionPopup();
-    sendResponse({ ok: true });
+    chrome.storage.local.set({ pendingSingleOrderId: msg.orderId })
+      .then(() => openExtensionPopup())
+      .then(() => sendResponse({ok:true}), () => sendResponse({error:'Unable to save selected order. Try again.'}));
   } else if (msg.action === 'get_pending_single_order') {
     chrome.storage.local.get('pendingSingleOrderId', (data) => {
       sendResponse({ orderId: data.pendingSingleOrderId || '' });

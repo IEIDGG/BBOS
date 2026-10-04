@@ -14,9 +14,12 @@ async function main() {
   const storage = {
     async get(key) {return {[key]:data[key]};},
     async set(value) {Object.assign(data,value);},
-    async remove(keys) {for (const key of Array.isArray(keys)?keys:[keys]) delete data[key];}
+    async remove(keys) {for (const key of Array.isArray(keys)?keys:[keys]) delete data[key];},
+    async setAccessLevel() {}
   };
-  const chrome = {storage:{session:storage}, runtime:{id:'a'.repeat(32), getURL:p=>'chrome-extension://'+'a'.repeat(32)+'/'+p, onMessage:{addListener:l=>listener=l}},tabs:{create:async tab=>{calls.push(tab);}}};
+  const sessionData = {};
+  const session = {async get(key) {return {[key]:sessionData[key]};},async set(value) {Object.assign(sessionData,value);},async remove(keys) {for(const key of Array.isArray(keys)?keys:[keys]) delete sessionData[key];}};
+  const chrome = {storage:{local:storage,session}, runtime:{id:'a'.repeat(32), getURL:p=>'chrome-extension://'+'a'.repeat(32)+'/'+p, onMessage:{addListener:l=>listener=l}},tabs:{create:async tab=>{calls.push(tab);}}};
   async function fetch(url, options) {
     calls.push({url,options});
     assert.equal(options.credentials,'omit');
@@ -27,7 +30,7 @@ async function main() {
     if (url.endsWith('/exchange')) {live=true; return Response.json({access_token:'handoff-access', refresh_token:'handoff-refresh',expires_at:new Date(Date.now()+86400000).toISOString()});}
     return Response.json({success:true});
   }
-  const scope = {chrome,fetch,crypto:webcrypto,TextEncoder,Uint8Array,URL,URLSearchParams,Date,Promise,Headers,Response,btoa,console};
+  const scope = {chrome,fetch,crypto:webcrypto,TextEncoder,Uint8Array,URL,URLSearchParams,Date,Promise,Headers,Response,AbortController,setTimeout,clearTimeout,btoa,console};
   scope.globalThis=scope;
   vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../chrome_extension/auth_client.js'),'utf8'),scope);
   const results = await Promise.all([scope.IEIDAuth.getToken(true),scope.IEIDAuth.getToken(true)]);
@@ -39,14 +42,14 @@ async function main() {
   assert.equal(opened.searchParams.has('token'),false);
   assert.equal(opened.searchParams.has('verifier'),false);
   const send = (value,sender) => new Promise(resolve => listener(value,sender,resolve));
-  const message = {type:'ieid-extension-handoff',extension_id:chrome.runtime.id,state:data.accountHandoff.state,code:'c'.repeat(43)};
+  const message = {type:'ieid-extension-handoff',extension_id:chrome.runtime.id,state:sessionData.accountHandoff.state,code:'c'.repeat(43)};
   const wrong = await send(message,{id:chrome.runtime.id,url:'https://evil.example/extension-connect'});
   assert.ok(wrong.error);
-  assert.ok(data.accountHandoff,'wrong origin must not claim handoff');
+  assert.ok(sessionData.accountHandoff,'wrong origin must not claim handoff');
   const good = await send(message,{id:chrome.runtime.id,url:opened.href});
   assert.equal(good.value,true);
   assert.equal(data.accountGrant.access_token,'handoff-access');
-  assert.equal(data.accountHandoff,undefined);
+  assert.equal(sessionData.accountHandoff,undefined);
   const duplicate = await send(message,{id:chrome.runtime.id,url:opened.href});
   assert.ok(duplicate.error);
   for (const name of ['background','popup','update']) {
@@ -67,7 +70,7 @@ async function main() {
   const logoutCall = calls.filter(c=>c.url?.endsWith('/logout')).at(-1);
   assert.equal(new Headers(logoutCall.options.headers).has('X-Auth-Token'), false);
   assert.equal(JSON.parse(logoutCall.options.body).refresh_token, 'handoff-refresh');
-  assert.equal(calls.filter(c=>c.url?.endsWith('/logout')).length, 3, 'serialized disconnect sends one successful revocation');
+  assert.equal(calls.filter(c=>c.url?.endsWith('/logout')).length, 4, 'reconnect revokes the prior grant and serialized disconnect sends one successful revocation');
   const popupSource = fs.readFileSync(require('node:path').join(__dirname,'../chrome_extension/popup.js'),'utf8');
   const elements = new Map();
   const element = id => {

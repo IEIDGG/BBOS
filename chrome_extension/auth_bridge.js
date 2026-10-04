@@ -4,5 +4,5 @@ window.addEventListener('message', event => {
   const message = event.data;
   const params = new URLSearchParams(location.search);
   if (!message || message.type !== 'ieid-extension-handoff' || message.extension_id !== chrome.runtime.id || message.state !== params.get('state') || !/^[A-Za-z0-9_-]{43}$/.test(message.code || '')) return;
-  chrome.runtime.sendMessage(message).catch(() => {});
+  chrome.runtime.sendMessage({type:message.type, extension_id:message.extension_id, state:message.state, code:message.code}).catch(() => {});
 });
