@@ -25,7 +25,7 @@ const saved = {};
 const writes = [];
 const workerSource = fs.readFileSync(path.join(__dirname,'../chrome_extension/background.js'),'utf8');
 vm.runInNewContext(workerSource.slice(workerSource.indexOf('// Message handler')),{
-  URL,console,scrapeState:stateData,runScrape:()=>{scrapes++;},runSingleOrderScrape:()=>{scrapes++;},log:()=>{},scrapeLogsReady:Promise.resolve(),scrapeLogs:[],
+  URL,console,scrapeState:stateData,runScrape:async (_config,_checkpoint,started)=>{scrapes++;started();},runSingleOrderScrape:async (_config,started)=>{scrapes++;started();},log:()=>{},scrapeLogsReady:Promise.resolve(),scrapeLogs:[],
   chrome:{runtime:{id:extensionId,getURL:value=>extensionUrl+value,onMessage:{addListener:callback=>{workerListener=callback;}}},
     action:{openPopup:async()=>{popups++;}},storage:{local:{set:value=>new Promise((resolve,reject)=>writes.push({commit:()=>{Object.assign(saved,value);resolve();},reject}))}}},
 });

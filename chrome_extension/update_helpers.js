@@ -1,5 +1,24 @@
 const UPDATE_DB_NAME = 'ieid-order-scraper-updates';
 
+// Shared by the worker and updater pages. Chrome releases ownership when a
+// context closes; persistent write intent still requires recovery before scans.
+async function withExtensionOperation(kind, work) {
+  if (!globalThis.navigator?.locks) {
+    throw new Error('Update coordination unavailable. Update Chrome and reopen the extension.');
+  }
+  return navigator.locks.request('ieid-scan-update', {ifAvailable: true}, async lock => {
+    if (!lock) throw new Error('An order scan or another update is active. Wait for it to finish and retry.');
+    if (kind === 'scan') {
+      const state = await chrome.storage.local.get(['updateInProgress', 'updateReloadPending']);
+      const pending = await idbGet('state', 'pendingPackage');
+      if (state.updateInProgress || state.updateReloadPending || (pending && isVersionNewer(pending.version, chrome.runtime.getManifest().version))) {
+        throw new Error('Finish or recover the extension update before starting an order scan.');
+      }
+    }
+    return work();
+  });
+}
+
 function isVersionNewer(latest, current) {
   const parse = (version) => String(version || '0').replace(/^v/, '').split('.').map((part) => parseInt(part, 10) || 0);
   const latestParts = parse(latest);

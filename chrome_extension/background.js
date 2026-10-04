@@ -42,14 +42,18 @@ async function hasIeidSession() {
 
 async function maybeAutoApplyUpdate() {
   try {
-    const settled = await settleUpdateAfterReload();
-    if (settled.status === 'reload-pending') {
-      console.info('[IEID update] retrying extension reload');
-      await requestExtensionReload();
-      return;
-    }
+    const settled = await withExtensionOperation('update', async () => {
+      const result = await settleUpdateAfterReload();
+      if (result.status === 'reload-pending') {
+        console.info('[IEID update] retrying extension reload');
+        await requestExtensionReload();
+      }
+      return result;
+    });
+    if (settled.status === 'reload-pending') return;
   } catch (err) {
     console.info('[IEID update] reload settle failed', err);
+    return;
   }
   const latest = await checkExtensionVersion();
   const current = chrome.runtime.getManifest().version;
@@ -203,7 +207,6 @@ function scrapeDone(text, success) {
   stopScrapeKeepAlive();
   scrapeState.running = false;
   clearScrapeCheckpoint();
-  maybeAutoApplyUpdate();
 }
 
 function progress(pct, text) {
@@ -1174,7 +1177,17 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
   await saveShipmentDiscovery(allOrders, amazonEmail);
 }
 
-async function runSingleOrderScrape(config) {
+async function runSingleOrderScrape(config, onStarted) {
+  const result = await withExtensionOperation('scan', () => {
+    const result = runSingleOrderScrapeJob(config);
+    if (onStarted) onStarted();
+    return result;
+  });
+  maybeAutoApplyUpdate();
+  return result;
+}
+
+async function runSingleOrderScrapeJob(config) {
   const { orderId } = config;
 
   if (!orderId) {
@@ -1288,7 +1301,17 @@ async function runSingleOrderScrape(config) {
 }
 
 // --- Main scrape logic ---
-async function runScrape(config, checkpoint = null) {
+async function runScrape(config, checkpoint = null, onStarted) {
+  const result = await withExtensionOperation('scan', () => {
+    const result = runBulkScrapeJob(config, checkpoint);
+    if (onStarted) onStarted();
+    return result;
+  });
+  maybeAutoApplyUpdate();
+  return result;
+}
+
+async function runBulkScrapeJob(config, checkpoint = null) {
   const { yearFilter, maxPages, fetchTracking, useDbCache } = config;
   const zipFilters = normalizeZipFilters(config.zipFilters);
   scrapeState = checkpoint?.scrapeState || { running: true, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0, extractionIncomplete: false };
@@ -1579,6 +1602,17 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // Message handler
+function startScanCommand(start, sendResponse) {
+  let responded = false;
+  start(() => {
+    responded = true;
+    sendResponse({ok: true, running: scrapeState.running});
+  }).catch(err => {
+    if (!responded) sendResponse({error: err.message || 'Unable to start the order scan.', running: scrapeState.running});
+    else console.error('Scan failed after admission:', err);
+  });
+}
+
 async function openExtensionPopup() {
   if (chrome.action && typeof chrome.action.openPopup === 'function') {
     try {
@@ -1615,15 +1649,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
   if (msg.action === 'start_scrape') {
-    if (!scrapeState.running) {
-      runScrape(msg.config);
-    }
-    sendResponse({ ok: true, running: scrapeState.running });
+    startScanCommand(onStarted => runScrape(msg.config, null, onStarted), sendResponse);
   } else if (msg.action === 'start_single_order_scrape') {
-    if (!scrapeState.running) {
-      runSingleOrderScrape(msg.config);
-    }
-    sendResponse({ ok: true, running: scrapeState.running });
+    startScanCommand(onStarted => runSingleOrderScrape(msg.config, onStarted), sendResponse);
   } else if (msg.action === 'prepare_single_order_scan') {
     if (typeof msg.orderId !== 'string' || !msg.orderId) {
       sendResponse({error:'Missing order ID'});

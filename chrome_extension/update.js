@@ -1,6 +1,64 @@
 const API_BASE = 'https://ieidgg.com';
 const STAGING_DIR = '.ieid-update-staging';
 
+async function updateTimeout(operation, milliseconds, label, onTimeout) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      if (onTimeout) onTimeout();
+      const error = new Error(`${label} timed out. Please try the update again.`);
+      error.name = 'UpdateTimeoutError';
+      reject(error);
+    }, milliseconds);
+  });
+  try {
+    return await Promise.race([Promise.resolve().then(operation), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function updateJsonRequest(url, options, label) {
+  // A token refresh can rotate credentials; retry only read-only requests.
+  const attempts = options.method === 'POST' ? 1 : 2;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    try {
+      const result = await updateTimeout(async () => {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        return { response, data: response.ok ? await response.json() : null };
+      }, 15000, label, () => controller.abort());
+      if (attempt + 1 < attempts && result.response.status >= 500) {
+        setStatus(`${label} failed temporarily. Retrying…`);
+        continue;
+      }
+      return result;
+    } catch (err) {
+      if (attempt + 1 === attempts || !['UpdateTimeoutError', 'AbortError', 'TypeError'].includes(err.name)) throw err;
+      setStatus(`${label} was interrupted. Retrying…`);
+    }
+  }
+}
+
+async function getUpdateScrapeStatus() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await updateTimeout(() => new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ action: 'scrape_status' }, (response) => {
+          if (chrome.runtime.lastError || typeof response?.running !== 'boolean') {
+            reject(new Error('Could not confirm whether an order scan is running. Please reopen the extension and retry.'));
+            return;
+          }
+          resolve(response);
+        });
+      }), 5000, 'Checking the extension');
+    } catch (err) {
+      if (attempt === 1) throw err;
+      setStatus('Reconnecting to the extension. Retrying…');
+    }
+  }
+}
+
 function logUpdate(message, extra) {
   if (extra) console.info('[IEID update]', message, extra);
   else console.info('[IEID update]', message);
@@ -95,19 +153,19 @@ function parsePackagedManifest(payload) {
   return packagedManifest;
 }
 
-async function fetchPackage(token) {
-  const response = await fetch(`${API_BASE}/api/order-scraper/package`, {
+async function fetchPackage(token, mayRefresh = true) {
+  const { response, data: payload } = await updateJsonRequest(`${API_BASE}/api/order-scraper/package`, {
     cache: 'no-store',
     credentials: 'omit',
     headers: { 'X-Auth-Token': token },
-  });
+  }, 'Downloading the update');
   if (response.status === 401) {
+    if (!mayRefresh) throw new Error('Sign in to IEID to update');
     const retried = await getAuthToken(true);
     if (!retried || retried === token) throw new Error('Sign in to IEID to update');
-    return fetchPackage(retried);
+    return fetchPackage(retried, false);
   }
   if (!response.ok) throw new Error(`Package HTTP ${response.status}`);
-  const payload = await response.json();
   if (!payload?.version || !payload.files || Object.keys(payload.files).length === 0) {
     throw new Error('Package file map is empty');
   }
@@ -225,6 +283,10 @@ async function applyPackage(handle, payload) {
     }
     return false;
   }
+  const scrapeStatus = await getUpdateScrapeStatus();
+  if (scrapeStatus.running) {
+    throw new Error('Finish or stop the scrape before updating. Reload would interrupt an active job.');
+  }
   const lastPackageFiles = (await idbGet('state', 'lastPackageFiles')) || [];
   const previousPending = await idbGet('state', 'pendingPackage');
   const previousPendingFiles = previousPending?.files ? Object.keys(previousPending.files) : [];
@@ -236,10 +298,12 @@ async function applyPackage(handle, payload) {
     updateReloadAttempts: 0,
   });
   const staging = await writeStaging(handle, payload.files);
+  setStatus(`Installing v${payload.version}…`);
   const knownFiles = [...new Set([...lastPackageFiles, ...previousPendingFiles])];
   await copyStagingToLive(handle, staging, payload.files, knownFiles);
   await idbSet('state', 'lastPackageFiles', Object.keys(payload.files));
   logUpdate('reload', payload.version);
+  setStatus(`Activating v${payload.version}…`);
   await requestExtensionReload();
   return true;
 }
@@ -255,7 +319,6 @@ async function recoverIfNeeded(handle) {
     }
     return false;
   }
-  if (!local.updateInProgress) return false;
   const pending = await idbGet('state', 'pendingPackage');
   if (!pending) {
     await chrome.storage.local.set({ updateInProgress: false });
@@ -266,6 +329,10 @@ async function recoverIfNeeded(handle) {
 }
 
 async function verifyAfterReload() {
+  return withExtensionOperation('update', verifyAfterReloadOwned);
+}
+
+async function verifyAfterReloadOwned() {
   const result = await settleUpdateAfterReload();
   if (result.status === 'verified') {
     setStatus(`Updated to v${result.installed}. You can close this tab.`);
@@ -288,14 +355,19 @@ function attachPickFolderListener(pickBtn) {
   if (!pickBtn || pickBtn.dataset.bound === '1') return;
   pickBtn.dataset.bound = '1';
   pickBtn.addEventListener('click', async () => {
+    if (pickBtn.disabled) return;
+    pickBtn.disabled = true;
     try {
+      setStatus('Checking folder access…');
       let handle = await getUsableHandle({ allowPrompt: true });
       if (!handle) handle = await pickFolder();
-      pickBtn.hidden = true;
+      setStatus('Folder selected. Preparing the update…');
       await runApply(handle);
     } catch (err) {
       logUpdate('pick failed', err);
       setStatus(err.message || String(err), true);
+    } finally {
+      pickBtn.disabled = false;
     }
   });
 }
@@ -319,56 +391,48 @@ async function start() {
   await runApply(handle);
 }
 
-async function ownerTabIsAlive(ownerId) {
-  if (!ownerId) return false;
+async function runApply(handle) {
   try {
-    await chrome.tabs.get(ownerId);
-    return true;
-  } catch {
-    return false;
+    return await withExtensionOperation('update', () => runApplyOwned(handle));
+  } catch (err) {
+    setStatus(err.message || String(err), true);
   }
 }
 
-async function runApply(handle) {
-  const scrapeStatus = await new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'scrape_status' }, (resp) => {
-      if (chrome.runtime.lastError) {
-        resolve(null);
-        return;
-      }
-      resolve(resp || null);
-    });
-  });
+async function runApplyOwned(handle) {
+  setStatus('Checking for an active order scan…');
+  let scrapeStatus;
+  try {
+    scrapeStatus = await getUpdateScrapeStatus();
+  } catch (err) {
+    setStatus(err.message || String(err), true);
+    return;
+  }
   if (scrapeStatus?.running) {
     setStatus('Finish or stop the scrape before updating. Reload would interrupt an active job.', true);
     return;
   }
-  const tab = await chrome.tabs.getCurrent();
   const local = await chrome.storage.local.get(['updateInProgress', 'updateReloadPending']);
-  const session = await chrome.storage.session.get('updateOwner');
-  if (local.updateInProgress && session.updateOwner && session.updateOwner !== tab?.id) {
-    if (await ownerTabIsAlive(session.updateOwner)) {
-      setStatus('Updating…');
-      return;
-    }
-    logUpdate('stale update owner, taking over', session.updateOwner);
-  }
-  if (tab?.id) await chrome.storage.session.set({ updateOwner: tab.id });
-  if (local.updateReloadPending || local.updateInProgress) {
+  // Remove old advisory owners. Native lock ownership covers this whole action
+  // and releases even when a failed updater tab remains open.
+  await chrome.storage.session.remove('updateOwner');
+  if (local.updateReloadPending || local.updateInProgress || await idbGet('state', 'pendingPackage')) {
     setStatus('Updating…');
     const recovered = await recoverIfNeeded(handle);
     if (recovered) return;
   }
   try {
+    setStatus('Checking your IEID sign-in…');
     const token = await getAuthToken();
     if (!token) {
       setStatus('Sign in to IEID to update: https://ieidgg.com', true);
       if (isAuto()) window.close();
       return;
     }
+    setStatus('Downloading the update…');
     const payload = await fetchPackage(token);
     logUpdate('package fetched', payload.version);
-    setStatus(`Installing v${payload.version}…`);
+    setStatus(`Preparing v${payload.version}…`);
     const applied = await applyPackage(handle, payload);
     if (!applied) setStatus('Already up to date.');
   } catch (err) {

@@ -26,6 +26,7 @@ async function scan(limit = 0, checkpoint = null, tracking = false, now = [2026,
   const visited = [], saved = [], uploaded = [], completions = [], detailRecovery = [];
   const ctx = vm.createContext({ ...history, createOrderHistoryPlan: filter => history.createOrderHistoryPlan(filter, new Date(...now)),
   scrapeOutcomeSuccess: require('../chrome_extension/scrape_core.js').scrapeOutcomeSuccess,
+  withExtensionOperation: (_kind, work) => work(),
   chrome: {}, normalizeZipFilters: () => [], clearScrapeLogs() {}, startScrapeKeepAlive() {},
   stopScrapeKeepAlive() {}, openLogTab() {}, log() {}, progress() {}, stats() {},
   async getAuthCookie() { return 'test'; }, async detectAmazonAccountEmail() { return 'test@example.com'; },
@@ -44,7 +45,7 @@ async function scan(limit = 0, checkpoint = null, tracking = false, now = [2026,
     const result = { orders: [{ orderId: `${year}-${page}`, orderDate: previous && page === 2 ? 'September 1, 2025' : previous ? 'November 1, 2025' : 'January 1, 2026', shipments: [{ asin: 'TEST' }] }],
       cancelledOrders: previous ? [{ orderId: `cancel-${page}`, orderDate: page === 2 ? 'September 1, 2025' : 'October 1, 2025' }] : [], maxPage: Math.min(page + 1, 2) };
     assert.ok(accept(result)); return result;
-  }, scrapeDone(message, success) { completions.push({ message, success }); } });
+  }, maybeAutoApplyUpdate() {}, scrapeDone(message, success) { completions.push({ message, success }); } });
   vm.runInContext(bulk, ctx);
   vm.runInContext(background.slice(background.indexOf('function applyTrackingResult('), background.indexOf('function validateDetailedOrder(')), ctx);
   ctx.fetchTrackingForOrders = async orders => {

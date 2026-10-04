@@ -92,6 +92,7 @@ let trackingCalls = 0;
 let uploaded;
 let completed;
 const context = vm.createContext({
+  withExtensionOperation: (_kind, work) => work(),
   scrapeOutcomeSuccess: require('../chrome_extension/scrape_core.js').scrapeOutcomeSuccess,
   normalizeZipFilters: () => ['03063'],
   clearScrapeLogs() {}, startScrapeKeepAlive() {}, stopScrapeKeepAlive() {}, openLogTab() {},
@@ -109,6 +110,7 @@ const context = vm.createContext({
     orders[0].shipments[0].trackingNumber = 'TBA123456789012';
   },
   async uploadOrdersToApi(orders) { uploaded = orders; },
+  maybeAutoApplyUpdate() {},
   scrapeDone(message, success) { completed = success; },
   chrome: { storage: { local: { remove() {} } } },
 });

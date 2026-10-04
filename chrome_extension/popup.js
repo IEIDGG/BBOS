@@ -294,13 +294,28 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 // --- Start / Stop ---
+async function sendScanCommand(message) {
+  try {
+    const response = await chrome.runtime.sendMessage(message);
+    if (!response?.ok) {
+      setScrapingUi(Boolean(response?.running));
+      log(response?.error || 'Unable to start the order scan. Try again.', 'error');
+      return;
+    }
+    setScrapingUi(Boolean(response.running));
+  } catch (err) {
+    setScrapingUi(false);
+    log(err.message || String(err), 'error');
+  }
+}
+
 $('startBtn').addEventListener('click', async () => {
   saveSettings();
   setScrapingUi(true);
   $('log').innerHTML = '';
   $('log').style.display = 'block';
 
-  chrome.runtime.sendMessage({
+  await sendScanCommand({
     action: 'start_scrape',
     config: {
       yearFilter: $('yearFilter').value,
@@ -321,7 +336,7 @@ $('scanSingleOrderBtn').addEventListener('click', async () => {
   $('log').innerHTML = '';
   $('log').style.display = 'block';
 
-  chrome.runtime.sendMessage({
+  await sendScanCommand({
     action: 'start_single_order_scrape',
     config: {
       orderId: pendingSingleOrderId,
