@@ -1,4 +1,4 @@
-importScripts('update_helpers.js', 'scrape_core.js', 'order_history.js', 'amazon_requests.js', 'shipment_cache.js');
+importScripts('auth_client.js', 'update_helpers.js', 'scrape_core.js', 'order_history.js', 'amazon_requests.js', 'shipment_cache.js');
 
 const API_BASE = 'https://ieidgg.com';
 const UPDATE_CHECK_ALARM = 'extensionUpdateCheck';
@@ -37,15 +37,7 @@ async function folderPermissionGranted() {
 }
 
 async function hasIeidSession() {
-  try {
-    const access = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-    if (access?.value) return true;
-    const refresh = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-    return Boolean(refresh?.value);
-  } catch (err) {
-    console.info('[IEID update] session cookie lookup failed', err);
-    return false;
-  }
+  try { return Boolean(await IEIDAuth.getToken()); } catch { return false; }
 }
 
 async function maybeAutoApplyUpdate() {
@@ -281,30 +273,8 @@ async function openLogTab() {
   });
 }
 
-// Get the access_token cookie for authenticated API calls
-async function refreshAccessToken() {
-  const refreshCookie = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-  if (!refreshCookie?.value) return null;
-  const response = await fetch(`${API_BASE}/api/refresh-token`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'X-Refresh-Token': refreshCookie.value },
-  });
-  if (!response.ok) return null;
-  const newCookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-  return newCookie?.value || null;
-}
-
 async function getAuthCookie(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-    if (cookie?.value) return cookie.value;
-  }
-  try {
-    return await refreshAccessToken();
-  } catch {
-    return null;
-  }
+  return IEIDAuth.getToken(forceRefresh);
 }
 
 async function authorizedFetch(path, options = {}, allowRetry = true) {
@@ -312,13 +282,13 @@ async function authorizedFetch(path, options = {}, allowRetry = true) {
   if (!token) throw new Error('Not authenticated. Please sign in again.');
   const resp = await fetch(`${API_BASE}${path}`, {
     ...options,
-    credentials: 'include',
+    credentials: 'omit',
     headers: {
       ...(options.headers || {}),
       'X-Auth-Token': token,
     },
   });
-  if (resp.status === 401 && allowRetry) {
+  if (resp.status === 401 && allowRetry && ['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())) {
     const refreshed = await getAuthCookie(true);
     if (!refreshed || refreshed === token) throw new Error('Session expired. Please sign in again.');
     return authorizedFetch(path, options, false);
@@ -1630,8 +1600,20 @@ async function openExtensionPopup() {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.target === 'ieid-html-parser') return false;
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.target === 'ieid-html-parser' || msg.type) return false;
+  const internal = sender.id === chrome.runtime.id && (sender.url || '').startsWith(chrome.runtime.getURL(''));
+  if (!internal) {
+    let orderPage = false;
+    try {
+      const url = new URL(sender.url);
+      orderPage = sender.id === chrome.runtime.id && sender.frameId === 0 && ['https://www.amazon.com', 'https://amazon.com'].includes(url.origin) && /^\/(?:your-orders|gp\/your-account)\/order-details(?:\/|$)/i.test(url.pathname);
+    } catch {}
+    if (msg.action !== 'prepare_single_order_scan' || !orderPage) {
+      sendResponse({error:'Invalid sender'});
+      return false;
+    }
+  }
   if (msg.action === 'start_scrape') {
     if (!scrapeState.running) {
       runScrape(msg.config);
@@ -1643,11 +1625,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     sendResponse({ ok: true, running: scrapeState.running });
   } else if (msg.action === 'prepare_single_order_scan') {
-    if (msg.orderId) {
-      chrome.storage.local.set({ pendingSingleOrderId: msg.orderId });
+    if (typeof msg.orderId !== 'string' || !msg.orderId) {
+      sendResponse({error:'Missing order ID'});
+      return false;
     }
-    openExtensionPopup();
-    sendResponse({ ok: true });
+    chrome.storage.local.set({ pendingSingleOrderId: msg.orderId })
+      .then(() => openExtensionPopup())
+      .then(() => sendResponse({ok:true}), () => sendResponse({error:'Unable to save selected order. Try again.'}));
   } else if (msg.action === 'get_pending_single_order') {
     chrome.storage.local.get('pendingSingleOrderId', (data) => {
       sendResponse({ orderId: data.pendingSingleOrderId || '' });

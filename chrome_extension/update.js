@@ -16,22 +16,7 @@ function isAuto() {
   return new URLSearchParams(location.search).get('auto') === '1';
 }
 
-async function getAuthToken(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-    if (cookie?.value) return cookie.value;
-  }
-  const refreshCookie = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-  if (!refreshCookie?.value) return null;
-  const refreshResp = await fetch(`${API_BASE}/api/refresh-token`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'X-Refresh-Token': refreshCookie.value },
-  });
-  if (!refreshResp.ok) return null;
-  const refreshed = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-  return refreshed?.value || null;
-}
+async function getAuthToken(forceRefresh = false) { return IEIDAuth.getToken(forceRefresh); }
 
 async function ensurePermission(handle) {
   const query = await handle.queryPermission({ mode: 'readwrite' });
@@ -113,7 +98,7 @@ function parsePackagedManifest(payload) {
 async function fetchPackage(token) {
   const response = await fetch(`${API_BASE}/api/order-scraper/package`, {
     cache: 'no-store',
-    credentials: 'include',
+    credentials: 'omit',
     headers: { 'X-Auth-Token': token },
   });
   if (response.status === 401) {
@@ -222,6 +207,8 @@ async function copyStagingToLive(root, staging, files, lastPackageFiles) {
 }
 
 async function applyPackage(handle, payload) {
+  // Recheck recovered packages too, before mutating state or extension files.
+  parsePackagedManifest(payload);
   const installed = chrome.runtime.getManifest().version;
   if (!isVersionNewer(payload.version, installed)) {
     logUpdate('package is not newer', payload.version);

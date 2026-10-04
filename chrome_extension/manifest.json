@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
+  "minimum_chrome_version": "140",
   "name": "IEID Order Scraper",
-  "version": "1.1.12",
+  "version": "1.1.13",
   "description": "Scrape Amazon order and tracking data",
   "permissions": [
     "scripting",
     "tabs",
     "storage",
-    "cookies",
     "alarms",
     "offscreen"
   ],
@@ -37,6 +37,15 @@
       ],
       "js": [
         "order_page.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://ieidgg.com/extension-connect*"
+      ],
+      "js": [
+        "auth_bridge.js"
       ],
       "run_at": "document_idle"
     }
