@@ -72,6 +72,12 @@ jobs:
 
       - name: JavaScript syntax and scrape helpers
         run: |
+          node tests/test_extension_auth_client.js
+          node tests/test_extension_auth_lifecycle.js
+          node tests/test_extension_message_security.js
+          node tests/test_operation_lock.js
+          node tests/test_scan_update_admission.js
+          node tests/test_popup_scan_admission.js
           node tests/test_scrape_core.js
           node tests/test_package_integrity.js
 
@@ -93,9 +99,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
-          npm install --prefix "$RUNNER_TEMP/pw" playwright@1.49.0
+          npm install --prefix "$RUNNER_TEMP/pw" playwright@1.55.0
           npx --prefix "$RUNNER_TEMP/pw" playwright install chromium --with-deps
           NODE_PATH="$RUNNER_TEMP/pw/node_modules" xvfb-run -a node tests/test_extension_smoke.js
+          NODE_PATH="$RUNNER_TEMP/pw/node_modules" xvfb-run -a node tests/test_update_native.js
 
   install-bat-windows:
     # End-to-end test of the actual end-user install flow. main.py itself

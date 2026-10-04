@@ -181,7 +181,7 @@ function referencedManifestFiles(manifest) {
   return [...new Set(paths)];
 }
 
-function validatePackagePayload(payload) {
+function validatePackagePayload(payload, browserVersion = globalThis.navigator?.userAgent?.match(/\b(?:Chrome|Chromium)\/([\d.]+)/)?.[1]) {
   if (!payload?.version || !payload.files || typeof payload.files !== 'object') {
     throw new Error('Package file map is empty');
   }
@@ -200,6 +200,21 @@ function validatePackagePayload(payload) {
   }
   if (String(manifest.version) !== String(payload.version)) {
     throw new Error('Package version does not match manifest');
+  }
+  const minimum = manifest.minimum_chrome_version;
+  if (minimum) {
+    if (typeof minimum !== 'string' || !/^\d+(?:\.\d+){0,3}$/.test(minimum)) {
+      throw new Error('Package minimum Chrome version is invalid');
+    }
+    if (browserVersion) {
+      const required = minimum.split('.').map(Number);
+      const current = browserVersion.split('.').map(Number);
+      for (let i = 0; i < 4; i++) {
+        const difference = (current[i] || 0) - (required[i] || 0);
+        if (difference < 0) throw new Error(`Update Chrome to ${minimum} or newer before updating the extension.`);
+        if (difference > 0) break;
+      }
+    }
   }
   const missing = referencedManifestFiles(manifest).filter((path) => !payload.files[path]);
   if (missing.length) {

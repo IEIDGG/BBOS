@@ -68,30 +68,18 @@
           offerRefresh();
           return;
         }
-        chrome.storage.local.set({ pendingSingleOrderId: orderId }, () => {
+        // The worker persists this selection; content scripts cannot access credentials.
+        chrome.runtime.sendMessage({ action: 'prepare_single_order_scan', orderId }, response => {
           try {
-            if (chrome.runtime.lastError || !chrome.runtime.id) {
-              offerRefresh();
+            if (chrome.runtime.lastError || !chrome.runtime.id) {offerRefresh(); return;}
+            btn.disabled = false;
+            if (response?.error) {
+              btn.textContent = 'Try opening IEID again';
+              btn.title = 'Unable to save this order selection. Try again.';
               return;
             }
-            chrome.runtime.sendMessage(
-              { action: 'prepare_single_order_scan', orderId },
-              () => {
-                try {
-                  if (chrome.runtime.lastError || !chrome.runtime.id) {
-                    offerRefresh();
-                    return;
-                  }
-                  btn.disabled = false;
-                  btn.textContent = 'Scan with IEID';
-                } catch {
-                  offerRefresh();
-                }
-              }
-            );
-          } catch {
-            offerRefresh();
-          }
+            btn.textContent = 'Scan with IEID';
+          } catch { offerRefresh(); }
         });
       } catch {
         offerRefresh();

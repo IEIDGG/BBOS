@@ -80,25 +80,7 @@ function setScrapingUi(running) {
   }
 }
 
-async function getAuthToken(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-    if (cookie?.value) return cookie.value;
-  }
-
-  const refreshCookie = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-  if (!refreshCookie?.value) return null;
-
-  const refreshResp = await fetch(`${API_BASE}/api/refresh-token`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'X-Refresh-Token': refreshCookie.value },
-  });
-  if (!refreshResp.ok) return null;
-
-  const newCookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-  return newCookie?.value || null;
-}
+async function getAuthToken(forceRefresh = false) { return IEIDAuth.getToken(forceRefresh); }
 
 function showZipImportStatus(message, type = '') {
   const el = $('zipImportStatus');
@@ -119,7 +101,7 @@ async function importZipMappingsFromIeid() {
     }
 
     const fetchMonitor = (authToken) => fetch(`${API_BASE}/api/settings/monitor`, {
-      credentials: 'include',
+      credentials: 'omit',
       headers: { 'X-Auth-Token': authToken },
     });
 
@@ -166,52 +148,12 @@ async function importZipMappingsFromIeid() {
 // --- Auth ---
 async function checkAuth() {
   try {
-    // Read cookies from ieidgg.com and pass to API
-    const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-    if (!cookie) {
-      showSignedOut();
-      return null;
-    }
-
-    const resp = await fetch(`${API_BASE}/api/user`, {
-      headers: { 'X-Auth-Token': cookie.value },
-    });
-
-    if (!resp.ok) {
-      // Try refresh
-      const refreshCookie = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-      if (refreshCookie) {
-        const refreshResp = await fetch(`${API_BASE}/api/refresh-token`, {
-          method: 'POST',
-          headers: { 'X-Refresh-Token': refreshCookie.value },
-        });
-        if (refreshResp.ok) {
-          // Re-check after refresh
-          const newCookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-          if (newCookie) {
-            const retryResp = await fetch(`${API_BASE}/api/user`, {
-              headers: { 'X-Auth-Token': newCookie.value },
-            });
-            if (retryResp.ok) {
-              const user = await retryResp.json();
-              showSignedIn(user);
-              return user;
-            }
-          }
-        }
-      }
-      showSignedOut();
-      return null;
-    }
-
-    const user = await resp.json();
-    showSignedIn(user);
-    return user;
-  } catch (e) {
-    console.error('Auth check failed:', e);
-    showSignedOut();
-    return null;
-  }
+    const token = await IEIDAuth.getToken();
+    if (!token) { showSignedOut(); return null; }
+    const response = await fetch(`${API_BASE}/api/user`);
+    if (!response.ok) { showSignedOut(); return null; }
+    const user = await response.json(); showSignedIn(user); return user;
+  } catch { showSignedOut(); return null; }
 }
 
 function showSignedIn(user) {
@@ -227,25 +169,21 @@ function showSignedOut() {
   $('scrapeSection').style.display = 'none';
 }
 
-$('signInBtn').addEventListener('click', () => {
-  chrome.tabs.create({ url: `${API_BASE}/login` }, (tab) => {
-    // Poll for login completion
-    const interval = setInterval(async () => {
-      const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-      if (cookie) {
-        clearInterval(interval);
-        checkAuth();
-      }
-    }, 2000);
-    // Stop polling after 5 minutes
+$('signInBtn').addEventListener('click', async () => {
+  $('authStatus').textContent = '';
+  try {
+    await IEIDAuth.connect();
+    const interval = setInterval(async () => {if (await checkAuth()) clearInterval(interval);}, 2000);
     setTimeout(() => clearInterval(interval), 300000);
-  });
+  } catch { $('authStatus').textContent = 'Unable to connect on the server. Try again.'; }
 });
 
 $('signOutBtn').addEventListener('click', async () => {
-  await chrome.cookies.remove({ url: API_BASE, name: 'access_token' });
-  await chrome.cookies.remove({ url: API_BASE, name: 'refresh_token' });
-  showSignedOut();
+  const button = $('signOutBtn'); button.disabled = true;
+  $('authStatus').textContent = '';
+  try { await IEIDAuth.disconnect(); showSignedOut(); }
+  catch { $('authStatus').textContent = 'Unable to sign out on the server. Try again.'; }
+  finally { button.disabled = false; }
 });
 
 // --- Settings ---
@@ -356,13 +294,28 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 // --- Start / Stop ---
+async function sendScanCommand(message) {
+  try {
+    const response = await chrome.runtime.sendMessage(message);
+    if (!response?.ok) {
+      setScrapingUi(Boolean(response?.running));
+      log(response?.error || 'Unable to start the order scan. Try again.', 'error');
+      return;
+    }
+    setScrapingUi(Boolean(response.running));
+  } catch (err) {
+    setScrapingUi(false);
+    log(err.message || String(err), 'error');
+  }
+}
+
 $('startBtn').addEventListener('click', async () => {
   saveSettings();
   setScrapingUi(true);
   $('log').innerHTML = '';
   $('log').style.display = 'block';
 
-  chrome.runtime.sendMessage({
+  await sendScanCommand({
     action: 'start_scrape',
     config: {
       yearFilter: $('yearFilter').value,
@@ -383,7 +336,7 @@ $('scanSingleOrderBtn').addEventListener('click', async () => {
   $('log').innerHTML = '';
   $('log').style.display = 'block';
 
-  chrome.runtime.sendMessage({
+  await sendScanCommand({
     action: 'start_single_order_scrape',
     config: {
       orderId: pendingSingleOrderId,

@@ -4,7 +4,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
 const root = path.join(__dirname, '..', 'chrome_extension');
-const payload = { version: '1.1.12', files: {} };
+const installedVersion = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')).version;
+const versionParts = installedVersion.split('.').map(Number);
+versionParts[2]++;
+const targetVersion = versionParts.join('.');
+const payload = { version: targetVersion, files: {} };
 function collect(dir, prefix = '') {
   for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
     const rel = prefix + item.name;
@@ -18,7 +22,7 @@ function collect(dir, prefix = '') {
 }
 collect(root);
 const packagedManifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
-packagedManifest.version = '1.1.12';
+packagedManifest.version = targetVersion;
 payload.files['manifest.json'] = { encoding: 'utf-8', content: JSON.stringify(packagedManifest) };
 function storage(obj) {
   return {
@@ -46,15 +50,16 @@ async function scenario({
   rejectedAuth = false,
   buttonFlow = false,
   scanStartsDuringDownload = false,
-  liveWriteFailure = false
+  liveWriteFailure = false,
+  lostRecoveryFlags = false
 } = {}) {
   const local = { zipFilters: '03063', yearFilter: 'year-2026' };
   const session = {};
   const db = new Map();
   const files = new Map([
-    ['manifest.json', Buffer.from(JSON.stringify({ name: 'IEID Order Scraper', version: '1.1.11' }))]
+    ['manifest.json', Buffer.from(JSON.stringify({ name: 'IEID Order Scraper', version: installedVersion }))]
   ]);
-  let installed = '1.1.11',
+  let installed = installedVersion,
     reloads = 0,
     authCalls = 0,
     picks = 0,
@@ -151,11 +156,8 @@ async function scenario({
     atob: (s) => Buffer.from(s, 'base64').toString('binary'),
     fetch: async (url, options) => {
       authCalls++;
-      if (url.endsWith('/api/refresh-token')) {
-        accessToken = 'synthetic-refreshed-token';
-        return { ok: true, status: 200, json: async () => ({ success: true }) };
-      }
       assert.ok(url.endsWith('/api/order-scraper/package'));
+      assert.equal(options.credentials, 'omit', 'updater must preserve PR17 cookie isolation');
       if (rejectedAuth) return { ok: false, status: 401 };
       if (serverFailure && authCalls === 1) return { ok: false, status: 503 };
       if (stalledDownload && (permanentStall || authCalls === 1)) {
@@ -179,9 +181,7 @@ async function scenario({
     chrome: {
       storage: { local: storage(local), session: storage(session) },
       cookies: {
-        get: async ({ name }) => ({
-          value: name === 'access_token' ? accessToken : 'synthetic-refresh-token'
-        })
+        get: async () => {throw Error('Updater must not copy parent app cookies');}
       },
       runtime: {
         getManifest: () => ({ version: installed }),
@@ -204,6 +204,16 @@ async function scenario({
       }
     }
   });
+  context.IEIDAuth = {getToken: async force => {
+    if (force) accessToken = 'synthetic-refreshed-token';
+    return accessToken;
+  }};
+  let held = false;
+  context.navigator = {locks: {request: async (_name, _options, action) => {
+    if (held) return action(null);
+    held = true;
+    try {return await action({});} finally {held = false;}
+  }}};
   window.showDirectoryPicker = async () => {
     picks++;
     return handle;
@@ -245,11 +255,11 @@ async function scenario({
     assert.equal(reloads, 0);
     assert.equal(
       JSON.parse(files.get('manifest.json').toString()).version,
-      '1.1.11',
+      installedVersion,
       'failed status/download must not replace installed files'
     );
     assert.ok(document.getElementById('status').classList.contains('error'));
-    if (rejectedAuth) assert.equal(authCalls, 3, 'refresh authentication only once, then stop');
+    if (rejectedAuth) assert.equal(authCalls, 2, 'ask the shared auth client once, then stop');
     if (buttonFlow) {
       assert.equal(document.getElementById('pickFolderBtn').hidden, false);
       assert.equal(document.getElementById('pickFolderBtn').disabled, false, 'failure must allow a retry');
@@ -275,18 +285,23 @@ async function scenario({
       assert.equal(liveWrites, 2, 'failure occurs after replacing some live files');
       assert.equal(
         JSON.parse(files.get('manifest.json').toString()).version,
-        '1.1.11',
+        installedVersion,
         'manifest commits last'
       );
     }
     failWrites = false;
+    if (lostRecoveryFlags) {
+      delete local.updateInProgress;
+      delete local.updateReloadPending;
+      session.updateOwner = 999;
+    }
     await context.runApply(handle);
     assert.equal(authCalls, 1, 'resume the retained package without downloading it again');
   }
   const result = await context.settleUpdateAfterReload();
   if (wrongFolder) {
     assert.equal(result.status, 'mismatch');
-    assert.equal(installed, '1.1.11');
+    assert.equal(installed, installedVersion);
     assert.equal(db.has('handles:extensionDir'), false);
     return {
       case: 'different extension copy selected',
@@ -294,7 +309,7 @@ async function scenario({
     };
   }
   assert.equal(result.status, 'verified');
-  assert.equal(installed, '1.1.12');
+  assert.equal(installed, targetVersion);
   assert.equal(reloads, 1);
   assert.equal(authCalls, stalledDownload || stalledBody || serverFailure ? 2 : 1);
   assert.equal(picks, 1);
@@ -321,7 +336,7 @@ async function scenario({
                 : buttonFlow
                   ? 'folder button flow'
                   : 'correct folder and writable grant',
-    result: 'package copied byte-for-byte; v1.1.12 verified; settings retained'
+    result: `package copied byte-for-byte; v${targetVersion} verified; settings retained`
   };
 }
 (async () => {
@@ -339,7 +354,8 @@ async function scenario({
     {},
     { wrongFolder: true },
     { writeFailure: true },
-    { liveWriteFailure: true }
+    { liveWriteFailure: true },
+    { writeFailure: true, lostRecoveryFlags: true }
   ])
     console.log(JSON.stringify(await scenario(opts)));
   console.log(

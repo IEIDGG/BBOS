@@ -74,22 +74,7 @@ function isAuto() {
   return new URLSearchParams(location.search).get('auto') === '1';
 }
 
-async function getAuthToken(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-    if (cookie?.value) return cookie.value;
-  }
-  const refreshCookie = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-  if (!refreshCookie?.value) return null;
-  const { response: refreshResp } = await updateJsonRequest(`${API_BASE}/api/refresh-token`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'X-Refresh-Token': refreshCookie.value },
-  }, 'Signing in to IEID');
-  if (!refreshResp.ok) return null;
-  const refreshed = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-  return refreshed?.value || null;
-}
+async function getAuthToken(forceRefresh = false) { return IEIDAuth.getToken(forceRefresh); }
 
 async function ensurePermission(handle) {
   const query = await handle.queryPermission({ mode: 'readwrite' });
@@ -171,7 +156,7 @@ function parsePackagedManifest(payload) {
 async function fetchPackage(token, mayRefresh = true) {
   const { response, data: payload } = await updateJsonRequest(`${API_BASE}/api/order-scraper/package`, {
     cache: 'no-store',
-    credentials: 'include',
+    credentials: 'omit',
     headers: { 'X-Auth-Token': token },
   }, 'Downloading the update');
   if (response.status === 401) {
@@ -280,6 +265,8 @@ async function copyStagingToLive(root, staging, files, lastPackageFiles) {
 }
 
 async function applyPackage(handle, payload) {
+  // Recheck recovered packages too, before mutating state or extension files.
+  parsePackagedManifest(payload);
   const installed = chrome.runtime.getManifest().version;
   if (!isVersionNewer(payload.version, installed)) {
     logUpdate('package is not newer', payload.version);
@@ -332,7 +319,6 @@ async function recoverIfNeeded(handle) {
     }
     return false;
   }
-  if (!local.updateInProgress) return false;
   const pending = await idbGet('state', 'pendingPackage');
   if (!pending) {
     await chrome.storage.local.set({ updateInProgress: false });
@@ -343,6 +329,10 @@ async function recoverIfNeeded(handle) {
 }
 
 async function verifyAfterReload() {
+  return withExtensionOperation('update', verifyAfterReloadOwned);
+}
+
+async function verifyAfterReloadOwned() {
   const result = await settleUpdateAfterReload();
   if (result.status === 'verified') {
     setStatus(`Updated to v${result.installed}. You can close this tab.`);
@@ -401,17 +391,15 @@ async function start() {
   await runApply(handle);
 }
 
-async function ownerTabIsAlive(ownerId) {
-  if (!ownerId) return false;
+async function runApply(handle) {
   try {
-    await chrome.tabs.get(ownerId);
-    return true;
-  } catch {
-    return false;
+    return await withExtensionOperation('update', () => runApplyOwned(handle));
+  } catch (err) {
+    setStatus(err.message || String(err), true);
   }
 }
 
-async function runApply(handle) {
+async function runApplyOwned(handle) {
   setStatus('Checking for an active order scan…');
   let scrapeStatus;
   try {
@@ -424,18 +412,11 @@ async function runApply(handle) {
     setStatus('Finish or stop the scrape before updating. Reload would interrupt an active job.', true);
     return;
   }
-  const tab = await chrome.tabs.getCurrent();
   const local = await chrome.storage.local.get(['updateInProgress', 'updateReloadPending']);
-  const session = await chrome.storage.session.get('updateOwner');
-  if (local.updateInProgress && session.updateOwner && session.updateOwner !== tab?.id) {
-    if (await ownerTabIsAlive(session.updateOwner)) {
-      setStatus('Updating…');
-      return;
-    }
-    logUpdate('stale update owner, taking over', session.updateOwner);
-  }
-  if (tab?.id) await chrome.storage.session.set({ updateOwner: tab.id });
-  if (local.updateReloadPending || local.updateInProgress) {
+  // Remove old advisory owners. Native lock ownership covers this whole action
+  // and releases even when a failed updater tab remains open.
+  await chrome.storage.session.remove('updateOwner');
+  if (local.updateReloadPending || local.updateInProgress || await idbGet('state', 'pendingPackage')) {
     setStatus('Updating…');
     const recovered = await recoverIfNeeded(handle);
     if (recovered) return;

@@ -1,4 +1,4 @@
-importScripts('update_helpers.js', 'scrape_core.js', 'order_history.js', 'amazon_requests.js', 'shipment_cache.js');
+importScripts('auth_client.js', 'update_helpers.js', 'scrape_core.js', 'order_history.js', 'amazon_requests.js', 'shipment_cache.js');
 
 const API_BASE = 'https://ieidgg.com';
 const UPDATE_CHECK_ALARM = 'extensionUpdateCheck';
@@ -37,27 +37,23 @@ async function folderPermissionGranted() {
 }
 
 async function hasIeidSession() {
-  try {
-    const access = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-    if (access?.value) return true;
-    const refresh = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-    return Boolean(refresh?.value);
-  } catch (err) {
-    console.info('[IEID update] session cookie lookup failed', err);
-    return false;
-  }
+  try { return Boolean(await IEIDAuth.getToken()); } catch { return false; }
 }
 
 async function maybeAutoApplyUpdate() {
   try {
-    const settled = await settleUpdateAfterReload();
-    if (settled.status === 'reload-pending') {
-      console.info('[IEID update] retrying extension reload');
-      await requestExtensionReload();
-      return;
-    }
+    const settled = await withExtensionOperation('update', async () => {
+      const result = await settleUpdateAfterReload();
+      if (result.status === 'reload-pending') {
+        console.info('[IEID update] retrying extension reload');
+        await requestExtensionReload();
+      }
+      return result;
+    });
+    if (settled.status === 'reload-pending') return;
   } catch (err) {
     console.info('[IEID update] reload settle failed', err);
+    return;
   }
   const latest = await checkExtensionVersion();
   const current = chrome.runtime.getManifest().version;
@@ -211,7 +207,6 @@ function scrapeDone(text, success) {
   stopScrapeKeepAlive();
   scrapeState.running = false;
   clearScrapeCheckpoint();
-  maybeAutoApplyUpdate();
 }
 
 function progress(pct, text) {
@@ -281,30 +276,8 @@ async function openLogTab() {
   });
 }
 
-// Get the access_token cookie for authenticated API calls
-async function refreshAccessToken() {
-  const refreshCookie = await chrome.cookies.get({ url: API_BASE, name: 'refresh_token' });
-  if (!refreshCookie?.value) return null;
-  const response = await fetch(`${API_BASE}/api/refresh-token`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'X-Refresh-Token': refreshCookie.value },
-  });
-  if (!response.ok) return null;
-  const newCookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-  return newCookie?.value || null;
-}
-
 async function getAuthCookie(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cookie = await chrome.cookies.get({ url: API_BASE, name: 'access_token' });
-    if (cookie?.value) return cookie.value;
-  }
-  try {
-    return await refreshAccessToken();
-  } catch {
-    return null;
-  }
+  return IEIDAuth.getToken(forceRefresh);
 }
 
 async function authorizedFetch(path, options = {}, allowRetry = true) {
@@ -312,13 +285,13 @@ async function authorizedFetch(path, options = {}, allowRetry = true) {
   if (!token) throw new Error('Not authenticated. Please sign in again.');
   const resp = await fetch(`${API_BASE}${path}`, {
     ...options,
-    credentials: 'include',
+    credentials: 'omit',
     headers: {
       ...(options.headers || {}),
       'X-Auth-Token': token,
     },
   });
-  if (resp.status === 401 && allowRetry) {
+  if (resp.status === 401 && allowRetry && ['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())) {
     const refreshed = await getAuthCookie(true);
     if (!refreshed || refreshed === token) throw new Error('Session expired. Please sign in again.');
     return authorizedFetch(path, options, false);
@@ -1204,7 +1177,17 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
   await saveShipmentDiscovery(allOrders, amazonEmail);
 }
 
-async function runSingleOrderScrape(config) {
+async function runSingleOrderScrape(config, onStarted) {
+  const result = await withExtensionOperation('scan', () => {
+    const result = runSingleOrderScrapeJob(config);
+    if (onStarted) onStarted();
+    return result;
+  });
+  maybeAutoApplyUpdate();
+  return result;
+}
+
+async function runSingleOrderScrapeJob(config) {
   const { orderId } = config;
 
   if (!orderId) {
@@ -1318,7 +1301,17 @@ async function runSingleOrderScrape(config) {
 }
 
 // --- Main scrape logic ---
-async function runScrape(config, checkpoint = null) {
+async function runScrape(config, checkpoint = null, onStarted) {
+  const result = await withExtensionOperation('scan', () => {
+    const result = runBulkScrapeJob(config, checkpoint);
+    if (onStarted) onStarted();
+    return result;
+  });
+  maybeAutoApplyUpdate();
+  return result;
+}
+
+async function runBulkScrapeJob(config, checkpoint = null) {
   const { yearFilter, maxPages, fetchTracking, useDbCache } = config;
   const zipFilters = normalizeZipFilters(config.zipFilters);
   scrapeState = checkpoint?.scrapeState || { running: true, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0, extractionIncomplete: false };
@@ -1609,6 +1602,17 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // Message handler
+function startScanCommand(start, sendResponse) {
+  let responded = false;
+  start(() => {
+    responded = true;
+    sendResponse({ok: true, running: scrapeState.running});
+  }).catch(err => {
+    if (!responded) sendResponse({error: err.message || 'Unable to start the order scan.', running: scrapeState.running});
+    else console.error('Scan failed after admission:', err);
+  });
+}
+
 async function openExtensionPopup() {
   if (chrome.action && typeof chrome.action.openPopup === 'function') {
     try {
@@ -1630,24 +1634,32 @@ async function openExtensionPopup() {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.target === 'ieid-html-parser') return false;
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.target === 'ieid-html-parser' || msg.type) return false;
+  const internal = sender.id === chrome.runtime.id && (sender.url || '').startsWith(chrome.runtime.getURL(''));
+  if (!internal) {
+    let orderPage = false;
+    try {
+      const url = new URL(sender.url);
+      orderPage = sender.id === chrome.runtime.id && sender.frameId === 0 && ['https://www.amazon.com', 'https://amazon.com'].includes(url.origin) && /^\/(?:your-orders|gp\/your-account)\/order-details(?:\/|$)/i.test(url.pathname);
+    } catch {}
+    if (msg.action !== 'prepare_single_order_scan' || !orderPage) {
+      sendResponse({error:'Invalid sender'});
+      return false;
+    }
+  }
   if (msg.action === 'start_scrape') {
-    if (!scrapeState.running) {
-      runScrape(msg.config);
-    }
-    sendResponse({ ok: true, running: scrapeState.running });
+    startScanCommand(onStarted => runScrape(msg.config, null, onStarted), sendResponse);
   } else if (msg.action === 'start_single_order_scrape') {
-    if (!scrapeState.running) {
-      runSingleOrderScrape(msg.config);
-    }
-    sendResponse({ ok: true, running: scrapeState.running });
+    startScanCommand(onStarted => runSingleOrderScrape(msg.config, onStarted), sendResponse);
   } else if (msg.action === 'prepare_single_order_scan') {
-    if (msg.orderId) {
-      chrome.storage.local.set({ pendingSingleOrderId: msg.orderId });
+    if (typeof msg.orderId !== 'string' || !msg.orderId) {
+      sendResponse({error:'Missing order ID'});
+      return false;
     }
-    openExtensionPopup();
-    sendResponse({ ok: true });
+    chrome.storage.local.set({ pendingSingleOrderId: msg.orderId })
+      .then(() => openExtensionPopup())
+      .then(() => sendResponse({ok:true}), () => sendResponse({error:'Unable to save selected order. Try again.'}));
   } else if (msg.action === 'get_pending_single_order') {
     chrome.storage.local.get('pendingSingleOrderId', (data) => {
       sendResponse({ orderId: data.pendingSingleOrderId || '' });
