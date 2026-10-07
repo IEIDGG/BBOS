@@ -351,6 +351,12 @@
     return qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
   }
 
+  function hasExplicitQuantity(itemRoot) {
+    const badge = itemRoot.querySelector('.product-image .product-image__qty, .item-view-qty, .od-item-view-qty');
+    return (badge && parseInt(cleanText(badge.textContent), 10) > 0)
+      || /\b(?:Qty|Quantity)\s*:?\s*[1-9]\d*\b/i.test(cleanText(itemRoot.textContent));
+  }
+
   function extractUnitPrice(itemRoot) {
     const unitPriceRoot = itemRoot.querySelector('[data-component="unitPrice"]');
     if (unitPriceRoot) {
@@ -550,6 +556,7 @@
       asin,
       productTitle: title,
       quantity,
+      quantityExplicit: Boolean(hasExplicitQuantity(itemRoot)),
       unitPrice,
       itemImage: imageUrl,
       trackingUrl: extractTrackingLink(container) || extractTrackingLink(itemRoot),
@@ -601,6 +608,7 @@
         asin,
         productTitle: title,
         quantity,
+        quantityExplicit: Boolean(hasExplicitQuantity(productRoot)),
         unitPrice,
         itemImage: imageUrl,
         trackingUrl: extractTrackingLink(productRoot) || extractTrackingLink(container),

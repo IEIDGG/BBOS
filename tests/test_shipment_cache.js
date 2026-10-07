@@ -12,8 +12,13 @@ const ctx = vm.createContext({ Date, Map, log() {}, scrapeState: { stopped: fals
 vm.runInContext(source, ctx);
 (async () => {
   const list = () => ({ orderId: 'old', shipments: [{ asin: 'A', quantity: 2, status: 'Delivered' }] });
+  storage['amazonShipmentDiscovery:v1:account-a@example.com'] = { old: {
+    signature: ctx.shipmentDiscoverySignature(list()), expiresAt: Date.now()+10000,
+    shipments: [{asin:'A',quantity:4,status:'Delivered',shipmentId:'legacy-inflated',unitPrice:'$10.00'}],
+  } };
   const order = list();
   await ctx.restoreShipmentDiscovery([order], 'account-a@example.com');
+  assert.strictEqual(order.shipments[0].quantity, 2, 'Never restore quantities extracted by the old duplicate-link parser');
   order.detailsScanned = true;
   order.shipments = [1, 2].map(i => ({ asin: 'A', quantity: 1, status: 'Delivered', shipmentId: 'shipment' + i, trackingNumber: 'tracking' + i }));
   await ctx.saveShipmentDiscovery([order], 'account-a@example.com');
