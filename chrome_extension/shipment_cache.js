@@ -10,7 +10,7 @@ function shipmentDiscoverySignature(order) {
 }
 
 function shipmentDiscoveryCacheKey(account) {
-  return account ? `amazonShipmentDiscovery:v1:${String(account).trim().toLowerCase()}` : '';
+  return account ? `amazonShipmentDiscovery:v2:${String(account).trim().toLowerCase()}` : '';
 }
 
 async function restoreShipmentDiscovery(allOrders, account, enabled = true) {
