@@ -10,6 +10,7 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 
 assert.strictEqual(manifest.name, 'IEID Order Scraper');
 assert.strictEqual(typeof manifest.version, 'string');
+assert.match(manifest.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/, 'Release versions must use semantic MAJOR.MINOR.PATCH without leading zeroes');
 assert.ok(!manifest.permissions.includes('activeTab'));
 
 function collectFiles(dir, prefix, files) {

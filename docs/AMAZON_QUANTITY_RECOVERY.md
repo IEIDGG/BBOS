@@ -30,7 +30,12 @@ updating, retain a rollback artifact, change only verified fields, and read the
 rows back after commit. Do not blanket-divide an account's quantities or prices.
 
 The deployed backend still uses cookie-session authentication. Its compatible
-hotfix is a backport from the published 1.1.12 source, versioned 1.1.12.1. Keep
+hotfix is a backport from the published 1.1.12 source, versioned 1.1.16. Keep
 modern account-grant releases and automatic BBOS promotion behind the existing
 coordinated-release hold. This parser fix on main does not authorize publishing
 the modern extension to the legacy backend.
+
+Release numbers use three numeric components. Versions 1.1.13 through 1.1.15
+were already used, so the compatible hotfix takes 1.1.16. Modern main starts
+above that number; its generated post-merge version must be verified before any
+future parent pin. A higher version does not authorize lifting the release hold.
