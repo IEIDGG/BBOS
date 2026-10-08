@@ -31,12 +31,15 @@ rows back after commit. Do not blanket-divide an account's quantities or prices.
 
 The original 1.1.16 candidate backported this fix to cookie-session 1.1.12.
 IEIDLLC subsequently merged the modern authentication release into main.
-Release numbers remain semantic MAJOR.MINOR.PATCH; 1.1.18 is the consolidated
-candidate above the already-used legacy 1.1.16 and modern 1.1.17 versions.
+Release numbers remain semantic MAJOR.MINOR.PATCH; 1.1.19 is the consolidated
+candidate above the already-used legacy 1.1.16 and modern 1.1.17 versions. The intermediate
+1.1.18 cookie-session candidate remains in history; modern 1.1.19 has a distinct
+version to prevent an updater from treating different authentication clients as
+identical.
 Automatic BBOS promotion stays held. Verify the generated final version commit
 and the backend/client compatibility pair before publication.
 
-## Consolidated 1.1.18 update
+## Consolidated 1.1.19 update
 
 BBOS PRs #20 and #21 contain identical quantity-fix changes in all five
 extension source files. #20 now consolidates that fix with the October 8 live
