@@ -152,8 +152,9 @@
     if (/enter the characters you see below|sorry, we just need to make sure you're not a robot/i.test(text)) {
       return 'Amazon verification page';
     }
-    if (/sign in|email or mobile phone number|enter your password|session has expired/i.test(text)
-      && !/Tracking ID:/i.test(text)) {
+    const authForm = document.querySelector('form[action*="/ap/signin"], form[name="signIn"], #authportal-main-section');
+    const authInput = document.querySelector('#ap_email, #ap_password, input[name="password"]');
+    if (authForm && authInput && !extractTrackingIdFromDom()) {
       return 'Amazon sign-in required';
     }
     return '';

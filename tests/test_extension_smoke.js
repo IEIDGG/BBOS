@@ -102,6 +102,7 @@ try {
       await uploadOrdersToApi(orders, 'synthetic@example.test');
     }, parsedQuantity.orders);
     assert.strictEqual(quantityUploads.length, 2);
+    assert.ok(quantityUploads.every(upload => upload.every(row => row.shipment_status === 'Not yet shipped')), 'Untracked arrival estimates must not upload as Shipped');
     for (const upload of quantityUploads) assert.deepStrictEqual(upload.map(r => [r.asin,r.quantity,r.unit_price,r.total_owed]), [['B000000001','3','1099.00','3297.00']], 'First import and retry must upload the original quantity and cost');
     const splitQuantity = await page.evaluate(() => {
       document.querySelector('.od-item-view-qty span').textContent = '1';

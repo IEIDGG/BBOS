@@ -27,6 +27,7 @@ function item(asin, shipmentId, quantity = 1) {
   const imageLink = { ...product, textContent: '' };
   const root = {
     textContent: `Delivered July 2 Qty: ${quantity}`,
+    closest: () => null,
     contains: () => true,
     querySelector(selector) {
       if (selector === '[data-component="unitPrice"]') return { textContent: '$29.99', querySelector: () => null };

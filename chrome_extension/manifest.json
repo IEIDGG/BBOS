@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "140",
   "name": "IEID Order Scraper",
-  "version": "1.1.17",
+  "version": "1.1.18",
   "description": "Scrape Amazon order and tracking data",
   "permissions": [
     "scripting",

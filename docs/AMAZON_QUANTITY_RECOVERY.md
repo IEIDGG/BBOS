@@ -29,13 +29,35 @@ row ID, order ID and ASIN. Check the old quantities and all other fields before
 updating, retain a rollback artifact, change only verified fields, and read the
 rows back after commit. Do not blanket-divide an account's quantities or prices.
 
-The deployed backend still uses cookie-session authentication. Its compatible
-hotfix is a backport from the published 1.1.12 source, versioned 1.1.16. Keep
-modern account-grant releases and automatic BBOS promotion behind the existing
-coordinated-release hold. This parser fix on main does not authorize publishing
-the modern extension to the legacy backend.
+The original 1.1.16 candidate backported this fix to cookie-session 1.1.12.
+IEIDLLC subsequently merged the modern authentication release into main.
+Release numbers remain semantic MAJOR.MINOR.PATCH; 1.1.18 is the consolidated
+candidate above the already-used legacy 1.1.16 and modern 1.1.17 versions.
+Automatic BBOS promotion stays held. Verify the generated final version commit
+and the backend/client compatibility pair before publication.
 
-Release numbers use three numeric components. Versions 1.1.13 through 1.1.15
-were already used, so the compatible hotfix takes 1.1.16. Modern main starts
-above that number; its generated post-merge version must be verified before any
-future parent pin. A higher version does not authorize lifting the release hold.
+## Consolidated 1.1.18 update
+
+BBOS PRs #20 and #21 contain identical quantity-fix changes in all five
+extension source files. #20 now consolidates that fix with the October 8 live
+scrape corrections; #21 is superseded. IEIDLLC main now includes account
+authentication (#119), so the consolidated
+PR preserves the modern authentication base from #21 and targets BBOS main.
+IEIDLLC #139 pins this modern client together with the current modern backend.
+The earlier cookie-session candidate remains in history for legacy deployments;
+it must not replace the client after the account authentication cutover.
+
+Additional fixes recover delivery-level metadata without crossing sibling
+purchased-items blocks, read enhanced order-card badges, accept complete
+unshipped HTML, and avoid false tracking-page sign-in errors from navigation.
+Active shipments require tracking to be Shipped; untracked shipments are Not
+yet shipped. Delivered and Cancelled remain terminal states. A product with a
+tracked split remains Shipped while another split is pending, without replacing
+saved tracking arrays with a partial list.
+
+Validation adds 16 isolated Chromium regressions using sanitized captures and
+synthetic split deliveries, plus the existing JavaScript suites and native
+extension repeat-upload smoke test. The live three-page scan of the earlier
+local fix updated 16 product rows without false sign-in errors; a subsequent
+status-fix scan encountered a real Amazon sign-in page. Release validation is
+isolated and does not itself repair production data.
