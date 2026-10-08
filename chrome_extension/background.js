@@ -892,6 +892,10 @@ function aggregateProductPayload(rows) {
     for (const field of ['carrier', 'order_status', 'shipment_status']) {
       if (!group.every(row => row[field] === merged[field])) delete merged[field];
     }
+    // A partially fulfilled product still has shipment evidence if any split
+    // has tracking. Preserve terminal states when every split is terminal.
+    const allTerminal = group.every(row => ['Delivered', 'Cancelled'].includes(row.shipment_status));
+    if (!allTerminal && trackingLists.some(list => list.length)) merged.shipment_status = 'Shipped';
     return compactScrapeRow(merged);
   });
 }
@@ -909,7 +913,7 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
         total_owed: getShipmentTotalOwed(order, shipment),
         shipping_address: resolveShippingAddress(order),
         order_status: normalizeOrderStatus(rawStatus),
-        shipment_status: normalizeShipmentStatus(rawStatus),
+        shipment_status: normalizeShipmentStatus(rawStatus, shipment.trackingNumber),
         asin: shipment.asin || '',
         product_name: shipment.productTitle || '',
         item_image: shipment.itemImage || '',
@@ -1010,7 +1014,7 @@ async function fetchTrackingBatch(batchGroups) {
   const results = await Promise.all(batchGroups.map(async (group) => {
     try {
       const trackResult = await readAmazonPage(group.trackUrl, 'tracking',
-        result => Boolean(!result?.issue && (result?.trackingId || result?.unavailable)));
+        result => Boolean(!result?.issue && (result?.trackingId || result?.unavailable || result?.noTracking || result?.cancelled)));
       return { group, trackResult, error: null };
     } catch (err) {
       return { group, trackResult: null, error: err.message };
@@ -1066,8 +1070,9 @@ async function readOrderDetail(order) {
     if (!result?.issue && result?.cancelledOrders?.some(entry => entry.orderId === order.orderId)) return true;
     try {
       const detail = validateDetailedOrder(result, order);
-      return detail.shipments.every(shipment => Boolean(buildTrackingUrl(detail, shipment))
-        && parseMoneyAmount(shipment.unitPrice) !== null);
+      return detail.shipments.every(shipment => parseMoneyAmount(shipment.unitPrice) !== null
+        && (Boolean(buildTrackingUrl(detail, shipment))
+          || /arriving|not yet shipped|preparing|ordered|now arriving/i.test(shipment.status || '')));
     } catch {
       return false;
     }
@@ -1588,13 +1593,12 @@ function normalizeOrderStatus(raw) {
   return 'Open';
 }
 
-function normalizeShipmentStatus(raw) {
-  const lower = raw.toLowerCase();
+function normalizeShipmentStatus(raw, trackingNumber = '') {
+  const lower = String(raw || '').toLowerCase();
   if (lower.includes('cancel')) return 'Cancelled';
   if (lower.includes('delivered')) return 'Delivered';
-  if (lower.includes('arriving') || lower.includes('expected') || lower.includes('out for delivery')) return 'Shipped';
-  if (lower.includes('shipped') || lower.includes('on the way')) return 'Shipped';
-  return raw;
+  // A delivery estimate or 'Shipped' label alone is not shipment evidence.
+  return String(trackingNumber || '').trim() ? 'Shipped' : 'Not yet shipped';
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {

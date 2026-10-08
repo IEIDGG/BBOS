@@ -340,7 +340,7 @@
   }
 
   function extractQuantity(itemRoot) {
-    const badge = itemRoot.querySelector('.product-image .product-image__qty, .item-view-qty, .od-item-view-qty');
+    const badge = itemRoot.querySelector('.product-image__qty, .item-view-qty, .od-item-view-qty');
     if (badge) {
       const qty = parseInt(cleanText(badge.textContent), 10);
       if (!Number.isNaN(qty) && qty > 0) return qty;
@@ -352,7 +352,7 @@
   }
 
   function hasExplicitQuantity(itemRoot) {
-    const badge = itemRoot.querySelector('.product-image .product-image__qty, .item-view-qty, .od-item-view-qty');
+    const badge = itemRoot.querySelector('.product-image__qty, .item-view-qty, .od-item-view-qty');
     return (badge && parseInt(cleanText(badge.textContent), 10) > 0)
       || /\b(?:Qty|Quantity)\s*:?\s*[1-9]\d*\b/i.test(cleanText(itemRoot.textContent));
   }

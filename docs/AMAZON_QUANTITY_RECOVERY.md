@@ -39,3 +39,26 @@ Release numbers use three numeric components. Versions 1.1.13 through 1.1.15
 were already used, so the compatible hotfix takes 1.1.16. Modern main starts
 above that number; its generated post-merge version must be verified before any
 future parent pin. A higher version does not authorize lifting the release hold.
+
+## Consolidated 1.1.18 update
+
+BBOS PRs #20 and #21 contain identical quantity-fix changes in all five
+extension source files. #20 now consolidates that fix with the October 8 live
+scrape corrections; #21 is superseded. The compatible cookie-session base is
+retained for IEIDLLC PR #139. This does not release the modern authentication
+base through the legacy backend.
+
+Additional fixes recover delivery-level metadata without crossing sibling
+purchased-items blocks, read enhanced order-card badges, accept complete
+unshipped HTML, and avoid false tracking-page sign-in errors from navigation.
+Active shipments require tracking to be Shipped; untracked shipments are Not
+yet shipped. Delivered and Cancelled remain terminal states. A product with a
+tracked split remains Shipped while another split is pending, without replacing
+saved tracking arrays with a partial list.
+
+Validation adds 16 isolated Chromium regressions using sanitized captures and
+synthetic split deliveries, plus the existing JavaScript suites and native
+extension repeat-upload smoke test. The live three-page scan of the earlier
+local fix updated 16 product rows without false sign-in errors; a subsequent
+status-fix scan encountered a real Amazon sign-in page. Release validation is
+isolated and does not itself repair production data.

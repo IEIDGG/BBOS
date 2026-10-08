@@ -57,9 +57,10 @@ function fixture(mode) {
   pending.ctx.scrapeState.tracked = 0;
   const shipment = {};
   await pending.ctx.fetchTrackingBatch([{ trackUrl: 'https://www.amazon.com/progress-tracker/package?orderId=111&shipmentId=first', targets: [{ order: { orderId: '111' }, shipment, shipmentIndex: 0 }] }]);
-  assert.strictEqual(pending.calls.tabs, 1, 'Heuristic pending text must allow rendering to reveal tracking');
-  assert.strictEqual(pending.calls.closed, 1);
-  assert.strictEqual(shipment.trackingNumber, 'TBA123456789012');
+  assert.strictEqual(pending.calls.tabs, 0, 'A valid no-tracking outcome should not open another Amazon tab');
+  assert.strictEqual(pending.calls.closed, 0);
+  assert.strictEqual(shipment.trackingNumber, undefined);
+  assert.ok(!pending.ctx.scrapeState.extractionIncomplete);
   const referral = fixture('success');
   await referral.ctx.readAmazonPage('https://www.amazon.com/gp/your-account/ship-track/ref=ppx_yo_dt_b_track_package?orderId=111&shipmentId=first', 'tracking', value => value?.valid);
   assert.strictEqual(referral.calls.tabs, 0, 'Legitimate referral paths use the request transport');

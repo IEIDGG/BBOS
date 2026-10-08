@@ -62,6 +62,7 @@ try {
     assert.deepStrictEqual(parsed[0].shipments.map(s => [s.asin,s.quantity,s.unitPrice]), [['B000000001',3,'$1,099.00']]);
     await extractAndUpload();
     assert.strictEqual(uploads.length, 2);
+    assert.ok(uploads.every(upload => upload.every(row => row.shipment_status === 'Not yet shipped')), 'Untracked arrival estimates must not be uploaded as Shipped');
     for (const upload of uploads) assert.deepStrictEqual(upload.map(r => [r.asin,r.quantity,r.unit_price,r.total_owed]), [['B000000001','3','1099.00','3297.00']], 'First import and retry must preserve Amazon quantity and cost');
     await page.evaluate(() => {
       document.querySelector('.od-item-view-qty span').textContent = '1';

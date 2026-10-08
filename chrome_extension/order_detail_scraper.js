@@ -169,6 +169,8 @@
 
   function getStatusFromContainer(container) {
     const selectors = [
+      '[data-component="shipmentStatus"] h4',
+      '.od-status-message',
       '.delivery-box__primary-text',
       '[data-test-id*="delivery"]',
       '[class*="delivery"] .a-size-medium',
@@ -290,7 +292,7 @@
   }
 
   function extractQuantity(itemRoot) {
-    const badge = itemRoot.querySelector('.product-image .product-image__qty, .item-view-qty, .od-item-view-qty');
+    const badge = itemRoot.querySelector('.product-image__qty, .item-view-qty, .od-item-view-qty');
     if (badge) {
       const qty = parseInt(cleanText(badge.textContent), 10);
       if (!Number.isNaN(qty) && qty > 0) return qty;
@@ -458,7 +460,17 @@
         const asin = href.match(ASIN_RE)?.[1]?.toUpperCase() || '';
         if (!asin) continue;
 
-        const shipmentContainer = link.closest('.delivery-box, [data-test-id="shipment-item"], .shipment-item, [class*="shipment"]') || container;
+        const block = container.closest('[data-component="purchasedItems"]');
+        // A generic box may wrap several deliveries. Stop before an ancestor
+        // that owns another purchasedItems block, so sibling metadata stays local.
+        let delivery = block || container;
+        while (block && delivery.parentElement
+          && delivery.parentElement.querySelectorAll('[data-component="purchasedItems"]').length === 1) {
+          delivery = delivery.parentElement;
+          if (delivery.matches('.delivery-box, .shipment-item, .shipment, [data-component="shipment"], [data-test-id="shipment-item"], .a-box-inner')) break;
+        }
+        const shipmentContainer = block ? delivery
+          : link.closest('.delivery-box, [data-test-id="shipment-item"], .shipment-item, [class*="shipment"]') || container;
         const status = getStatusFromContainer(shipmentContainer);
         if (/cancel(?:led|ed)/i.test(status)) continue;
         const productRoot = getProductRoot(link, container);
