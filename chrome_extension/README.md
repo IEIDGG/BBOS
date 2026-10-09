@@ -1,6 +1,17 @@
-# IEID Amazon Order Scraper
+# IEID Amazon Order Scraper v1.1.19
 
 Chrome extension for importing Amazon order and tracking details into IEID.
+
+## 1.1.19 fixes
+
+Retains the 1.1.16 purchased-row quantity fix and cache safeguards. Enhanced
+order cards now read their quantity badges, and purchased items retain their
+delivery-level status and tracking link. Complete unshipped HTML and valid
+no-tracking outcomes avoid unnecessary tab retries. Tracking pages require an
+actual credential form before reporting that Amazon sign-in is required.
+
+An active shipment is Shipped only when it has a tracking number; otherwise it
+is Not yet shipped. Delivered and Cancelled states remain available.
 
 ## Install
 

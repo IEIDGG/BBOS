@@ -340,7 +340,7 @@
   }
 
   function extractQuantity(itemRoot) {
-    const badge = itemRoot.querySelector('.product-image .product-image__qty, .item-view-qty, .od-item-view-qty');
+    const badge = itemRoot.querySelector('.product-image__qty, .item-view-qty, .od-item-view-qty');
     if (badge) {
       const qty = parseInt(cleanText(badge.textContent), 10);
       if (!Number.isNaN(qty) && qty > 0) return qty;
@@ -349,6 +349,12 @@
     const text = cleanText(itemRoot.textContent);
     const qtyMatch = text.match(/\b(?:Qty|Quantity)\s*:?\s*(\d+)\b/i);
     return qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
+  }
+
+  function hasExplicitQuantity(itemRoot) {
+    const badge = itemRoot.querySelector('.product-image__qty, .item-view-qty, .od-item-view-qty');
+    return (badge && parseInt(cleanText(badge.textContent), 10) > 0)
+      || /\b(?:Qty|Quantity)\s*:?\s*[1-9]\d*\b/i.test(cleanText(itemRoot.textContent));
   }
 
   function extractUnitPrice(itemRoot) {
@@ -550,6 +556,7 @@
       asin,
       productTitle: title,
       quantity,
+      quantityExplicit: Boolean(hasExplicitQuantity(itemRoot)),
       unitPrice,
       itemImage: imageUrl,
       trackingUrl: extractTrackingLink(container) || extractTrackingLink(itemRoot),
@@ -601,6 +608,7 @@
         asin,
         productTitle: title,
         quantity,
+        quantityExplicit: Boolean(hasExplicitQuantity(productRoot)),
         unitPrice,
         itemImage: imageUrl,
         trackingUrl: extractTrackingLink(productRoot) || extractTrackingLink(container),

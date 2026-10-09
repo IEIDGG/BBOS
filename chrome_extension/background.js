@@ -103,7 +103,8 @@ const ORDER_PAGE_DELAY_MAX_MS = 800;
 const KEEP_ALIVE_ALARM = 'scrapeKeepAlive';
 const LOG_PAGE = 'log.html';
 
-const JOB_CHECKPOINT_KEY = 'scrapeJobCheckpoint';
+// Older checkpoints can contain quantities inflated by duplicate product links.
+const JOB_CHECKPOINT_KEY = 'scrapeJobCheckpoint:v2';
 let scrapeState = { running: false, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0, extractionIncomplete: false };
 let scrapeLogs = [];
 let logTabId = null;
@@ -864,12 +865,17 @@ function aggregateProductPayload(rows) {
     for (const field of ['carrier', 'order_status', 'shipment_status']) {
       if (!group.every(row => row[field] === merged[field])) delete merged[field];
     }
+    // A partially fulfilled product still has shipment evidence if any split
+    // has tracking. Preserve terminal states when every split is terminal.
+    const allTerminal = group.every(row => ['Delivered', 'Cancelled'].includes(row.shipment_status));
+    if (!allTerminal && trackingLists.some(list => list.length)) merged.shipment_status = 'Shipped';
     return compactScrapeRow(merged);
   });
 }
 
 async function uploadOrdersToApi(allOrders, amazonEmail) {
-  const payload = aggregateProductPayload(dedupePayloadLineItems(allOrders.flatMap((order) => {
+  const safeOrders = allOrders.filter(order => !order.quantityDisputed);
+  const payload = aggregateProductPayload(safeOrders.flatMap((order) => {
     return order.shipments.map((shipment) => {
       const rawStatus = shipment.status || '';
       const unitPrice = parseMoneyAmount(shipment.unitPrice);
@@ -880,7 +886,7 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
         total_owed: getShipmentTotalOwed(order, shipment),
         shipping_address: resolveShippingAddress(order),
         order_status: normalizeOrderStatus(rawStatus),
-        shipment_status: normalizeShipmentStatus(rawStatus),
+        shipment_status: normalizeShipmentStatus(rawStatus, shipment.trackingNumber),
         asin: shipment.asin || '',
         product_name: shipment.productTitle || '',
         item_image: shipment.itemImage || '',
@@ -892,7 +898,7 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
         email_address: amazonEmail,
       });
     });
-  })));
+  }));
 
   log(`Sending ${payload.length} line items from ${allOrders.length} orders...`, 'info');
 
@@ -981,7 +987,7 @@ async function fetchTrackingBatch(batchGroups) {
   const results = await Promise.all(batchGroups.map(async (group) => {
     try {
       const trackResult = await readAmazonPage(group.trackUrl, 'tracking',
-        result => Boolean(!result?.issue && (result?.trackingId || result?.unavailable)));
+        result => Boolean(!result?.issue && (result?.trackingId || result?.unavailable || result?.noTracking || result?.cancelled)));
       return { group, trackResult, error: null };
     } catch (err) {
       return { group, trackResult: null, error: err.message };
@@ -1012,9 +1018,21 @@ function validateDetailedOrder(result, order) {
     return totals;
   };
   const detailTotals = quantitiesByAsin(detail.shipments);
-  for (const [asin, quantity] of quantitiesByAsin(order.shipments)) {
-    if ((detailTotals.get(asin) || 0) < quantity) {
-      throw new Error('Order details did not contain all product quantities from the list');
+  const listTotals = quantitiesByAsin(order.shipments);
+  const inferredAsins = new Set((order.shipments || []).filter(s => s.quantityExplicit === false).map(s => s.asin?.toUpperCase()));
+  const mismatch = () => {
+    const error = new Error('Order details product quantities did not match the list');
+    error.quantityMismatch = true;
+    return error;
+  };
+  if (listTotals.size && detailTotals.size !== listTotals.size) {
+    throw mismatch();
+  }
+  for (const [asin, quantity] of listTotals) {
+    // Missing badges imply one item, rather than an authoritative total.
+    const detailQuantity = detailTotals.get(asin);
+    if (detailQuantity === undefined || (inferredAsins.has(asin) ? detailQuantity < quantity : detailQuantity !== quantity)) {
+      throw mismatch();
     }
   }
   return detail;
@@ -1025,8 +1043,9 @@ async function readOrderDetail(order) {
     if (!result?.issue && result?.cancelledOrders?.some(entry => entry.orderId === order.orderId)) return true;
     try {
       const detail = validateDetailedOrder(result, order);
-      return detail.shipments.every(shipment => Boolean(buildTrackingUrl(detail, shipment))
-        && parseMoneyAmount(shipment.unitPrice) !== null);
+      return detail.shipments.every(shipment => parseMoneyAmount(shipment.unitPrice) !== null
+        && (Boolean(buildTrackingUrl(detail, shipment))
+          || /arriving|not yet shipped|preparing|ordered|now arriving/i.test(shipment.status || '')));
     } catch {
       return false;
     }
@@ -1060,10 +1079,12 @@ async function discoverMissingTracking(allOrders) {
         const result = await readOrderDetail(order);
         const detail = validateDetailedOrder(result, order);
         order.shipments = detail.shipments;
+        order.quantityDisputed = false;
         order.detailsScanned = detail.shipments.every(shipment => parseMoneyAmount(shipment.unitPrice) !== null);
         dedupeOrderShipments(order);
         log(`${order.orderId}: found ${order.shipments.length} shipment items on order details`, 'info');
       } catch (err) {
+        if (err.quantityMismatch || order.shipments.some(s => s.quantityExplicit === false)) order.quantityDisputed = true;
         scrapeState.extractionIncomplete = true;
         log(`${order.orderId}: could not recover order details (${err.message})`, 'error');
       }
@@ -1565,13 +1586,12 @@ function normalizeOrderStatus(raw) {
   return 'Open';
 }
 
-function normalizeShipmentStatus(raw) {
-  const lower = raw.toLowerCase();
+function normalizeShipmentStatus(raw, trackingNumber = '') {
+  const lower = String(raw || '').toLowerCase();
   if (lower.includes('cancel')) return 'Cancelled';
   if (lower.includes('delivered')) return 'Delivered';
-  if (lower.includes('arriving') || lower.includes('expected') || lower.includes('out for delivery')) return 'Shipped';
-  if (lower.includes('shipped') || lower.includes('on the way')) return 'Shipped';
-  return raw;
+  // A delivery estimate or 'Shipped' label alone is not shipment evidence.
+  return String(trackingNumber || '').trim() ? 'Shipped' : 'Not yet shipped';
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {

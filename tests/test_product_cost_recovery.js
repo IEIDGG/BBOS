@@ -6,6 +6,7 @@ const source = fs.readFileSync(require.resolve('../chrome_extension/background.j
 const requests = [];
 const uploads = [];
 let omitPrices = false;
+let detailOverride;
 const order = { orderId: '111-1111111-1111111', total: '$2399.94', shipments: [
   { asin: 'B000000001', quantity: 3, shipmentId: 'shared', itemId: 'item', trackingNumber: 'TBA123456789012' },
   { asin: 'B000000002', quantity: 3, shipmentId: 'shared', itemId: 'item', trackingNumber: 'TBA123456789012' },
@@ -17,6 +18,7 @@ const ctx = vm.createContext({ ...core, URL, URLSearchParams, Map, Set,
   normalizeShipmentStatus: v => v, normalizeCarrier: v => v,
   async readAmazonPage(url, kind, accept) {
     requests.push(url);
+    if (detailOverride) return detailOverride;
     assert.strictEqual(accept({ orders: [order] }), false, 'A price-free background response must try the rendered detail page');
     const result = { orders: [{ ...order, shipments: order.shipments.map(s => ({ ...s, trackingNumber: '', unitPrice: omitPrices ? '' : '$399.99' })) }] };
     assert.strictEqual(accept(result), !omitPrices);
@@ -30,6 +32,16 @@ vm.runInContext(source.slice(source.indexOf('function mergeShipment('), source.i
 vm.runInContext(source.slice(source.indexOf('function buildOrderDetailUrl('), source.indexOf('function applyTrackingResult(')), ctx);
 vm.runInContext(source.slice(source.indexOf('function validateDetailedOrder('), source.indexOf('async function fetchTrackingForOrders(')), ctx);
 (async () => {
+  assert.throws(() => ctx.validateDetailedOrder({ orders: [{ ...order, shipments: [
+    { asin: 'B000000001', quantity: 6 }, { asin: 'B000000002', quantity: 3 },
+  ] }] }, order), /quantit/i, 'A detail response with doubled quantities must be rejected');
+  assert.throws(() => ctx.validateDetailedOrder({ orders: [{ ...order, shipments: [
+    ...order.shipments, { asin: 'EXTRA', quantity: 1 },
+  ] }] }, order), /quantit/i, 'Unexpected detail products must not enter the import');
+  assert.doesNotThrow(() => ctx.validateDetailedOrder({ orders: [{ ...order, shipments: [
+    { asin: 'B000000001', quantity: 1 }, { asin: 'B000000001', quantity: 2 },
+    { asin: 'B000000002', quantity: 3 },
+  ] }] }, order), 'Real split shipments preserve the list quantity per product');
   await ctx.discoverMissingTracking([order]);
   assert.strictEqual(requests.length, 1, 'Known tracking must not prevent automatic retrieval of missing product costs');
   assert.ok(order.shipments.every(s => s.trackingNumber === 'TBA123456789012'), 'Cost recovery on an upload checkpoint must retain already fetched tracking');
@@ -67,5 +79,19 @@ vm.runInContext(source.slice(source.indexOf('function validateDetailedOrder('), 
   omitPrices = false;
   await ctx.discoverMissingTracking([order]);
   assert.strictEqual(order.detailsScanned, true, 'A later scan recovers newly available prices automatically');
+  const inferred = { orderId: 'inferred', shipments: [{ asin: 'A', quantity: 1, quantityExplicit: false }] };
+  detailOverride = { orders: [{ orderId: inferred.orderId, shipments: [
+    { asin: 'A', quantity: 1, sourceRowId: 'detail-row:0', unitPrice: '$759.99' },
+    { asin: 'A', quantity: 1, sourceRowId: 'detail-row:1', unitPrice: '$759.99' },
+  ] }] };
+  await ctx.discoverMissingTracking([inferred]);
+  await ctx.uploadOrdersToApi([inferred], 'test@example.test');
+  assert.deepStrictEqual(uploads.at(-1).map(row => [row.quantity, row.total_owed]), [['2', '1519.98']], 'A missing list badge must not reject or overwrite a valid split detail quantity');
+  const disputed = { orderId: 'disputed', shipments: [{ asin: 'A', quantity: 3 }] };
+  detailOverride = { orders: [{ orderId: disputed.orderId, shipments: [{ asin: 'A', quantity: 6, unitPrice: '$10.00' }] }] };
+  await ctx.discoverMissingTracking([disputed]);
+  const beforeDisputedUpload = uploads.length;
+  await ctx.uploadOrdersToApi([disputed], 'test@example.test');
+  assert.strictEqual(uploads.length, beforeDisputedUpload, 'A disputed quantity must not upload fallback rows');
   console.log('automatic product cost recovery and upload tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

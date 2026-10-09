@@ -86,6 +86,9 @@ function getShipmentIdentity(order, shipment) {
   if (shipmentId || packageId || itemId || lineItemId) {
     return ['ids', orderId, shipmentId, packageId, itemId, lineItemId, shipment.asin || ''].join('|');
   }
+  // A detail-page DOM row remains distinct when Amazon exposes no line IDs,
+  // even when another row has the same ASIN, title or tracking link.
+  if (shipment.sourceRowId) return ['row', orderId, shipment.sourceRowId, shipment.asin || ''].join('|');
   const trackingUrl = shipment.trackingUrl || '';
   if (isShipTrackUrl(trackingUrl)) return ['tracking-url', orderId, normalizeTrackingUrl(trackingUrl)].join('|');
   const trackingNumber = normalizeComparable(shipment.trackingNumber || shipment.tracking_number || '');

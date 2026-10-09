@@ -11,6 +11,7 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 
 assert.strictEqual(manifest.name, 'IEID Order Scraper');
 assert.strictEqual(typeof manifest.version, 'string');
+assert.match(manifest.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/, 'Release versions must use semantic MAJOR.MINOR.PATCH without leading zeroes');
 assert.ok(Number(manifest.minimum_chrome_version?.split('.')[0]) >= 140, 'Durable credentials require trusted local-storage access, introduced in Chrome 140');
 assert.ok(!manifest.permissions.includes('activeTab'));
 

@@ -169,6 +169,8 @@
 
   function getStatusFromContainer(container) {
     const selectors = [
+      '[data-component="shipmentStatus"] h4',
+      '.od-status-message',
       '.delivery-box__primary-text',
       '[data-test-id*="delivery"]',
       '[class*="delivery"] .a-size-medium',
@@ -290,7 +292,7 @@
   }
 
   function extractQuantity(itemRoot) {
-    const badge = itemRoot.querySelector('.product-image .product-image__qty, .item-view-qty, .od-item-view-qty');
+    const badge = itemRoot.querySelector('.product-image__qty, .item-view-qty, .od-item-view-qty');
     if (badge) {
       const qty = parseInt(cleanText(badge.textContent), 10);
       if (!Number.isNaN(qty) && qty > 0) return qty;
@@ -349,14 +351,17 @@
     ];
 
     for (const selector of selectors) {
-      const text = cleanText(container.querySelector(selector)?.textContent);
-      if (text && !/^\d+$/.test(text)) return text;
+      for (const node of container.querySelectorAll(selector)) {
+        const text = cleanText(node.textContent);
+        if (text && !/^\d+$/.test(text)) return text;
+      }
     }
 
     return cleanText(link?.getAttribute('aria-label') || link?.textContent || '');
   }
 
   function getProductRoot(link, container) {
+    const shipmentBoundary = link.closest('.delivery-box, [data-test-id="shipment-item"], .shipment-item, [class*="shipment"]');
     const selectors = [
       '.item-box',
       '.a-fixed-left-grid',
@@ -370,10 +375,12 @@
 
     for (const selector of selectors) {
       const root = link.closest(selector);
-      if (root && container.contains(root)) return root;
+      // Fallback shipment containers can overlap. The same anchor must keep
+      // its product root when visited through an inner shipment wrapper.
+      if (root && (!shipmentBoundary || shipmentBoundary.contains(root))) return root;
     }
 
-    return container;
+    return shipmentBoundary || container;
   }
 
   function extractProductImage(productRoot, link, container, asin) {
@@ -435,33 +442,56 @@
   function extractShipments() {
     const shipments = [];
     const seen = new Set();
+    const seenProducts = new WeakMap();
+    const seenLinks = new WeakSet();
+    const rootIds = new WeakMap();
+    let nextRootId = 0;
     const containers = findShipmentContainers();
     const pageTrackLinks = collectShipTrackLinks();
 
     for (const container of containers) {
-      const status = getStatusFromContainer(container);
-      if (/cancel(?:led|ed)/i.test(status)) continue;
-
       const productLinks = Array.from(container.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"], a[href*="/gp/aw/d/"]'))
         .sort((a, b) => cleanText(b.textContent).length - cleanText(a.textContent).length);
 
       for (const link of productLinks) {
+        if (seenLinks.has(link)) continue;
+        seenLinks.add(link);
         const href = link.href || '';
         const asin = href.match(ASIN_RE)?.[1]?.toUpperCase() || '';
         if (!asin) continue;
 
+        const block = container.closest('[data-component="purchasedItems"]');
+        // A generic box may wrap several deliveries. Stop before an ancestor
+        // that owns another purchasedItems block, so sibling metadata stays local.
+        let delivery = block || container;
+        while (block && delivery.parentElement
+          && delivery.parentElement.querySelectorAll('[data-component="purchasedItems"]').length === 1) {
+          delivery = delivery.parentElement;
+          if (delivery.matches('.delivery-box, .shipment-item, .shipment, [data-component="shipment"], [data-test-id="shipment-item"], .a-box-inner')) break;
+        }
+        const shipmentContainer = block ? delivery
+          : link.closest('.delivery-box, [data-test-id="shipment-item"], .shipment-item, [class*="shipment"]') || container;
+        const status = getStatusFromContainer(shipmentContainer);
+        if (/cancel(?:led|ed)/i.test(status)) continue;
         const productRoot = getProductRoot(link, container);
+        if (!rootIds.has(productRoot)) rootIds.set(productRoot, `detail-row:${nextRootId++}`);
+        // The image and title anchors are two views of one purchased row.
+        // DOM identity stays reliable when shipment IDs and link text are absent.
+        const rootAsins = seenProducts.get(productRoot) || new Set();
+        if (rootAsins.has(asin)) continue;
+        rootAsins.add(asin);
+        seenProducts.set(productRoot, rootAsins);
         const title = extractProductTitle(productRoot, link);
         const quantity = extractQuantity(productRoot);
         const unitPrice = extractUnitPrice(productRoot);
-        const imageUrl = extractProductImage(productRoot, link, container, asin);
+        const imageUrl = extractProductImage(productRoot, link, shipmentContainer, asin);
         const ids = {
           shipmentId: '',
           itemId: '',
           lineItemId: '',
           packageId: '',
         };
-        const containerIds = extractShipmentIds(container);
+        const containerIds = extractShipmentIds(shipmentContainer);
         const productIds = extractShipmentIds(productRoot);
         ids.shipmentId = productIds.shipmentId || containerIds.shipmentId || '';
         ids.itemId = productIds.itemId || containerIds.itemId || '';
@@ -480,13 +510,14 @@
 
         const shipment = {
           status,
-          statusDetail: getStatusDetail(container, status),
+          statusDetail: getStatusDetail(shipmentContainer, status),
           asin,
           productTitle: title,
           quantity,
           unitPrice,
           itemImage: imageUrl,
-          trackingUrl: extractTrackingLink(productRoot) || extractTrackingLink(container) || pageTrack?.trackingUrl || '',
+          trackingUrl: extractTrackingLink(productRoot) || extractTrackingLink(shipmentContainer) || pageTrack?.trackingUrl || '',
+          sourceRowId: rootIds.get(productRoot),
           ...ids,
         };
         const key = typeof getShipmentIdentity === 'function'
