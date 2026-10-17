@@ -126,9 +126,7 @@ class EmailConnector:
                 ):
                     # The old cache contained one flat UID set shared across all
                     # folders. It cannot be assigned safely to any mailbox.
-                    print(
-                        "⚠ Ignoring legacy processed UID cache without folder scope"
-                    )
+                    print("⚠ Ignoring legacy processed UID cache without folder scope")
                     return {}
 
                 mailboxes = {
