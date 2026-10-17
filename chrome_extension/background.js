@@ -575,6 +575,7 @@ function mergeShipment(existing, incoming) {
   if (!existing.itemId && incoming.itemId) existing.itemId = incoming.itemId;
   if (!existing.lineItemId && incoming.lineItemId) existing.lineItemId = incoming.lineItemId;
   if (!existing.packageId && incoming.packageId) existing.packageId = incoming.packageId;
+  if (incoming.trackingLookupIncomplete) existing.trackingLookupIncomplete = true;
   if ((!existing.trackingEvents || !existing.trackingEvents.length) && incoming.trackingEvents?.length) {
     existing.trackingEvents = incoming.trackingEvents;
   }
@@ -821,6 +822,49 @@ function getShipmentTotalOwed(order, shipment) {
   return '';
 }
 
+function buildProductShipmentManifest(rows) {
+  const shipments = new Map();
+  const conflicts = new Set();
+  let complete = true;
+  for (const row of rows) {
+    if (row.shipments_complete === false) complete = false;
+    const quantity = Number(row.quantity);
+    const validQuantity = (typeof row.quantity === 'number'
+      || (typeof row.quantity === 'string' && /^\d+$/.test(row.quantity.trim())))
+      && Number.isSafeInteger(quantity) && quantity > 0;
+    const ids = ['shipment_id', 'line_item_id', 'package_id'].map(field =>
+      typeof row[field] === 'string' ? row[field].trim() : '');
+    const rawTracking = row.tracking_number;
+    const validTracking = rawTracking == null || typeof rawTracking === 'string'
+      || (Array.isArray(rawTracking) && rawTracking.every(value => typeof value === 'string'));
+    const tracking = validTracking
+      ? (Array.isArray(rawTracking) ? rawTracking.flatMap(value => normalizeTrackingList(value)) : normalizeTrackingList(rawTracking))
+      : [];
+    // A product-level list of tracking numbers has no per-package allocation.
+    // Never copy its full quantity to each number or divide it speculatively.
+    if (!validQuantity || !validTracking || tracking.length > 1 || (!ids.some(Boolean) && !tracking.length)) {
+      complete = false;
+      continue;
+    }
+    const trackingNumber = tracking[0] || '';
+    const identity = JSON.stringify(ids[2] ? ['package', ...ids] : ['tracking', ...ids, trackingNumber]);
+    const existing = shipments.get(identity);
+    if (existing || conflicts.has(identity)) {
+      complete = false;
+      if (existing && (existing.quantity !== quantity || existing.tracking_number !== trackingNumber)) {
+        // Conflicting observations are not known quantities. Keep unrelated
+        // packages, but leave this package's saved backend entry unchanged.
+        shipments.delete(identity);
+        conflicts.add(identity);
+      }
+      continue;
+    }
+    shipments.set(identity, { shipment_id: ids[0], line_item_id: ids[1], package_id: ids[2],
+      tracking_number: trackingNumber, quantity });
+  }
+  return { shipments: Array.from(shipments.values()), shipments_complete: complete };
+}
+
 function aggregateProductPayload(rows) {
   // The scrape API upserts by order + ASIN. Sending split shipments as separate
   // writes overwrites that product's earlier tracking, quantity and cost.
@@ -831,7 +875,9 @@ function aggregateProductPayload(rows) {
     products.get(key).push(row);
   }
   return Array.from(products.values(), (group) => {
-    if (group.length === 1) return group[0];
+    // Capture each input package before summing quantities or unioning tracking.
+    const manifest = buildProductShipmentManifest(group);
+    if (group.length === 1) return { ...group[0], quantity: String(group[0].quantity || 1), ...manifest };
     const merged = { ...group[0] };
     merged.quantity = String(group.reduce((sum, row) => sum + (parseInt(row.quantity, 10) || 1), 0));
     const trackingLists = group.map(row => normalizeTrackingList(row.tracking_number));
@@ -862,6 +908,7 @@ function aggregateProductPayload(rows) {
     // No single shipment identity, carrier or status describes a mixed group.
     delete merged.shipment_id;
     delete merged.line_item_id;
+    delete merged.package_id;
     for (const field of ['carrier', 'order_status', 'shipment_status']) {
       if (!group.every(row => row[field] === merged[field])) delete merged[field];
     }
@@ -869,7 +916,7 @@ function aggregateProductPayload(rows) {
     // has tracking. Preserve terminal states when every split is terminal.
     const allTerminal = group.every(row => ['Delivered', 'Cancelled'].includes(row.shipment_status));
     if (!allTerminal && trackingLists.some(list => list.length)) merged.shipment_status = 'Shipped';
-    return compactScrapeRow(merged);
+    return { ...compactScrapeRow(merged), ...manifest };
   });
 }
 
@@ -890,11 +937,13 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
         asin: shipment.asin || '',
         product_name: shipment.productTitle || '',
         item_image: shipment.itemImage || '',
-        quantity: String(shipment.quantity || 1),
+        quantity: shipment.quantity,
         carrier: normalizeCarrier(shipment.carrier || '') || '',
         tracking_number: shipment.trackingNumber || '',
         shipment_id: shipment.shipmentId || '',
         line_item_id: shipment.lineItemId || shipment.itemId || '',
+        package_id: shipment.packageId || '',
+        shipments_complete: !order.shipmentManifestIncomplete && !shipment.trackingLookupIncomplete,
         email_address: amazonEmail,
       });
     });
@@ -931,6 +980,9 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
 }
 
 function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error) {
+  // Preserve known values on a failed refresh without claiming that they prove
+  // the current shipment manifest is complete. A definitive retry clears this.
+  shipment.trackingLookupIncomplete = true;
   if (error === 'no ship-track URL') {
     scrapeState.extractionIncomplete = true;
     log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> no ship-track URL`, 'error');
@@ -947,6 +999,7 @@ function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error)
   }
 
   if (trackResult.trackingId) {
+    shipment.trackingLookupIncomplete = false;
     shipment.carrier = trackResult.carrier || shipment.carrier || '';
     shipment.trackingNumber = trackResult.trackingId;
     shipment.trackingEvents = trackResult.events || [];
@@ -966,10 +1019,12 @@ function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error)
     return { timedOut: false };
   }
   if (trackResult.cancelled) {
+    shipment.trackingLookupIncomplete = false;
     log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> no tracking# (${trackResult.cancelled})`, 'error');
     return { timedOut: false };
   }
   if (trackResult.noTracking) {
+    shipment.trackingLookupIncomplete = false;
     log(`  ${order.orderId} shipment ${shipmentIndex + 1} -> no tracking# (${trackResult.noTracking})`, 'error');
     return { timedOut: false };
   }
@@ -985,6 +1040,7 @@ function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error)
 
 async function fetchTrackingBatch(batchGroups) {
   const results = await Promise.all(batchGroups.map(async (group) => {
+    for (const target of group.targets) target.shipment.trackingLookupIncomplete = true;
     try {
       const trackResult = await readAmazonPage(group.trackUrl, 'tracking',
         result => Boolean(!result?.issue && (result?.trackingId || result?.unavailable || result?.noTracking || result?.cancelled)));
@@ -1079,11 +1135,13 @@ async function discoverMissingTracking(allOrders) {
         const result = await readOrderDetail(order);
         const detail = validateDetailedOrder(result, order);
         order.shipments = detail.shipments;
+        order.shipmentManifestIncomplete = false;
         order.quantityDisputed = false;
         order.detailsScanned = detail.shipments.every(shipment => parseMoneyAmount(shipment.unitPrice) !== null);
         dedupeOrderShipments(order);
         log(`${order.orderId}: found ${order.shipments.length} shipment items on order details`, 'info');
       } catch (err) {
+        order.shipmentManifestIncomplete = true;
         if (err.quantityMismatch || order.shipments.some(s => s.quantityExplicit === false)) order.quantityDisputed = true;
         scrapeState.extractionIncomplete = true;
         log(`${order.orderId}: could not recover order details (${err.message})`, 'error');

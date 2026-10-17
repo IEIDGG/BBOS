@@ -76,8 +76,8 @@ const ctx = vm.createContext({ ...core, Map, Set, log() {}, stats() {},
 });
 vm.runInContext(cacheCode, ctx);
 const order = { orderId: '111-1111111-1111111', shipments: [
-  { asin: 'B000000001', shipmentId: 'first', lineItemId: 'shared', quantity: 1, unitPrice: '$759.99', status: 'Delivered', trackingNumber: '1ZFIRST' },
-  { asin: 'B000000001', shipmentId: 'second', lineItemId: 'shared', quantity: 1, unitPrice: '$759.99', status: 'Delivered', trackingNumber: '1ZSECOND' },
+  { asin: 'B000000001', shipmentId: 'first', lineItemId: 'shared', packageId: 'p1', quantity: 1, unitPrice: '$759.99', status: 'Delivered', trackingNumber: '1ZFIRST' },
+  { asin: 'B000000001', shipmentId: 'second', lineItemId: 'shared', packageId: 'p2', quantity: 2, unitPrice: '$759.99', status: 'Delivered', trackingNumber: '1ZSECOND' },
   { asin: 'B000000002', shipmentId: 'third', quantity: 2, unitPrice: '$29.99', status: 'Delivered', trackingNumber: 'TBAOTHER' },
 ] };
 const cache = ctx.buildDbShipmentCache([{ order_id: order.orderId, asin: 'B000000001', tracking_number: ['1ZFIRST'] }]);
@@ -100,19 +100,33 @@ vm.runInContext(background.slice(background.indexOf('function parseMoneyAmount('
   assert.strictEqual(uploads[0].length, 2, 'One complete database update per product, avoiding sequential overwrites');
   const laptops = uploads[0].find(row => row.asin === 'B000000001');
   assert.deepStrictEqual(laptops.tracking_number, ['1ZFIRST', '1ZSECOND']);
-  assert.strictEqual(laptops.quantity, '2');
-  assert.strictEqual(laptops.total_owed, '1519.98');
+  assert.strictEqual(laptops.quantity, '3');
+  assert.strictEqual(laptops.total_owed, '2279.97');
   assert.strictEqual(laptops.shipment_id, undefined, 'Aggregates must not claim a single shipment identity');
+  assert.strictEqual(laptops.package_id, undefined);
+  assert.deepStrictEqual(laptops.shipments, [
+    { shipment_id: 'first', line_item_id: 'shared', package_id: 'p1', tracking_number: '1ZFIRST', quantity: 1 },
+    { shipment_id: 'second', line_item_id: 'shared', package_id: 'p2', tracking_number: '1ZSECOND', quantity: 2 },
+  ], 'Keep the actual package quantities before product aggregation');
+  assert.strictEqual(laptops.shipments_complete, true);
   const other = uploads[0].find(row => row.asin === 'B000000002');
   assert.strictEqual(other.quantity, '2');
   assert.strictEqual(other.total_owed, '59.98');
+  assert.deepStrictEqual(other.shipments, [
+    { shipment_id: 'third', line_item_id: '', package_id: '', tracking_number: 'TBAOTHER', quantity: 2 },
+  ], 'Single-shipment products need a manifest too');
+  assert.strictEqual(other.shipments_complete, true);
   await ctx.uploadOrdersToApi([order], 'test@example.com');
   assert.deepStrictEqual(uploads[1], uploads[0], 'Repeat scans do not inflate quantity');
   order.shipments[1].trackingNumber = '';
+  order.shipments[1].trackingLookupIncomplete = true;
   await ctx.uploadOrdersToApi([order], 'test@example.com');
   assert.strictEqual(uploads[2][0].tracking_number, undefined,
     'A partial lookup must not replace the database tracking list with a subset');
-  assert.strictEqual(uploads[2][0].quantity, '2');
+  assert.strictEqual(uploads[2][0].quantity, '3');
+  assert.strictEqual(uploads[2][0].shipments[0].tracking_number, '1ZFIRST');
+  assert.strictEqual(uploads[2][0].shipments_complete, false,
+    'A missing split tracking lookup must never replace the complete saved manifest');
   assert.strictEqual(core.scrapeOutcomeSuccess(ctx.scrapeState), false);
   console.log('multi-shipment extraction, cache and upload tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
