@@ -847,7 +847,7 @@ function buildProductShipmentManifest(rows) {
       continue;
     }
     const trackingNumber = tracking[0] || '';
-    const identity = JSON.stringify(ids[2] ? ['package', ...ids] : ['tracking', ...ids, trackingNumber]);
+    const identity = JSON.stringify(ids[0] || ids[2] ? ['package', ...ids] : ['tracking', ...ids, trackingNumber]);
     const existing = shipments.get(identity);
     if (existing || conflicts.has(identity)) {
       complete = false;

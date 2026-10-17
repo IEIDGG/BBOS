@@ -82,6 +82,13 @@ const conflictingTracking = JSON.parse(JSON.stringify(ctx.aggregateProductPayloa
 ])[0]));
 assert.strictEqual(conflictingTracking.shipments_complete, false, 'One stable package cannot claim two different tracking numbers in the same snapshot');
 assert.deepStrictEqual(conflictingTracking.shipments, [manifest.shipments[1]], 'Reject the conflicting package while retaining unambiguous entries');
+const conflictingShipment = JSON.parse(JSON.stringify(ctx.aggregateProductPayload([
+  { ...manifestRows[0], package_id: '' },
+  { ...manifestRows[0], package_id: '', tracking_number: 'CONFLICT' },
+  manifestRows[1],
+])[0]));
+assert.strictEqual(conflictingShipment.shipments_complete, false, 'Stable shipment and line IDs cannot claim conflicting tracking when no package ID is exposed');
+assert.deepStrictEqual(conflictingShipment.shipments, [manifest.shipments[1]], 'Reject the conflicting shipment while retaining unrelated package quantities');
 const partialManifest = JSON.parse(JSON.stringify(ctx.aggregateProductPayload([
   manifestRows[0], { order_id: 'manifest', asin: 'A', quantity: '2' },
 ])[0]));
