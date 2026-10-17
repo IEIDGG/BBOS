@@ -9,11 +9,13 @@ import time
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from config.settings import EMAIL_SERVERS
 
 logger = logging.getLogger(__name__)
+
+_PROCESSED_UID_CACHE_VERSION = 2
 
 
 def retry_with_backoff(max_retries=3, base_delay=1):
@@ -87,7 +89,11 @@ class EmailConnector:
             cache_dir
             / f"processed_uids_{email.replace('@', '_').replace('.', '_')}.json"
         )
-        self.processed_uids: Set[str] = self._load_processed_uids()
+        self.processed_uids_by_mailbox = self._load_processed_uids()
+        # Keep this alias for the mailbox selected by the latest search. Handlers
+        # use it for O(1) UID membership checks and mark_uid_processed updates.
+        self.processed_uids: Set[str] = set()
+        self._current_search_uses_uid = True
 
         self.is_proton = service_type == "proton" or self.service_config["server"] in [
             "127.0.0.1",
@@ -108,31 +114,96 @@ class EmailConnector:
             self.batch_size = 50
             self.max_fetches_per_session = 1000
 
-    def _load_processed_uids(self) -> Set[str]:
+    def _load_processed_uids(self) -> Dict[str, Set[str]]:
         if self.processed_uids_file.exists():
             try:
                 with open(self.processed_uids_file, "r") as f:
                     data = json.load(f)
-                    print(f"📋 Loaded {len(data)} processed email UIDs from cache")
-                    return set(data)
+                if (
+                    not isinstance(data, dict)
+                    or data.get("version") != _PROCESSED_UID_CACHE_VERSION
+                    or not isinstance(data.get("mailboxes"), dict)
+                ):
+                    # The old cache contained one flat UID set shared across all
+                    # folders. It cannot be assigned safely to any mailbox.
+                    print(
+                        "⚠ Ignoring legacy processed UID cache without folder scope"
+                    )
+                    return {}
+
+                mailboxes = {
+                    str(mailbox_key): {str(uid) for uid in uids}
+                    for mailbox_key, uids in data["mailboxes"].items()
+                    if isinstance(uids, list)
+                }
+                total_uids = sum(len(uids) for uids in mailboxes.values())
+                print(f"📋 Loaded {total_uids} processed email UIDs from cache")
+                return mailboxes
             except Exception as e:
                 print(f"Warning: Could not load processed UIDs: {e}")
-        return set()
+        return {}
 
     def _save_processed_uids(self) -> None:
         try:
             with open(self.processed_uids_file, "w") as f:
-                json.dump(list(self.processed_uids), f)
+                json.dump(
+                    {
+                        "version": _PROCESSED_UID_CACHE_VERSION,
+                        "mailboxes": {
+                            mailbox_key: list(uids)
+                            for mailbox_key, uids in self.processed_uids_by_mailbox.items()
+                        },
+                    },
+                    f,
+                )
         except Exception as e:
             print(f"Warning: Could not save processed UIDs: {e}")
 
+    def _get_uidvalidity(self) -> Optional[str]:
+        """Read the current folder's UIDVALIDITY returned by IMAP SELECT."""
+        if not self.connection:
+            return None
+        try:
+            _, response_data = self.connection.response("UIDVALIDITY")
+        except Exception:
+            return None
+        if not response_data:
+            return None
+
+        for value in response_data:
+            text = (
+                value.decode("ascii", "ignore")
+                if isinstance(value, bytes)
+                else str(value)
+            )
+            match = re.search(r"(?:UIDVALIDITY\s+)?(\d+)", text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return None
+
+    def _activate_mailbox_cache(self, folder: str) -> None:
+        # IMAP UIDs are only unique within a mailbox and UIDVALIDITY generation.
+        # IMAP4.response reads the UIDVALIDITY supplied by SELECT; it adds no
+        # network round trip. Folder-only scoping is the safe fallback.
+        mailbox_key = json.dumps(
+            [folder, self._get_uidvalidity()], ensure_ascii=True, separators=(",", ":")
+        )
+        self.processed_uids = self.processed_uids_by_mailbox.setdefault(
+            mailbox_key, set()
+        )
+
     def mark_uid_processed(self, uid: bytes) -> None:
+        # Cache-bypass searches use IMAP sequence numbers, which can change as
+        # messages are expunged and must never be stored as stable UIDs.
+        if not self._current_search_uses_uid:
+            return
         uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
         self.processed_uids.add(uid_str)
 
     def save_progress(self) -> None:
         self._save_processed_uids()
-        print(f"💾 Saved {len(self.processed_uids)} processed UIDs to cache")
+        total_uids = sum(len(uids) for uids in self.processed_uids_by_mailbox.values())
+        print(f"💾 Saved {total_uids} processed UIDs to cache")
 
     def _refresh_session(self) -> bool:
         try:
@@ -169,6 +240,7 @@ class EmailConnector:
                         try:
                             status, _ = self.connection.select(folder_variant)
                             if status == "OK":
+                                self._activate_mailbox_cache(saved_folder)
                                 print(
                                     f"✓ Session refreshed. Reset fetch count from {old_count} to 0. Re-selected folder: {saved_folder}"
                                 )
@@ -418,6 +490,9 @@ class EmailConnector:
                 raise Exception(
                     f"Could not select folder '{folder}' (tried: {', '.join(folder_variants)})"
                 )
+
+            self._activate_mailbox_cache(folder)
+            self._current_search_uses_uid = use_uid_filter
 
             search_criteria = self._expand_subject_criteria(search_criteria)
 
