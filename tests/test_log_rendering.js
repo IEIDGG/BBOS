@@ -4,8 +4,8 @@ const vm = require('vm');
 const { parseHTML } = require('linkedom');
 const { document } = parseHTML(fs.readFileSync(require.resolve('../chrome_extension/log.html'), 'utf8'));
 let listener;
-const ctx = vm.createContext({ document, Date, console, setInterval: () => 1, clearInterval() {}, window: { addEventListener() {} },
-  chrome: { runtime: { onMessage: { addListener(fn) { listener = fn; } }, sendMessage() {} } } });
+const ctx = vm.createContext({ document, Date, console, location:{hash:'#orders'}, history:{replaceState() {}}, setInterval: () => 1, clearInterval() {}, window: { addEventListener() {} },
+  chrome: { runtime: { getManifest:()=>({version:'1.1.20'}), onMessage: { addListener(fn) { listener = fn; } }, sendMessage() {} } } });
 vm.runInContext(fs.readFileSync(require.resolve('../chrome_extension/log.js'), 'utf8'), ctx);
 const entry = { text: 'Scraping page 1', time: 1000, level: 'info' };
 listener({ type: 'scrape_log', ...entry });

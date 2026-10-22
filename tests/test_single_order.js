@@ -91,11 +91,11 @@ const extracted = { orderId, zipCode: '11779', shipments: [{ asin: 'B000000001',
 let trackingCalls = 0;
 let uploaded;
 let completed;
-const context = vm.createContext({
+const context = vm.createContext({ ...require('./viewer_worker_fixture.cjs')(),
   withExtensionOperation: (_kind, work) => work(),
   scrapeOutcomeSuccess: require('../chrome_extension/scrape_core.js').scrapeOutcomeSuccess,
   normalizeZipFilters: () => ['03063'],
-  clearScrapeLogs() {}, startScrapeKeepAlive() {}, stopScrapeKeepAlive() {}, openLogTab() {},
+  clearScrapeLogs() {}, startScrapeKeepAlive() {}, stopScrapeKeepAlive() {}, async openLogTab() {},
   log() {}, progress() {}, stats() {}, dedupeOrderShipments() {},
   async getAuthCookie() { return 'test'; },
   async loadDbShipmentCache() { throw new Error('Single-order refresh must bypass tracking cache'); },

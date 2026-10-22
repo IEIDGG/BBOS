@@ -4,7 +4,7 @@ const vm = require('vm');
 const { parseHTML } = require('linkedom');
 const popup = fs.readFileSync(require.resolve('../chrome_extension/popup.html'), 'utf8');
 const source = fs.readFileSync(require.resolve('../chrome_extension/popup.js'), 'utf8');
-const settings = source.slice(source.indexOf('const SETTINGS_KEYS'), source.indexOf('function saveSettings()'));
+const settings = source.slice(source.indexOf('const SETTINGS_KEYS'), source.indexOf('async function saveSettings()'));
 (async () => {
   for (const stored of [{}, { yearFilter: 'year-2025', maxPages: 2 }]) {
     const { document } = parseHTML(popup);

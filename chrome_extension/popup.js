@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const API_BASE = 'https://ieidgg.com';
 let pendingSingleOrderId = '';
+let zipImportRequest = 0;
 
 function showExtensionVersion() {
   const versionEl = $('extensionVersion');
@@ -89,6 +90,7 @@ function showZipImportStatus(message, type = '') {
 }
 
 async function importZipMappingsFromIeid() {
+  const requestId = ++zipImportRequest;
   const btn = $('importZipMappingsBtn');
   btn.disabled = true;
   showZipImportStatus('Loading zip mappings...', '');
@@ -135,8 +137,8 @@ async function importZipMappingsFromIeid() {
       return;
     }
 
+    if (requestId !== zipImportRequest || !$('settingsDialog').open) return;
     $('zipFilters').value = zipCodes.join(', ');
-    saveSettings();
     showZipImportStatus(`Imported ${zipCodes.length} zip code${zipCodes.length === 1 ? '' : 's'} from IEID`, 'success');
   } catch (error) {
     showZipImportStatus(`Error: ${error.message}`, 'error');
@@ -191,6 +193,7 @@ const SETTINGS_KEYS = ['yearFilter', 'maxPages', 'fetchTracking', 'useDbCache', 
 
 async function loadSettings() {
   const data = await chrome.storage.local.get(SETTINGS_KEYS);
+  $('yearFilter').querySelectorAll('option[value^="year-"]').forEach(option => option.remove());
   const currentYear = new Date().getFullYear();
   const savedYear = /^year-(\d{4})$/.exec(data.yearFilter || '')?.[1];
   const oldestYear = Math.min(currentYear - 12, Number(savedYear) || currentYear);
@@ -212,18 +215,19 @@ async function loadSettings() {
 
 function updateHistoryRangeHint() {
   const limited = Number($('maxPages').value) > 0;
-  $('historyRangeHint').textContent = limited
-    ? `Limited to ${$('maxPages').value} pages across the range. Set 0 to fetch the entire selected range.`
-    : $('yearFilter').value === 'months-12'
+  const range = $('yearFilter').value === 'months-12'
     ? "Scans both calendar years for the past 12 months. Amazon's 3-month page default does not apply."
     : 'Scans every page in the selected calendar year.';
+  $('historyRangeHint').textContent = range + (limited
+    ? ` Limited to ${$('maxPages').value} pages across the range. Set 0 to fetch the entire selected range.`
+    : '');
 }
 
 $('maxPages').addEventListener('input', updateHistoryRangeHint);
 $('yearFilter').addEventListener('change', updateHistoryRangeHint);
 
-function saveSettings() {
-  chrome.storage.local.set({
+async function saveSettings() {
+  await chrome.storage.local.set({
     yearFilter: $('yearFilter').value,
     maxPages: parseInt($('maxPages').value) || 0,
     fetchTracking: $('fetchTracking').checked,
@@ -310,7 +314,7 @@ async function sendScanCommand(message) {
 }
 
 $('startBtn').addEventListener('click', async () => {
-  saveSettings();
+  await saveSettings();
   setScrapingUi(true);
   $('log').innerHTML = '';
   $('log').style.display = 'block';
@@ -331,7 +335,7 @@ $('startBtn').addEventListener('click', async () => {
 $('scanSingleOrderBtn').addEventListener('click', async () => {
   if (!pendingSingleOrderId) return;
 
-  saveSettings();
+  await saveSettings();
   setScrapingUi(true);
   $('log').innerHTML = '';
   $('log').style.display = 'block';
@@ -348,8 +352,46 @@ $('dismissSingleOrderBtn').addEventListener('click', () => {
   hideSingleOrderSection(true);
 });
 
-$('viewLogBtn').addEventListener('click', () => {
-  chrome.runtime.sendMessage({ action: 'open_log_tab' });
+async function openViewer(view) {
+  try {
+    const response = await chrome.runtime.sendMessage({action:'open_log_tab', view});
+    if (!response?.ok) throw new Error(response?.error || 'Unable to open the Live Viewer. Try again.');
+  } catch (err) { $('authStatus').textContent = err.message; }
+}
+$('viewLogBtn').addEventListener('click', () => openViewer('logs'));
+$('viewOrdersBtn').addEventListener('click', () => openViewer('orders'));
+
+const settingsReady = loadSettings();
+let settingsBeforeOpen = null;
+let settingsSaving = false;
+function discardSettingsDraft() {
+  if (!settingsBeforeOpen) return;
+  for (const id of ['fetchTracking','useDbCache','useShipmentCache']) $(id).checked = settingsBeforeOpen[id];
+  $('zipFilters').value = settingsBeforeOpen.zipFilters;
+  settingsBeforeOpen = null;
+}
+$('settingsBtn').addEventListener('click', async () => {
+  await settingsReady;
+  $('settingsError').textContent = '';
+  $('settingsSaved').textContent = '';
+  settingsBeforeOpen = {fetchTracking:$('fetchTracking').checked, useDbCache:$('useDbCache').checked, useShipmentCache:$('useShipmentCache').checked, zipFilters:$('zipFilters').value};
+  $('settingsDialog').showModal();
+});
+$('closeSettingsBtn').addEventListener('click', () => {discardSettingsDraft(); $('settingsDialog').close();});
+$('settingsDialog').addEventListener('cancel', event => {if (settingsSaving) event.preventDefault(); else discardSettingsDraft();});
+$('settingsDialog').addEventListener('close', () => {discardSettingsDraft(); zipImportRequest++; showZipImportStatus('');});
+$('saveSettingsBtn').addEventListener('click', async () => {
+  const controls = [...$('settingsDialog').querySelectorAll('button,input,textarea')].map(control => ({control,disabled:control.disabled}));
+  settingsSaving = true;
+  zipImportRequest++;
+  controls.forEach(({control}) => {control.disabled = true;});
+  try {
+    await saveSettings();
+    settingsBeforeOpen = null;
+    $('settingsDialog').close();
+    $('settingsSaved').textContent = 'Settings saved';
+  } catch { $('settingsError').textContent = 'Settings could not be saved. Try again.'; }
+  finally {settingsSaving = false; controls.forEach(({control,disabled}) => {control.disabled = disabled;});}
 });
 
 $('importZipMappingsBtn').addEventListener('click', () => {
@@ -391,7 +433,6 @@ $('dismissUpdateBtn').addEventListener('click', async () => {
 
 showExtensionVersion();
 checkForExtensionUpdate();
-loadSettings();
 checkAuth();
 checkPendingSingleOrder();
 

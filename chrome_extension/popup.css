@@ -1,0 +1,52 @@
+body {width:400px;padding:20px;}
+.brand-header {padding-bottom:18px;margin-bottom:18px;border-bottom:1px solid var(--border);}
+.brand-header .brand-name {font-size:15px;}
+.brand-header .icon-button {width:32px;height:32px;min-height:32px;padding:7px;}
+.brand-logo {width:38px;height:38px;}
+.auth-section {text-align:center;padding:12px 0;}
+.auth-section p {font-size:13px;color:var(--muted);margin:0 0 16px;}
+#signInBtn,#startBtn,#stopBtn,#scanSingleOrderBtn {width:100%;}
+.user-info {display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--elevated);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:12px;}
+.user-email {color:#d7d8ed;font-size:12px;overflow:hidden;text-overflow:ellipsis;}
+.sign-out-btn {font-size:10px;padding:4px 8px;min-height:28px;white-space:nowrap;}
+#authStatus {font-size:12px;color:var(--danger);margin:0 0 10px;}
+#authStatus:empty {display:none;}
+.scrape-section {display:none;}
+.amazon-account {font-size:11px;color:var(--muted);margin-bottom:20px;overflow-wrap:anywhere;}
+.amazon-account strong {color:var(--cyan);font-weight:500;}
+.row {display:flex;gap:12px;}.row .field {flex:1;min-width:0;}
+.range-header {display:flex;align-items:center;gap:6px;margin-bottom:6px;}
+.range-header .info-button {min-height:20px;width:20px;height:20px;font-size:11px;}
+.range-info {border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:-3px 0 14px;background:var(--elevated);}
+.range-info p {margin:0;}.range-info p+p {margin-top:6px;}
+#startBtn,#stopBtn {margin-bottom:10px;}
+#stopBtn {display:none;}
+.viewer-buttons {display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}
+.viewer-buttons button {font-size:12px;}
+.progress {display:none;border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:14px;}
+.progress-text {font-size:11px;color:var(--muted);margin-top:8px;}
+.stats {display:none;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0;}
+.stat {padding:10px;text-align:center;}.stat-num {font-size:20px;}.stat-label {font-size:10px;}
+.log {display:none;max-height:116px;font-size:10px;padding:10px;}
+.single-order-section {background:var(--elevated);border:1px solid #44478b;border-radius:12px;padding:14px;margin-bottom:16px;}
+.single-order-title {font-size:13px;font-weight:600;}.single-order-section p {font-size:11px;color:var(--muted);}
+.single-order-id {font:12px monospace;color:var(--cyan);margin-bottom:12px;}
+.dismiss-single-order {font-size:10px;min-height:26px;margin-top:6px;padding:4px 8px;}
+.section-divider {border:0;border-top:1px solid var(--border);margin:14px 0;}
+.section-label {font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:12px;}
+.update-banner {background:#282117;border:1px solid #65522d;border-radius:12px;padding:12px;margin-bottom:14px;}
+.update-banner-text {font-size:11px;color:#f4d497;line-height:1.6;margin-bottom:10px;}
+.update-banner-actions {display:flex;gap:8px;}.update-download-link {background:#584223;flex:1;min-height:32px;font-size:12px;}.update-dismiss {min-height:32px;font-size:11px;}
+dialog {width:calc(100% - 24px);max-width:400px;max-height:calc(100vh - 24px);padding:18px;background:var(--elevated);color:var(--text);border:1px solid #3b3b50;border-radius:16px;box-shadow:0 18px 80px #0009;}
+dialog::backdrop {background:#000b;}
+.settings-heading {display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;}
+.settings-heading h2 {font-size:18px;margin:0;}
+.settings-description {font-size:11px;color:var(--muted);margin:0 0 18px;}
+.checkbox-field {display:flex;align-items:center;gap:9px;margin:16px 0;}.checkbox-field label {flex:1;font-size:12px;}
+.cache-hint {background:var(--bg);border-radius:8px;padding:9px;margin:-6px 0 12px;}
+.zip-field-header {display:flex;align-items:center;justify-content:space-between;gap:8px;margin:20px 0 8px;padding-top:16px;border-top:1px solid var(--border);}
+#importZipMappingsBtn {padding:5px 8px;font-size:10px;min-height:30px;color:#c7d2fe;}
+.zip-import-status {font-size:11px;margin-top:6px;}.zip-import-status.success {color:var(--success);}.zip-import-status.error {color:var(--danger);}
+#saveSettingsBtn {width:100%;margin-top:8px;}
+#settingsSaved {font-size:11px;color:var(--success);min-height:16px;margin:0 0 8px;}
+#settingsSaved:empty {display:none;}

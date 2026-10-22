@@ -26,7 +26,7 @@
       padding: '12px 18px',
       border: 'none',
       borderRadius: '8px',
-      background: 'linear-gradient(135deg, #667eea, #764ba2)',
+      background: '#6366f1',
       color: '#fff',
       fontSize: '14px',
       fontWeight: '600',
