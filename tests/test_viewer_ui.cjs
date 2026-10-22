@@ -79,6 +79,34 @@ test('popup saves settings, hides explanations, and opens the correct viewer; vi
     assert.equal(await page.locator('#maxPages').inputValue(),'4');
     assert.equal(await page.locator('#fetchTracking').isChecked(),false);
     assert.equal(await page.locator('#zipFilters').inputValue(),'10001, 11201');
+    // A completed background connection must update this already-open popup.
+    await page.evaluate(async()=>{
+      await chrome.storage.local.set({zipFilters:'00501, 11201',zipFilterImportStatus:{type:'success',message:'Imported 2 ZIP codes from IEID'}});
+      await checkAuth();
+    });
+    assert.equal(await page.locator('#zipFilters').inputValue(),'00501, 11201');
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    assert.match(await page.locator('#zipImportStatus').innerText(),/Imported 2 ZIP codes/);
+    await page.locator('#zipFilters').fill('90210');
+    await page.evaluate(()=>checkAuth());
+    assert.equal(await page.locator('#zipFilters').inputValue(),'90210', 'auth polling must preserve a settings draft');
+    await page.getByRole('button',{name:'Close settings'}).click();
+    assert.equal(await page.locator('#zipFilters').inputValue(),'00501, 11201');
+    await page.evaluate(async()=>{
+      await chrome.storage.local.set({zipFilterImportStatus:{type:'error',message:'Could not import account ZIP codes. Use Import from IEID to retry.'}});
+      await saveSettings(); // Scan startup also persists its settings.
+    });
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    assert.match(await page.locator('#zipImportStatus').innerText(),/Could not import account ZIP/);
+    await context.route('https://ieidgg.com/api/settings/monitor',route=>route.fulfill({headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*'},json:{settings:{zip_mappings:{'90210':'Warehouse'}}}}));
+    await page.locator('#importZipMappingsBtn').click();
+    await page.getByText('Imported 1 zip code from IEID',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Save settings',exact:true}).click();
+    await page.locator('#settingsDialog').waitFor({state:'hidden'});
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    assert.equal(await page.locator('#zipFilters').inputValue(),'90210');
+    assert.equal(await page.locator('#zipImportStatus').innerText(),'','saving a successful manual retry must clear the old auto-import failure');
+    await page.getByRole('button',{name:'Close settings'}).click();
     await page.locator('#viewLogBtn').click();
     assert.equal(await page.evaluate(()=>window.__messages.findLast(m=>m.action==='open_log_tab').view),'logs');
     await page.screenshot({path:path.resolve('artifacts/popup.png'),fullPage:true});

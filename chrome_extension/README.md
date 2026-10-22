@@ -68,11 +68,17 @@ blocked, and fetched nodes are never attached to the extension's live document.
 
 1. Sign in to IEID and Amazon in the same Chrome profile, then connect the
    extension using **Sign in with IEID**.
-2. Open the gear, choose your preferences and optional ZIP filters, then save.
-   **Import from IEID** fills the ZIP field; save to apply it.
-3. Choose the date range and page limit. Use **0** for all pages.
-4. Click **Start Scraping**, then **View Orders** or **View Log**.
-5. A single-order scan always refreshes tracking and bypasses bulk ZIP/cache
+2. Connecting automatically imports the account's ZIP mappings into the saved
+   **Keep orders for ZIP codes** filter, even if the popup is closed. ZIP codes
+   are validated, deduplicated and sorted. An account with no mappings clears
+   the filter and includes all ZIP codes. If import fails, authentication still
+   succeeds, saved filters are kept, and Settings shows a retry message.
+3. Open the gear to review or edit preferences and ZIP filters, then save.
+   Manual ZIP edits remain until the next connection. **Import from IEID**
+   fills the ZIP field on demand; save to apply it.
+4. Choose the date range and page limit. Use **0** for all pages.
+5. Click **Start Scraping**, then **View Orders** or **View Log**.
+6. A single-order scan always refreshes tracking and bypasses bulk ZIP/cache
    preferences, as in previous versions.
 
 ## Reading results

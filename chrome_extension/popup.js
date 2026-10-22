@@ -89,6 +89,16 @@ function showZipImportStatus(message, type = '') {
   el.className = `zip-import-status${type ? ` ${type}` : ''}`;
 }
 
+async function loadAccountZipFilters() {
+  const data = await chrome.storage.local.get(['zipFilters', 'zipFilterImportStatus']);
+  // Authentication may finish after the popup loaded, or while it was closed.
+  // Preserve an open settings draft; the next opening reads the saved filter.
+  if ($('settingsDialog').open) return;
+  if (data.zipFilters !== undefined) $('zipFilters').value = data.zipFilters;
+  const status = data.zipFilterImportStatus;
+  showZipImportStatus(status?.message || '', status?.type === 'error' ? 'error' : 'success');
+}
+
 async function importZipMappingsFromIeid() {
   const requestId = ++zipImportRequest;
   const btn = $('importZipMappingsBtn');
@@ -154,7 +164,10 @@ async function checkAuth() {
     if (!token) { showSignedOut(); return null; }
     const response = await fetch(`${API_BASE}/api/user`);
     if (!response.ok) { showSignedOut(); return null; }
-    const user = await response.json(); showSignedIn(user); return user;
+    const user = await response.json();
+    await settingsReady;
+    await loadAccountZipFilters();
+    showSignedIn(user); return user;
   } catch { showSignedOut(); return null; }
 }
 
@@ -226,7 +239,7 @@ function updateHistoryRangeHint() {
 $('maxPages').addEventListener('input', updateHistoryRangeHint);
 $('yearFilter').addEventListener('change', updateHistoryRangeHint);
 
-async function saveSettings() {
+async function saveSettings(clearZipImportStatus = false) {
   await chrome.storage.local.set({
     yearFilter: $('yearFilter').value,
     maxPages: parseInt($('maxPages').value) || 0,
@@ -234,6 +247,7 @@ async function saveSettings() {
     useDbCache: $('useDbCache').checked,
     useShipmentCache: $('useShipmentCache').checked,
     zipFilters: $('zipFilters').value,
+    ...(clearZipImportStatus ? {zipFilterImportStatus:null} : {}),
   });
 }
 
@@ -372,6 +386,7 @@ function discardSettingsDraft() {
 }
 $('settingsBtn').addEventListener('click', async () => {
   await settingsReady;
+  await loadAccountZipFilters();
   $('settingsError').textContent = '';
   $('settingsSaved').textContent = '';
   settingsBeforeOpen = {fetchTracking:$('fetchTracking').checked, useDbCache:$('useDbCache').checked, useShipmentCache:$('useShipmentCache').checked, zipFilters:$('zipFilters').value};
@@ -386,7 +401,7 @@ $('saveSettingsBtn').addEventListener('click', async () => {
   zipImportRequest++;
   controls.forEach(({control}) => {control.disabled = true;});
   try {
-    await saveSettings();
+    await saveSettings(true);
     settingsBeforeOpen = null;
     $('settingsDialog').close();
     $('settingsSaved').textContent = 'Settings saved';
