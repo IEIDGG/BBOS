@@ -38,8 +38,14 @@ try {
     // This is an isolated browser with synthetic responses, never a live account.
     await browser.route('https://ieidgg.com/**', async route => {
       const pathname = new URL(route.request().url()).pathname;
+      if (pathname === '/extension-connect') {
+        await route.fulfill({status:200,contentType:'text/html',body:'<!doctype html><title>Synthetic IEID connection</title>'});
+        return;
+      }
       if (pathname === '/api/orders/amazon/scrape') quantityUploads.push(route.request().postDataJSON().orders);
       const json = pathname === '/api/order-scraper/version' ? {version:installed}
+        : pathname === '/api/auth/extensions/exchange' ? {access_token:'synthetic-access',refresh_token:'synthetic-refresh',expires_at:new Date(Date.now()+86400000).toISOString()}
+        : pathname === '/api/settings/monitor' ? {settings:{zip_mappings:{'11201':'Warehouse','00501':'Warehouse'}}}
         : pathname === '/api/user' ? {uid:'test-user',email:'synthetic@example.com'}
         : pathname === '/api/orders/amazon/scrape' ? {inserted:1,updated:0,failed:0}
         : {success:true};
@@ -73,9 +79,27 @@ try {
     extensionHome = new URL('.', worker.url()).href;
     const version = await worker.evaluate(async () => chrome.runtime.getManifest().version);
     assert.strictEqual(version, installed);
-    await worker.evaluate(async () => {
-      await chrome.storage.session.set({accountGrant:{access_token:'synthetic-access',refresh_token:'synthetic-refresh',expires_at:new Date(Date.now()+86400000).toISOString()}});
+    const [connectPage] = await Promise.all([
+      context.waitForEvent('page'),
+      worker.evaluate(() => IEIDAuth.connect()),
+    ]);
+    const connectUrl = await worker.evaluate(async () => (await chrome.tabs.query({url:'https://ieidgg.com/extension-connect*'}))[0]?.url);
+    assert.ok(connectUrl, 'the extension must open the website connection URL');
+    // Playwright 1.55 cannot intercept the first navigation initiated by
+    // chrome.tabs.create. Navigate the same tab to the synthetic fixture once
+    // Playwright owns it; DNS stays blocked so no live account is contacted.
+    await connectPage.goto(connectUrl);
+    await connectPage.evaluate(() => {
+      const params = new URLSearchParams(location.search);
+      window.postMessage({type:'ieid-extension-handoff',extension_id:params.get('extension_id'),state:params.get('state'),code:'c'.repeat(43)}, location.origin);
     });
+    const importDeadline = Date.now()+15000;
+    while (await worker.evaluate(async () => (await chrome.storage.local.get('zipFilters')).zipFilters) !== '00501, 11201') {
+      if (Date.now() >= importDeadline) throw new Error('Website connection did not automatically import ZIP filters');
+      await new Promise(resolve=>setTimeout(resolve,25));
+    }
+    console.log('Chromium website auth handoff automatically imported account ZIP filters without a popup');
+    await connectPage.close();
     assert.strictEqual(await worker.evaluate(() => IEIDAuth.getToken()), 'synthetic-access');
     const page = await context.newPage();
     await context.route('https://www.amazon.com/**', route => route.fulfill({status:200,contentType:'text/html',body:'<html><body>Order 114-1234567-1234567</body></html>'}));

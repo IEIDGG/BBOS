@@ -1,22 +1,24 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>IEID Order Scraper Update</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="icons/icon48.png">
+  <link rel="stylesheet" href="theme.css">
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1a1a2e; color: #eee; margin: 0; padding: 24px; }
-    h1 { font-size: 18px; margin: 0 0 12px; }
-    p, li { font-size: 13px; line-height: 1.5; color: #ccc; }
-    button { background: #7a6520; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; font-weight: 600; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: default; }
-    #status { margin-top: 16px; white-space: pre-wrap; }
-    .error { color: #f0a0a0; }
+    body {max-width:720px;margin:0 auto;padding:40px 24px;}
+    .brand-header {padding-bottom:24px;margin-bottom:28px;border-bottom:1px solid var(--border);}
+    h1 {font-size:24px;font-weight:600;letter-spacing:-.02em;}
+    p {font-size:13px;color:var(--muted);line-height:1.7;}
+    #status {margin-top:20px;white-space:pre-wrap;}.error {color:var(--danger);}
   </style>
 </head>
 <body>
+  <header class="brand-header"><img class="brand-logo" src="icons/ieidllc-logo.png" alt="" width="42" height="42"><div><div class="brand-name">IEIDLLC</div><div class="brand-subtitle">Amazon Order Scraper</div></div></header>
   <h1>Update IEID Order Scraper</h1>
   <p id="intro">This will install the latest package from IEID into the folder Chrome already loaded.</p>
-  <button type="button" id="pickFolderBtn" hidden>Select the folder you loaded this extension from</button>
+  <button type="button" class="primary" id="pickFolderBtn" hidden>Select the folder you loaded this extension from</button>
   <p id="status"></p>
   <script src="auth_client.js"></script>
   <script src="scrape_core.js"></script>

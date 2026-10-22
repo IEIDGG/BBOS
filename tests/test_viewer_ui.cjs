@@ -1,0 +1,192 @@
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+const {chromium} = require('playwright');
+const root = path.resolve(__dirname, '../chrome_extension');
+
+test('popup saves settings, hides explanations, and opens the correct viewer; viewer enriches sorted rows safely', async () => {
+  fs.mkdirSync(path.resolve('artifacts'), {recursive:true});
+  const server = http.createServer((req,res) => {
+    const file = path.join(root,new URL(req.url,'http://localhost').pathname);
+    const types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png'};
+    if (!fs.existsSync(file)) {res.writeHead(404);res.end();return;}
+    res.setHeader('Content-Type',types[path.extname(file)] || 'application/octet-stream');res.end(fs.readFileSync(file));
+  });
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  let browser;
+  try {
+    browser=await chromium.launch({headless:true, ...(process.env.PW_CHROMIUM_EXECUTABLE ? {executablePath:process.env.PW_CHROMIUM_EXECUTABLE} : {})});
+    const context=await browser.newContext({viewport:{width:1440,height:1000}});
+    await context.route('https://ieidgg.com/**',route=>route.fulfill({headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS'},json:route.request().url().endsWith('/version')?{version:'1.1.20'}:{email:'preview@example.com'}}));
+    await context.route('https://m.media-amazon.com/**',route=>route.request().url().includes('missing') ? route.fulfill({status:404,body:''}) : route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80"><rect width="80" height="80" fill="white"/><rect x="10" y="22" width="60" height="36" rx="5" fill="#30313b"/><path d="M18 30h44M18 38h44M18 46h44" stroke="#aaa" stroke-width="3"/></svg>'}));
+    await context.addInitScript(() => {
+      window.__messages=[]; window.__listeners=[];
+      window.__status={running:true,pct:50,statusText:'Fetching tracking details…',orders:2,shipments:2,tracked:0,sent:0,viewerRevision:1,orderRows:[
+        {orderId:'111-0000000-0000001',orderDate:'2025-11-01',total:'$24.00',zipCode:'10001',stage:'tracking',importStatus:'pending',importMessage:'Waiting to send to IEID',shipments:[{productTitle:'USB-C charging cable',quantity:2,trackingNumber:'',carrier:''}]},
+        {orderId:'222-0000000-0000002',orderDate:'2026-10-20',total:'$59.99',zipCode:'11201',stage:'tracking',importStatus:'pending',importMessage:'Waiting to send to IEID',shipments:[{productTitle:'Wireless keyboard',itemImage:'https://m.media-amazon.com/images/I/keyboard.jpg',quantity:1,trackingNumber:'',carrier:''}]}
+      ],logs:[{text:'Starting order list scrape',level:'info',time:Date.now()}]};
+      const get=async keys=>{const data=JSON.parse(localStorage.getItem('settings') || '{}');return typeof keys==='string'?{[keys]:data[keys]}:data;};
+      window.chrome={runtime:{getURL:p=>'chrome-extension://fixture/'+p,getManifest:()=>({version:'1.1.20'}),onMessage:{addListener:fn=>window.__listeners.push(fn)},sendMessage:(msg,cb)=>{
+        window.__messages.push(msg);
+        const response=msg.type==='ieid-auth-token'?{value:'fixture-token'}:msg.action==='scrape_status'?window.__status:{ok:true};
+        if(cb)cb(response);return Promise.resolve(response);
+      }},storage:{local:{get,set:async values=>localStorage.setItem('settings',JSON.stringify({...await get(),...values}))}},tabs:{create:async()=>{}}};
+    });
+    const base=`http://127.0.0.1:${server.address().port}`;
+    const page=await context.newPage(); const errors=[]; page.on('pageerror',e=>{errors.push(e.message);console.log('page error:',e.message);});
+    page.setDefaultTimeout(10000);
+    await page.setViewportSize({width:400,height:600});
+    await page.goto(base+'/popup.html');
+    await page.locator('#scrapeSection').waitFor({state:'visible'});
+    const gap = await page.evaluate(()=>document.querySelector('#userInfo').getBoundingClientRect().top-document.querySelector('.brand-header').getBoundingClientRect().bottom);
+    console.log('Header-to-account gap:',gap,'CSS px');
+    assert.ok(gap <= 20,`Empty notices should not reserve space below the header (gap: ${gap}px)`);
+    await page.locator('#scrapeSection').waitFor({state:'visible'});
+    assert.equal(await page.locator('#fetchTracking').isVisible(),false);
+    assert.equal(await page.locator('#historyInfo').isVisible(),false);
+    await page.getByRole('button',{name:'About the scan range'}).click();
+    assert.match(await page.locator('#historyInfo').innerText(),/Amazon may no longer expose tracking/);
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.locator('#fetchTracking').uncheck(); await page.locator('#zipFilters').fill('99999');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#fetchTracking').isChecked(),true);
+    assert.equal(await page.locator('#zipFilters').inputValue(),'');
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.locator('#fetchTracking').uncheck(); await page.locator('#useDbCache').check();
+    await page.locator('#useShipmentCache').uncheck(); await page.locator('#zipFilters').fill('10001, 11201');
+    await page.evaluate(()=>{
+      const save=chrome.storage.local.set;
+      chrome.storage.local.set=async values=>{chrome.storage.local.set=save;await new Promise(resolve=>{window.__releaseSave=resolve;});return save(values);};
+    });
+    await page.getByRole('button',{name:'Save settings',exact:true}).click();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#settingsDialog').isVisible(),true);
+    assert.equal(await page.getByRole('button',{name:'Close settings'}).isDisabled(),true);
+    await page.evaluate(()=>window.__releaseSave());
+    await page.locator('#settingsDialog').waitFor({state:'hidden'});
+    await page.reload(); await page.getByRole('button',{name:'Settings',exact:true}).click();
+    assert.equal(await page.locator('#fetchTracking').isChecked(),false);
+    assert.equal(await page.locator('#useDbCache').isChecked(),true);
+    assert.equal(await page.locator('#useShipmentCache').isChecked(),false);
+    assert.equal(await page.locator('#zipFilters').inputValue(),'10001, 11201');
+    await page.getByRole('button',{name:'Close settings'}).click();
+    await page.locator('#maxPages').fill('4');
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.locator('#fetchTracking').check(); await page.locator('#zipFilters').fill('99999');
+    await page.getByRole('button',{name:'Close settings'}).click();
+    assert.equal(await page.locator('#maxPages').inputValue(),'4');
+    assert.equal(await page.locator('#fetchTracking').isChecked(),false);
+    assert.equal(await page.locator('#zipFilters').inputValue(),'10001, 11201');
+    // A completed background connection must update this already-open popup.
+    await page.evaluate(async()=>{
+      await chrome.storage.local.set({zipFilters:'00501, 11201',zipFilterImportStatus:{type:'success',message:'Imported 2 ZIP codes from IEID'}});
+      await checkAuth();
+    });
+    assert.equal(await page.locator('#zipFilters').inputValue(),'00501, 11201');
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    assert.match(await page.locator('#zipImportStatus').innerText(),/Imported 2 ZIP codes/);
+    await page.locator('#zipFilters').fill('90210');
+    await page.evaluate(()=>checkAuth());
+    assert.equal(await page.locator('#zipFilters').inputValue(),'90210', 'auth polling must preserve a settings draft');
+    await page.getByRole('button',{name:'Close settings'}).click();
+    assert.equal(await page.locator('#zipFilters').inputValue(),'00501, 11201');
+    await page.evaluate(async()=>{
+      await chrome.storage.local.set({zipFilterImportStatus:{type:'error',message:'Could not import account ZIP codes. Use Import from IEID to retry.'}});
+      await saveSettings(); // Scan startup also persists its settings.
+    });
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    assert.match(await page.locator('#zipImportStatus').innerText(),/Could not import account ZIP/);
+    await context.route('https://ieidgg.com/api/settings/monitor',route=>route.fulfill({headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*'},json:{settings:{zip_mappings:{'90210':'Warehouse'}}}}));
+    await page.locator('#importZipMappingsBtn').click();
+    await page.getByText('Imported 1 zip code from IEID',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Save settings',exact:true}).click();
+    await page.locator('#settingsDialog').waitFor({state:'hidden'});
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    assert.equal(await page.locator('#zipFilters').inputValue(),'90210');
+    assert.equal(await page.locator('#zipImportStatus').innerText(),'','saving a successful manual retry must clear the old auto-import failure');
+    await page.getByRole('button',{name:'Close settings'}).click();
+    await page.locator('#viewLogBtn').click();
+    assert.equal(await page.evaluate(()=>window.__messages.findLast(m=>m.action==='open_log_tab').view),'logs');
+    await page.screenshot({path:path.resolve('artifacts/popup.png'),fullPage:true});
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.screenshot({path:path.resolve('artifacts/settings.png')});
+    await page.setViewportSize({width:1440,height:1000});
+    await page.goto(base+'/log.html#orders');
+    await page.locator('#orderRows tr').first().waitFor();
+    assert.match(await page.locator('#orderRows tr').first().innerText(),/222-0000000-0000002/);
+    const keyboardImage=page.locator('#orderRows tr').first().locator('img');
+    assert.equal(await keyboardImage.count(),1);
+    assert.equal(await keyboardImage.evaluate(img=>img.complete && img.naturalWidth > 0),true);
+    await page.evaluate(()=>{
+      const row=window.__status.orderRows[0]; row.shipments[0].trackingNumber='TBA123456789';row.shipments[0].carrier='Amazon';row.importStatus='inserted';row.importMessage='1/1 items saved to IEID';
+      window.__status.viewerRevision++;
+      window.__listeners.forEach(fn=>fn({type:'scrape_orders'}));
+    });
+    await page.getByText('TBA123456789',{exact:false}).waitFor();
+    assert.match(await page.locator('#orderRows tr').last().innerText(),/Inserted/);
+    await page.screenshot({path:path.resolve('artifacts/live-viewer.png')});
+    await page.getByRole('tab',{name:'Logs',exact:false}).click();
+    assert.equal(await page.locator('#log').isVisible(),true);
+    assert.equal(await page.locator('#ordersPanel').isVisible(),false);
+    await page.screenshot({path:path.resolve('artifacts/logs.png')});
+    await page.evaluate(()=>{window.__status.orderRows[0].shipments[0].productTitle='<img src=x onerror=alert(1)>';window.__status.viewerRevision++;window.__listeners.forEach(fn=>fn({type:'scrape_orders'}));});
+    await page.getByRole('tab',{name:'Orders',exact:false}).click();
+    await page.getByText('<img src=x onerror=alert(1)>',{exact:false}).waitFor();
+    assert.equal(await page.locator('#orderRows img').count(),1);
+    await page.evaluate(()=>{window.__status.orderRows[0].shipments[0].itemImage='https://m.media-amazon.com/images/I/cable.jpg';window.__status.viewerRevision++;window.__listeners.forEach(fn=>fn({type:'scrape_orders'}));});
+    await page.locator('#orderRows tr').last().locator('img').waitFor();
+    assert.equal(await page.locator('#orderRows img').count(),2);
+    await page.evaluate(()=>{window.__status.orderRows[0].shipments[0].itemImage='https://m.media-amazon.com/images/I/missing.jpg';window.__status.viewerRevision++;window.__listeners.forEach(fn=>fn({type:'scrape_orders'}));});
+    await page.waitForFunction(()=>!document.querySelector('#orderRows tr:last-child img'));
+    assert.equal(await page.locator('#orderRows tr').last().locator('.product-thumbnail').isVisible(),true);
+    await page.evaluate(()=>{window.__status.orderRows[0].shipments[0].itemImage='javascript:alert(1)';window.__status.viewerRevision++;window.__listeners.forEach(fn=>fn({type:'scrape_orders'}));});
+    assert.equal(await page.locator('#orderRows img').count(),1);
+    await page.setViewportSize({width:600,height:800});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    await page.getByRole('tab',{name:'Orders',exact:false}).focus();await page.keyboard.press('ArrowRight');
+    assert.equal(await page.locator('#logsTab').getAttribute('aria-selected'),'true');
+    await page.setViewportSize({width:1440,height:1000});
+    await page.getByRole('tab',{name:'Orders',exact:false}).click();
+    await page.evaluate(()=>{
+      window.__status.orderRows=Array.from({length:123},(_,i)=>({orderId:`ORDER-${String(i).padStart(3,'0')}`,orderDate:new Date(Date.UTC(2026,9,22-i)).toISOString().slice(0,10),total:'$19.99',stage:'complete',importStatus:'saved',importMessage:'Saved to IEID',shipments:[{productTitle:`Product ${i}`,quantity:1}]}));
+      window.__status.orders=123;window.__status.viewerRevision++;window.__listeners.forEach(fn=>fn({type:'scrape_orders'}));
+    });
+    await page.locator('#orderRows tr').first().getByText('ORDER-000',{exact:true}).waitFor();
+    assert.equal(await page.locator('#orderRows tr').count(),50);
+    assert.match(await page.locator('#orderCount').innerText(),/1–50 of 123 orders/);
+    assert.equal(await page.locator('.table-container').evaluate(el=>el.clientHeight>innerHeight && el.scrollHeight<=el.clientHeight+2),true);
+    await page.screenshot({path:path.resolve('artifacts/orders-pagination.png')});
+    const topPager=page.locator('#ordersPaginationTop');
+    const bottomPager=page.locator('#ordersPaginationBottom');
+    assert.equal(await topPager.getByRole('button',{name:'Previous order page'}).isDisabled(),true);
+    await bottomPager.getByRole('button',{name:'Next order page'}).click();
+    assert.equal(await page.locator('#orderRows tr').count(),50);
+    assert.match(await page.locator('#orderRows tr').first().innerText(),/ORDER-050/);
+    assert.match(await page.locator('#orderCount').innerText(),/51–100 of 123 orders/);
+    await page.evaluate(()=>{window.__status.orderRows[55].shipments[0].trackingNumber='LIVE-PAGE-TWO';window.__status.orderRows[55].importStatus='updated';window.__status.viewerRevision++;window.__listeners.forEach(fn=>fn({type:'scrape_orders'}));});
+    await page.getByText('LIVE-PAGE-TWO',{exact:true}).waitFor();
+    assert.match(await page.locator('#orderRows tr').first().innerText(),/ORDER-050/);
+    await topPager.getByRole('button',{name:'Next order page'}).click();
+    assert.equal(await page.locator('#orderRows tr').count(),23);
+    assert.match(await page.locator('#orderRows tr').first().innerText(),/ORDER-100/);
+    assert.equal(await bottomPager.getByRole('button',{name:'Next order page'}).isDisabled(),true);
+    await topPager.getByRole('button',{name:'Previous order page'}).click();
+    assert.match(await page.locator('#orderRows tr').first().innerText(),/ORDER-050/);
+    assert.equal(await page.getByText('LIVE-PAGE-TWO',{exact:true}).isVisible(),true);
+    await topPager.getByRole('button',{name:'Previous order page'}).click();
+    assert.match(await page.locator('#orderRows tr').first().innerText(),/ORDER-000/);
+    await topPager.getByRole('button',{name:'Next order page'}).click();
+    await topPager.getByRole('button',{name:'Next order page'}).click();
+    await page.evaluate(()=>{window.__status.orderRows=window.__status.orderRows.slice(0,51);window.__status.viewerRevision++;window.__listeners.forEach(fn=>fn({type:'scrape_orders'}));});
+    assert.equal(await page.locator('#orderRows tr').count(),1);
+    assert.match(await page.locator('#orderCount').innerText(),/51–51 of 51 orders/);
+    await page.evaluate(()=>{window.__status.orderRows=[];window.__status.viewerRevision++;window.__listeners.forEach(fn=>fn({type:'scrape_orders'}));});
+    assert.equal(await page.locator('#orderRows tr').count(),0);
+    assert.equal(await topPager.isVisible(),false);
+    assert.equal(await page.locator('#ordersEmpty').isVisible(),true);
+    assert.deepEqual(errors,[]);
+    await context.close();
+  } finally {if(browser) await browser.close(); await new Promise(r=>server.close(r));}
+});

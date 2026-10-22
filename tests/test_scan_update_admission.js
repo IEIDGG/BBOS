@@ -11,9 +11,9 @@ let operationHeld = false;
 let autoUpdates = 0;
 const local = {};
 let pending;
-const context = vm.createContext({...core, ...history,
+const context = vm.createContext({ ...require('./viewer_worker_fixture.cjs')(),...core, ...history,
   console, scrapeState: {running: false}, normalizeZipFilters: () => [],
-  clearScrapeLogs() {}, startScrapeKeepAlive() {}, stopScrapeKeepAlive() {}, openLogTab() {},
+  clearScrapeLogs() {}, startScrapeKeepAlive() {}, stopScrapeKeepAlive() {}, async openLogTab() {},
   scrapeDone() {}, getAuthCookie: async () => {authCalls++; return null;},
   maybeAutoApplyUpdate() {assert.equal(operationHeld, false, 'auto update must run after scan lock cleanup'); autoUpdates++;},
   chrome: {storage: {local: {get: async () => local}}, runtime: {getManifest: () => ({version: '1.1.14'})}},
