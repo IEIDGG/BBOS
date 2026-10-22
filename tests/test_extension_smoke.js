@@ -83,8 +83,12 @@ try {
       context.waitForEvent('page'),
       worker.evaluate(() => IEIDAuth.connect()),
     ]);
-    await connectPage.waitForURL('https://ieidgg.com/extension-connect?**');
-    await connectPage.waitForLoadState('load');
+    const connectUrl = await worker.evaluate(async () => (await chrome.tabs.query({url:'https://ieidgg.com/extension-connect*'}))[0]?.url);
+    assert.ok(connectUrl, 'the extension must open the website connection URL');
+    // Playwright 1.55 cannot intercept the first navigation initiated by
+    // chrome.tabs.create. Navigate the same tab to the synthetic fixture once
+    // Playwright owns it; DNS stays blocked so no live account is contacted.
+    await connectPage.goto(connectUrl);
     await connectPage.evaluate(() => {
       const params = new URLSearchParams(location.search);
       window.postMessage({type:'ieid-extension-handoff',extension_id:params.get('extension_id'),state:params.get('state'),code:'c'.repeat(43)}, location.origin);
