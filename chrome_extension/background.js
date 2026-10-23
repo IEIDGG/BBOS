@@ -1,4 +1,4 @@
-importScripts('auth_client.js', 'update_helpers.js', 'scrape_core.js', 'order_history.js', 'amazon_requests.js', 'shipment_cache.js');
+importScripts('auth_client.js', 'update_helpers.js', 'scrape_core.js', 'order_history.js', 'amazon_requests.js', 'shipment_cache.js', 'viewer_state.js');
 
 const API_BASE = 'https://ieidgg.com';
 const UPDATE_CHECK_ALARM = 'extensionUpdateCheck';
@@ -131,6 +131,59 @@ const scrapeLogsReady = chrome.storage.session.get('scrapeLogs').then((data) => 
   if (!scrapeLogsReset) scrapeLogs = data.scrapeLogs || [];
 });
 
+const viewerOrders = new ViewerOrders();
+let viewerRevision = 0;
+let viewerReset = false;
+let viewerSaveTimer = null;
+let viewerSaveChain = Promise.resolve();
+const viewerReady = chrome.storage.session.get('liveViewerSnapshot').then(async data => {
+  if (viewerReset || !data.liveViewerSnapshot) return;
+  const snapshot = data.liveViewerSnapshot;
+  viewerOrders.restore(snapshot.rows);
+  viewerRevision = snapshot.revision || 0;
+  // The worker resumes bulk jobs from their existing checkpoint, never a UI snapshot.
+  if (!scrapeState.running) {
+    scrapeState = {...scrapeState, ...snapshot.state, running:false};
+    if (snapshot.state?.running) {
+      const checkpoint = await loadScrapeCheckpoint();
+      const resumable = Boolean(checkpoint?.incomplete && checkpoint.kind === 'bulk');
+      viewerOrders.interrupt(resumable);
+      scrapeState.interrupted = true;
+      scrapeState.resumePending = resumable;
+      scrapeState.statusText = resumable
+        ? 'Scan interrupted. Waiting to resume from the saved checkpoint.'
+        : 'Scan interrupted. Check IEID for unconfirmed imports, then start a new scan to retry.';
+      viewerRevision++;
+    }
+  }
+}).catch(err => console.info('[IEID viewer] session restore unavailable:', err.message));
+
+function saveViewerSnapshot() {
+  clearTimeout(viewerSaveTimer);
+  viewerSaveTimer = null;
+  viewerSaveChain = viewerSaveChain.then(async () => {
+    await viewerReady;
+    await chrome.storage.session.set({liveViewerSnapshot:{rows:viewerOrders.snapshot(), state:{...scrapeState}, revision:viewerRevision}});
+  }).catch(err => console.error('[IEID viewer] session save failed:', err));
+  return viewerSaveChain;
+}
+
+function viewerChanged() {
+  viewerRevision++;
+  notify('scrape_orders', {revision:viewerRevision});
+  if (!viewerSaveTimer) viewerSaveTimer = setTimeout(saveViewerSnapshot, 150);
+}
+
+function updateViewerOrders(orders, stage = 'discovered') {
+  viewerOrders.upsert(orders, stage);
+  viewerChanged();
+}
+
+function setViewerStatus(orderId, status, message) {
+  viewerOrders.setStatus(orderId, status, message);
+  viewerChanged();
+}
+
 function notify(type, data) {
   chrome.runtime.sendMessage({ type, ...data }).catch(() => {});
 }
@@ -147,6 +200,9 @@ async function saveScrapeLogs() {
 
 function clearScrapeLogs() {
   scrapeLogsReset = true;
+  viewerReset = true;
+  viewerOrders.reset();
+  viewerChanged();
   scrapeLogs = [];
   saveScrapeLogs();
 }
@@ -204,15 +260,20 @@ function log(text, level = '') {
 function scrapeDone(text, success) {
   const ok = success && scrapeOutcomeSuccess(scrapeState);
   log(text, ok ? 'success' : 'error');
+  scrapeState.running = false;
+  scrapeState.statusText = text;
+  viewerOrders.finish(scrapeState.stopped ? 'stopped' : 'error', scrapeState.stopped ? 'Stopped before import completed' : 'Not imported: ' + text);
+  viewerChanged();
+  saveViewerSnapshot();
   notify('scrape_done', { text, success: ok });
   stopScrapeKeepAlive();
-  scrapeState.running = false;
   clearScrapeCheckpoint();
 }
 
 function progress(pct, text) {
   scrapeState.pct = pct;
   scrapeState.statusText = text;
+  viewerChanged();
   notify('scrape_progress', { pct, text });
 }
 
@@ -249,32 +310,35 @@ function stopScrapeKeepAlive() {
   chrome.alarms.clear(KEEP_ALIVE_ALARM);
 }
 
-async function openLogTab() {
-  const logUrl = chrome.runtime.getURL(LOG_PAGE);
-
-  if (logTabId) {
-    try {
-      const tab = await chrome.tabs.get(logTabId);
-      if (tab?.id) {
-        await chrome.tabs.update(logTabId, { active: false, url: logUrl });
-        return;
-      }
-    } catch {
-      logTabId = null;
+// Automatic scan startup stays in the background; explicit viewer buttons focus it.
+let viewerOpenChain = Promise.resolve();
+async function openLogTab({ active = false, view = '' } = {}) {
+  const open = async () => {
+    const base = chrome.runtime.getURL(LOG_PAGE);
+    let tab = null;
+    if (logTabId) {
+      try {
+        const candidate = await chrome.tabs.get(logTabId);
+        if (candidate?.url?.split('#')[0] === base) tab = candidate;
+      } catch { logTabId = null; }
     }
-  }
-
-  return new Promise((resolve) => {
-    chrome.tabs.create({ url: logUrl, active: false }, (tab) => {
-      if (chrome.runtime.lastError || !tab?.id) {
-        console.error('[IEID] Could not open log tab:', chrome.runtime.lastError?.message);
-        resolve(null);
-        return;
+    if (!tab) tab = (await chrome.tabs.query({ url: `${base}*` })).find(t => t.url?.split('#')[0] === base);
+    const selectedView = view === 'logs' ? 'logs' : view === 'orders' ? 'orders' : '';
+    if (tab) {
+      if (active || selectedView) {
+        tab = await chrome.tabs.update(tab.id, { ...(active ? {active:true} : {}), ...(selectedView ? {url:`${base}#${selectedView}`} : {}) });
       }
-      logTabId = tab.id;
-      resolve(tab.id);
-    });
-  });
+    } else {
+      tab = await chrome.tabs.create({url:`${base}#${selectedView || 'orders'}`, active});
+    }
+    if (!tab?.id) throw new Error('Could not open the Live Viewer. Try again.');
+    logTabId = tab.id;
+    if (active && tab.windowId != null) await chrome.windows.update(tab.windowId, {focused:true});
+    return tab.id;
+  };
+  const result = viewerOpenChain.then(open);
+  viewerOpenChain = result.catch(() => {});
+  return result;
 }
 
 async function getAuthCookie(forceRefresh = false) {
@@ -702,6 +766,7 @@ function filterOrdersByZip(orders, zipFilters) {
   const keptOrders = [];
   let skipped = 0;
 
+  updateViewerOrders(orders);
   for (const order of orders) {
     order.zipCode = normalizeZipCode(order.zipCode || extractZipCodesFromText(order.shippingAddress || '')[0] || '');
 
@@ -710,6 +775,7 @@ function filterOrdersByZip(orders, zipFilters) {
       log(`${order.orderId}: keeping ZIP ${order.zipCode || 'matched address'}`, 'success');
     } else {
       skipped++;
+      setViewerStatus(order.orderId, 'skipped', `ZIP ${order.zipCode || 'not found'} does not match the saved ZIP filters`);
       log(`${order.orderId}: skipped${order.zipCode ? ` ZIP ${order.zipCode}` : ' (no matching ZIP found)'}`, 'info');
     }
   }
@@ -739,6 +805,7 @@ async function uploadCancelledOrdersToApi(cancelledOrders) {
   } catch (err) {
     scrapeState.failed += cancelledOrders.length;
     stats();
+    for (const order of cancelledOrders) setViewerStatus(order.orderId, 'error', `Cancellation lookup failed: ${err.message}`);
     log(`Could not sync cancellations: ${err.message}`, 'error');
     return;
   }
@@ -756,9 +823,14 @@ async function uploadCancelledOrdersToApi(cancelledOrders) {
     const orderId = String(order.orderId || '').trim();
     const rowIds = rowsByOrderId.get(orderId);
     if (!rowIds?.size) {
+      setViewerStatus(orderId, 'skipped', 'Cancelled order is not in IEID; nothing to update');
       log(`${orderId}: cancelled, not in database (skipped)`, 'info');
       continue;
     }
+    let savedRows = 0;
+    let failedRows = 0;
+    let lastError = '';
+    setViewerStatus(orderId, 'uploading', 'Updating cancellation in IEID');
     for (const rowId of rowIds) {
       if (scrapeState.stopped) break;
       try {
@@ -769,13 +841,18 @@ async function uploadCancelledOrdersToApi(cancelledOrders) {
         });
         if (!result.success) throw new Error(result.error || 'Cancellation update failed');
         scrapeState.sent++;
+        savedRows++;
         log(`${orderId}: marked existing database row cancelled`, 'success');
       } catch (err) {
         scrapeState.failed++;
+        failedRows++;
+        lastError = err.message;
         log(`${orderId}: cancellation update failed: ${err.message}`, 'error');
       }
       stats();
     }
+    const status = failedRows ? (savedRows ? 'partial' : 'error') : savedRows === rowIds.size ? 'updated' : 'stopped';
+    setViewerStatus(orderId, status, lastError || `${savedRows}/${rowIds.size} existing IEID rows marked cancelled`);
   }
 }
 
@@ -921,6 +998,11 @@ function aggregateProductPayload(rows) {
 }
 
 async function uploadOrdersToApi(allOrders, amazonEmail) {
+  updateViewerOrders(allOrders, 'ready');
+  for (const order of allOrders) {
+    if (order.quantityDisputed) setViewerStatus(order.orderId, 'skipped', 'Quantity could not be verified; rescan this order');
+    else if (!order.shipments?.length) setViewerStatus(order.orderId, 'skipped', 'No product rows were available to import');
+  }
   const safeOrders = allOrders.filter(order => !order.quantityDisputed);
   const payload = aggregateProductPayload(safeOrders.flatMap((order) => {
     return order.shipments.map((shipment) => {
@@ -949,6 +1031,8 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
     });
   }));
 
+  viewerOrders.beginUpload(payload);
+  viewerChanged();
   log(`Sending ${payload.length} line items from ${allOrders.length} orders...`, 'info');
 
   const batchSize = 50;
@@ -957,7 +1041,13 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
     const batch = payload.slice(i, i + batchSize);
 
     try {
-      const result = await apiPost('/api/orders/amazon/scrape', { orders: batch });
+      const response = await apiPost('/api/orders/amazon/scrape', { orders: batch });
+      const result = response && typeof response === 'object' ? response : {};
+      if (!viewerOrders.applyUploadResult(batch, result)) {
+        scrapeState.extractionIncomplete = true;
+        log('IEID did not confirm every item in this batch; check per-order status in the viewer.', 'error');
+      }
+      viewerChanged();
       scrapeState.sent += (result.inserted || 0) + (result.updated || 0);
       scrapeState.failed += (result.failed || 0);
       stats();
@@ -970,16 +1060,19 @@ async function uploadOrdersToApi(allOrders, amazonEmail) {
         }
       }
     } catch (err) {
+      viewerOrders.applyUploadResult(batch, null, err.message);
+      viewerChanged();
       scrapeState.failed += batch.length;
       stats();
       log(`API error (batch ${Math.floor(i / batchSize) + 1}): ${err.message}`, 'error');
     }
 
-    progress(85 + Math.round(((i + batchSize) / payload.length) * 15), `Sent ${Math.min(i + batchSize, payload.length)}/${payload.length}`);
+    progress(Math.min(100, 85 + Math.round(((i + batchSize) / payload.length) * 15)), `Sent ${Math.min(i + batchSize, payload.length)}/${payload.length}`);
   }
 }
 
 function applyTrackingResult(order, shipment, shipmentIndex, trackResult, error) {
+  shipment.viewerTrackingNote = trackResult?.trackingId ? '' : error || trackResult?.issue || trackResult?.unavailable || trackResult?.noTracking || trackResult?.cancelled || (trackResult?.timedOut ? 'Tracking request timed out' : 'Tracking not available');
   // Preserve known values on a failed refresh without claiming that they prove
   // the current shipment manifest is complete. A definitive retry clears this.
   shipment.trackingLookupIncomplete = true;
@@ -1139,6 +1232,7 @@ async function discoverMissingTracking(allOrders) {
         order.quantityDisputed = false;
         order.detailsScanned = detail.shipments.every(shipment => parseMoneyAmount(shipment.unitPrice) !== null);
         dedupeOrderShipments(order);
+        updateViewerOrders([order], 'details');
         log(`${order.orderId}: found ${order.shipments.length} shipment items on order details`, 'info');
       } catch (err) {
         order.shipmentManifestIncomplete = true;
@@ -1155,6 +1249,7 @@ async function discoverMissingTracking(allOrders) {
 async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbCache = null, amazonEmail = '', useShipmentCache = true) {
   await restoreShipmentDiscovery(allOrders, amazonEmail, useShipmentCache);
   await discoverMissingTracking(allOrders);
+  updateViewerOrders(allOrders, 'tracking');
   if (scrapeState.stopped) return;
   if (dbCache) {
     const skipped = applyDbCacheToOrders(allOrders, dbCache);
@@ -1163,6 +1258,7 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
     }
   }
 
+  updateViewerOrders(allOrders, 'tracking');
   const { groups, noUrlTargets, shipmentCount } = buildTrackingFetchGroups(allOrders);
 
   for (const target of noUrlTargets) {
@@ -1170,6 +1266,7 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
   }
 
   if (!groups.length) {
+    updateViewerOrders(allOrders, 'tracking');
     await saveShipmentDiscovery(allOrders, amazonEmail);
     return;
   }
@@ -1234,6 +1331,7 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
       log(`Restored tracking concurrency to ${concurrency}`, 'info');
     }
 
+    updateViewerOrders(allOrders, 'tracking');
     processedShipments += batchGroups.reduce((n, group) => n + group.targets.length, 0);
     stats();
     progress(
@@ -1257,6 +1355,7 @@ async function fetchTrackingForOrders(allOrders, progressStart, progressEnd, dbC
 }
 
 async function runSingleOrderScrape(config, onStarted) {
+  await viewerReady;
   const result = await withExtensionOperation('scan', () => {
     const result = runSingleOrderScrapeJob(config);
     if (onStarted) onStarted();
@@ -1277,7 +1376,7 @@ async function runSingleOrderScrapeJob(config) {
   scrapeState = { running: true, stopped: false, pct: 0, statusText: '', orders: 0, shipments: 0, tracked: 0, sent: 0, failed: 0, cancelled: 0, skippedCached: 0, extractionIncomplete: false };
   clearScrapeLogs();
   startScrapeKeepAlive();
-  openLogTab();
+  openLogTab().catch(err => log(`Live Viewer could not open: ${err.message}`, 'error'));
 
   try {
     const token = await getAuthCookie();
@@ -1307,6 +1406,8 @@ async function runSingleOrderScrapeJob(config) {
     }
 
     let allOrders = result.orders || [];
+    updateViewerOrders(allOrders);
+    updateViewerOrders(result.cancelledOrders || [], 'cancelled');
     let cancelledToReport = [];
 
     if (result.cancelledOrders?.length) {
@@ -1381,6 +1482,7 @@ async function runSingleOrderScrapeJob(config) {
 
 // --- Main scrape logic ---
 async function runScrape(config, checkpoint = null, onStarted) {
+  await viewerReady;
   const result = await withExtensionOperation('scan', () => {
     const result = runBulkScrapeJob(config, checkpoint);
     if (onStarted) onStarted();
@@ -1397,10 +1499,12 @@ async function runBulkScrapeJob(config, checkpoint = null) {
   scrapeState.running = true;
   if (!checkpoint) clearScrapeLogs();
   startScrapeKeepAlive();
-  openLogTab();
+  openLogTab().catch(err => log(`Live Viewer could not open: ${err.message}`, 'error'));
 
   const allOrders = checkpoint?.allOrders || [];
   const allCancelledOrders = checkpoint?.allCancelledOrders || [];
+  updateViewerOrders(allOrders);
+  updateViewerOrders(allCancelledOrders, 'cancelled');
   let totalPages = checkpoint?.totalPages || 1;
   let page = checkpoint?.page || 1;
   let totalZipSkipped = checkpoint?.totalZipSkipped || 0;
@@ -1506,6 +1610,7 @@ async function runBulkScrapeJob(config, checkpoint = null) {
       }
 
       mergeCancelledOrders(allCancelledOrders, pageCancelled);
+      updateViewerOrders(pageCancelled, 'cancelled');
 
       let duplicateShipments = 0;
       for (const order of pageOrders) {
@@ -1517,6 +1622,7 @@ async function runBulkScrapeJob(config, checkpoint = null) {
       if (duplicateShipments) {
         log(`Removed ${duplicateShipments} duplicate shipment${duplicateShipments === 1 ? '' : 's'} from page ${page}`, 'info');
       }
+      updateViewerOrders(allOrders);
       scrapeState.orders = allOrders.length;
       scrapeState.shipments = allOrders.reduce((n, o) => n + o.shipments.length, 0);
       stats();
@@ -1746,15 +1852,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.storage.local.remove('pendingSingleOrderId');
     sendResponse({ ok: true });
   } else if (msg.action === 'open_log_tab') {
-    openLogTab();
-    sendResponse({ ok: true });
+    openLogTab({active:true, view:msg.view === 'orders' ? 'orders' : 'logs'})
+      .then(tabId => sendResponse({ok:true, tabId}), err => sendResponse({ok:false, error:err.message}));
   } else if (msg.action === 'stop_scrape') {
     scrapeState.stopped = true;
     log('Stopped by user', 'error');
     sendResponse({ ok: true });
   } else if (msg.action === 'scrape_status') {
-    scrapeLogsReady.then(() => {
-      sendResponse({ running: scrapeState.running, ...scrapeState, logs: scrapeLogs });
+    Promise.all([scrapeLogsReady, viewerReady]).then(() => {
+      sendResponse({ ...scrapeState, logs:scrapeLogs, viewerRevision, ...(msg.viewerRevision !== viewerRevision ? {orderRows:viewerOrders.snapshot()} : {}) });
     });
   }
   return true;

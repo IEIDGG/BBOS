@@ -80,6 +80,7 @@ jobs:
           node tests/test_popup_scan_admission.js
           node tests/test_scrape_core.js
           node tests/test_package_integrity.js
+          node --test tests/test_viewer_state.cjs tests/test_viewer_background.cjs
 
       - name: Detached Amazon HTML parser tests
         run: |
@@ -101,6 +102,7 @@ jobs:
           sudo apt-get install -y xvfb
           npm install --prefix "$RUNNER_TEMP/pw" playwright@1.55.0
           npx --prefix "$RUNNER_TEMP/pw" playwright install chromium --with-deps
+          NODE_PATH="$RUNNER_TEMP/pw/node_modules" node --test tests/test_viewer_ui.cjs tests/test_parser_csp.cjs
           NODE_PATH="$RUNNER_TEMP/pw/node_modules" node tests/amazon_live_regressions/regression.cjs
           NODE_PATH="$RUNNER_TEMP/pw/node_modules" xvfb-run -a node tests/test_extension_smoke.js
           NODE_PATH="$RUNNER_TEMP/pw/node_modules" xvfb-run -a node tests/test_update_native.js

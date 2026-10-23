@@ -92,6 +92,25 @@
     await chrome.tabs.create({url:base + '/extension-connect?' + params});
     return true;
   }
+  async function importAccountZipFilters(grant) {
+    try {
+      // Use the bounded raw request inside the auth queue; authenticated fetch
+      // would enqueue getToken behind this handoff and deadlock.
+      const {response, data} = await authRequest('/api/settings/monitor', {cache:'no-store', headers:{'X-Auth-Token':grant.access_token}}, true);
+      const mappings = data?.settings?.zip_mappings;
+      if (!response.ok || !mappings || typeof mappings !== 'object' || Array.isArray(mappings)) throw new Error('ZIP mappings unavailable');
+      const zipCodes = [...new Set(Object.keys(mappings).map(zip => zip.trim()).filter(zip => /^\d{5}(?:-\d{4})?$/.test(zip)))].sort();
+      await chrome.storage.local.set({
+        zipFilters:zipCodes.join(', '),
+        zipFilterImportStatus:{type:'success', message:zipCodes.length
+          ? `Imported ${zipCodes.length} ZIP code${zipCodes.length === 1 ? '' : 's'} from IEID`
+          : 'No ZIP mappings in this account. All ZIP codes are included.'},
+      });
+    } catch {
+      // A settings failure must not discard a successfully exchanged grant.
+      await chrome.storage.local.set({zipFilterImportStatus:{type:'error', message:'Could not import account ZIP codes. Saved filters were kept. Use Import from IEID to retry.'}}).catch(() => {});
+    }
+  }
   async function acceptHandoff(message, sender) {
     const url = new URL(sender.url || '');
     if (sender.id !== chrome.runtime.id || url.origin !== base || url.pathname !== '/extension-connect' || message.extension_id !== chrome.runtime.id) throw new Error('Invalid handoff sender');
@@ -101,7 +120,9 @@
     await chrome.storage.session.remove('accountHandoff');
     const {response, data} = await authRequest('/api/auth/extensions/exchange', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code:message.code, verifier:pending.verifier})}, true);
     if (!response.ok) throw new Error('Connect failed. Sign in again and retry.');
-    await saveGrant(validatedGrant(data));
+    const grant = validatedGrant(data);
+    await saveGrant(grant);
+    await importAccountZipFilters(grant);
     return true;
   }
   async function revokeGrant() {

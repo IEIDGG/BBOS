@@ -1,134 +1,69 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>IEID Scraper Log</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #1a1a2e;
-      color: #e0e0e0;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-    header {
-      padding: 16px 20px;
-      border-bottom: 1px solid #333;
-      background: #16213e;
-    }
-    h1 {
-      font-size: 18px;
-      margin-bottom: 12px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    h1 span {
-      background: linear-gradient(135deg, #667eea, #764ba2);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-    .status-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 10px;
-    }
-    .status-text { font-size: 13px; color: #aaa; flex: 1; }
-    .running-badge {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 3px 8px;
-      border-radius: 999px;
-      background: #333;
-      color: #888;
-    }
-    .running-badge.active { background: #1f3d2a; color: #56d364; }
-    .progress-bar {
-      height: 6px;
-      background: #333;
-      border-radius: 3px;
-      overflow: hidden;
-      margin-bottom: 12px;
-    }
-    .progress-fill {
-      height: 100%;
-      background: linear-gradient(90deg, #667eea, #764ba2);
-      border-radius: 3px;
-      transition: width 0.3s;
-      width: 0%;
-    }
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-    }
-    .stat {
-      background: #0d1117;
-      border: 1px solid #333;
-      border-radius: 6px;
-      padding: 10px;
-      text-align: center;
-    }
-    .stat-num { font-size: 20px; font-weight: 700; color: #667eea; }
-    .stat-label { font-size: 10px; color: #888; margin-top: 4px; text-transform: uppercase; }
-    main {
-      flex: 1;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      padding: 12px 20px 20px;
-    }
-    .log-toolbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-      font-size: 12px;
-      color: #888;
-    }
-    .log {
-      flex: 1;
-      overflow-y: auto;
-      background: #0d1117;
-      border: 1px solid #333;
-      border-radius: 8px;
-      padding: 12px;
-      font-family: 'SF Mono', Monaco, monospace;
-      font-size: 12px;
-      line-height: 1.6;
-    }
-    .log-entry { color: #8b949e; margin-bottom: 2px; }
-    .log-entry.success { color: #56d364; }
-    .log-entry.error { color: #f85149; }
-    .log-entry.info { color: #79c0ff; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IEIDLLC · Scraper Live Viewer</title>
+  <link rel="icon" href="icons/icon48.png">
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="viewer.css">
 </head>
 <body>
-  <header>
-    <h1><span>IEID</span> Scraper Live Log</h1>
-    <div class="status-row">
-      <div class="status-text" id="statusText">Waiting for scrape...</div>
-      <div class="running-badge" id="runningBadge">Idle</div>
-    </div>
-    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-    <div class="stats">
-      <div class="stat"><div class="stat-num" id="statOrders">0</div><div class="stat-label">Orders</div></div>
-      <div class="stat"><div class="stat-num" id="statShipments">0</div><div class="stat-label">Shipments</div></div>
-      <div class="stat"><div class="stat-num" id="statTracking">0</div><div class="stat-label">Tracked</div></div>
-      <div class="stat"><div class="stat-num" id="statSent">0</div><div class="stat-label">Sent</div></div>
-      <div class="stat"><div class="stat-num" id="statCancelled">0</div><div class="stat-label">Cancelled</div></div>
-      <div class="stat"><div class="stat-num" id="statSkipped">0</div><div class="stat-label">Skipped</div></div>
-    </div>
-  </header>
+  <header class="viewer-header"><div class="header-inner"><div class="brand-header">
+    <img class="brand-logo" src="icons/ieidllc-logo.png" alt="" width="42" height="42">
+    <div><div class="brand-name">IEIDLLC</div><div class="brand-subtitle">Amazon Order Scraper</div></div>
+    <span class="header-divider" aria-hidden="true"></span><h1>Live Viewer</h1>
+    <small class="version-badge" id="extensionVersion"></small>
+  </div></div></header>
   <main>
-    <div class="log-toolbar">
-      <span id="logCount">0 entries</span>
-      <span id="scrollHint">Auto-scroll on</span>
+    <div class="page-heading"><div><div class="eyebrow">AMAZON → IEID</div><h2>Your import, as it happens.</h2><p>Orders appear as they’re discovered. Details and import results update here.</p></div><span class="badge" id="runningBadge">Idle</span></div>
+    <section class="scan-progress" aria-label="Scan progress">
+      <div class="status-row"><span id="statusText" role="status">Waiting for a scan. Start scraping from the extension.</span><span id="progressPercent">0%</span></div>
+      <div class="progress-bar" role="progressbar" id="progressBar" aria-label="Scan progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill" id="progressFill"></div></div>
+    </section>
+    <div class="stats">
+      <div class="stat"><div class="stat-num" id="statOrders">0</div><div class="stat-label">Orders found</div></div>
+      <div class="stat"><div class="stat-num" id="statShipments">0</div><div class="stat-label">Shipment items</div></div>
+      <div class="stat"><div class="stat-num" id="statTracking">0</div><div class="stat-label">Tracking fetched</div></div>
+      <div class="stat"><div class="stat-num success-text" id="statSent">0</div><div class="stat-label">Items saved</div></div>
+      <div class="stat"><div class="stat-num" id="statCancelled">0</div><div class="stat-label">Cancelled</div></div>
+      <div class="stat"><div class="stat-num" id="statSkipped">0</div><div class="stat-label">Tracking reused</div></div>
     </div>
-    <div class="log" id="log"></div>
+    <p id="connectionStatus" class="error-text" role="status"></p>
+    <div class="viewer-tabs" role="tablist" aria-label="Live Viewer">
+      <button type="button" role="tab" id="ordersTab" aria-controls="ordersPanel" aria-selected="true">Orders <span id="orderCountBadge">0</span></button>
+      <button type="button" role="tab" id="logsTab" aria-controls="logsPanel" aria-selected="false" tabindex="-1">Logs</button>
+    </div>
+    <section id="ordersPanel" role="tabpanel" aria-labelledby="ordersTab">
+      <div class="panel-toolbar"><span id="orderCount">0 orders</span><span>Newest orders first ↓</span></div>
+      <nav class="orders-pagination" id="ordersPaginationTop" aria-label="Order pages (top)" hidden>
+        <span class="pagination-size">50 orders per page</span>
+        <div class="pagination-controls">
+          <button type="button" data-page-action="previous" aria-label="Previous order page" disabled>← Previous</button>
+          <span data-page-label role="status" aria-live="polite">Page 1 of 1</span>
+          <button type="button" data-page-action="next" aria-label="Next order page" disabled>Next →</button>
+        </div>
+      </nav>
+      <div class="table-container" tabindex="0" role="region" aria-label="Live orders, scroll for more columns">
+        <table><caption class="sr-only">Scraped orders sorted by order date, newest first, with up to 50 orders per page. The last column shows the result of saving to IEID.</caption>
+          <thead><tr><th scope="col" aria-sort="descending">Order date ↓</th><th scope="col">Order ID</th><th scope="col">Items</th><th scope="col">Order total</th><th scope="col">ZIP code</th><th scope="col">Tracking</th><th scope="col">IEID status</th></tr></thead><tbody id="orderRows"></tbody>
+        </table>
+        <div class="empty-state" id="ordersEmpty"><div class="empty-icon" aria-hidden="true">▤</div><h3>Your orders will appear here</h3><p>Start a scan from the extension. Each order stays in one row<br>as shipment details and IEID import results arrive.</p></div>
+      </div>
+      <nav class="orders-pagination pagination-bottom" id="ordersPaginationBottom" aria-label="Order pages (bottom)" hidden>
+        <span class="pagination-size">50 orders per page</span>
+        <div class="pagination-controls">
+          <button type="button" data-page-action="previous" aria-label="Previous order page" disabled>← Previous</button>
+          <span data-page-label>Page 1 of 1</span>
+          <button type="button" data-page-action="next" aria-label="Next order page" disabled>Next →</button>
+        </div>
+      </nav>
+      <p class="panel-footnote">Tracking availability and IEID import status are shown separately. Missing tracking does not mean an order failed to save.</p>
+    </section>
+    <section id="logsPanel" role="tabpanel" aria-labelledby="logsTab" hidden>
+      <div class="panel-toolbar"><span id="logCount">0 entries</span><span id="scrollHint">Auto-scroll on</span></div>
+      <div class="log" id="log" tabindex="0" role="region" aria-label="Scraper log entries"></div>
+    </section>
   </main>
   <script src="log.js"></script>
 </body>

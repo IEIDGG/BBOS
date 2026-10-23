@@ -11,7 +11,7 @@ const absent = { orderId: '111-3333333-3333333', cancelled: true };
 function harness({ lookupFails = false, updateFails = false } = {}) {
   const writes = [];
   const logs = [];
-  const context = vm.createContext({
+  const context = vm.createContext({ ...require('./viewer_worker_fixture.cjs')(),
     ...core, encodeURIComponent,
     scrapeState: { stopped: false, sent: 0, failed: 0, cancelled: 0 },
     log(message) { logs.push(message); }, stats() {},

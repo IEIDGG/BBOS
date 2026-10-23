@@ -46,6 +46,13 @@ const missingListParser = { ...files };
 delete missingListParser['scraper.js'];
 assert.throws(() => core.validatePackagePayload({ version: manifest.version, files: missingListParser }), /missing required files: scraper\.js/, 'Reject packages that would break the offscreen list parser');
 
+for (const file of ['viewer_state.js', 'theme.css', 'popup.css', 'viewer.css', 'icons/ieidllc-logo.png']) {
+  const incomplete = {...files};
+  delete incomplete[file];
+  assert.throws(() => core.validatePackagePayload({version:manifest.version,files:incomplete}),
+    /missing required files/, `Reject incomplete Live Viewer packages missing ${file}`);
+}
+
 const jsFiles = Object.keys(files).filter((rel) => rel.endsWith('.js'));
 for (const rel of jsFiles) {
   execFileSync('node', ['--check', path.join(root, rel)], { stdio: 'pipe' });

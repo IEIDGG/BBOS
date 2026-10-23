@@ -11,7 +11,7 @@ const order = { orderId: '111-1111111-1111111', total: '$2399.94', shipments: [
   { asin: 'B000000001', quantity: 3, shipmentId: 'shared', packageId: 'package-a', itemId: 'item', trackingNumber: 'TBA123456789012' },
   { asin: 'B000000002', quantity: 3, shipmentId: 'shared', itemId: 'item', trackingNumber: 'TBA123456789012' },
 ] };
-const ctx = vm.createContext({ ...core, URL, URLSearchParams, Map, Set,
+const ctx = vm.createContext({ ...require('./viewer_worker_fixture.cjs')(), ...core, URL, URLSearchParams, Map, Set,
   scrapeState: { stopped: false, sent: 0, failed: 0 }, log() {}, stats() {}, progress() {},
   normalizeTrackingUrlForKey: v => v, dedupeOrderShipments() {},
   resolveShippingAddress: () => '', normalizeOrderStatus: v => v,
@@ -24,7 +24,7 @@ const ctx = vm.createContext({ ...core, URL, URLSearchParams, Map, Set,
     assert.strictEqual(accept(result), !omitPrices);
     return result;
   },
-  async apiPost(url, body) { uploads.push(JSON.parse(JSON.stringify(body.orders))); return { updated: body.orders.length }; },
+  async apiPost(url, body) { uploads.push(JSON.parse(JSON.stringify(body.orders))); return { success:true, inserted:0, updated:body.orders.length, failed:0, errors:[] }; },
 });
 vm.runInContext(source.slice(source.indexOf('function buildTrackingUrl('), source.indexOf('function normalizeComparable(')), ctx);
 vm.runInContext(source.slice(source.indexOf('function normalizeTrackingList('), source.indexOf('// Create a tab')), ctx);

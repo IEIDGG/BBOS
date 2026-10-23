@@ -68,7 +68,7 @@ assert.strictEqual(core.matchingShipTrack({ shipmentId: 'second', itemId: 'share
 const background = fs.readFileSync(path.join(root, 'background.js'), 'utf8');
 const cacheCode = background.slice(background.indexOf('function normalizeTrackingList('),
   background.indexOf('// Create a tab'));
-const ctx = vm.createContext({ ...core, Map, Set, log() {}, stats() {},
+const ctx = vm.createContext({ ...require('./viewer_worker_fixture.cjs')(), ...core, Map, Set, log() {}, stats() {},
   scrapeState: { skippedCached: 0, sent: 0, failed: 0 },
   resolveShippingAddress: () => '', normalizeOrderStatus: v => v,
   normalizeShipmentStatus: v => v, normalizeCarrier: v => v,
@@ -92,7 +92,7 @@ const duplicateCache = ctx.buildDbShipmentCache([
 ]);
 assert.strictEqual(ctx.applyDbCacheToOrders([order], duplicateCache), 0);
 const uploads = [];
-ctx.apiPost = async (url, body) => { uploads.push(JSON.parse(JSON.stringify(body.orders))); return { updated: body.orders.length }; };
+ctx.apiPost = async (url, body) => { uploads.push(JSON.parse(JSON.stringify(body.orders))); return { success:true, inserted:0, updated:body.orders.length, failed:0, errors:[] }; };
 vm.runInContext(background.slice(background.indexOf('function parseMoneyAmount('),
   background.indexOf('function applyTrackingResult(')), ctx);
 (async () => {

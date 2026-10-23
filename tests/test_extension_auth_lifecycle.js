@@ -72,6 +72,55 @@ async function reconnectRevokesPreviousGrant() {
   assert.equal(failed.local.accountGrant.refresh_token, 'refresh-one');
 }
 
+async function connectionImportsAccountZipFiltersWithoutPopup() {
+  const fixture = client({local:{zipFilters:'99999',fetchTracking:false},fetch:async (url, settings)=>{
+    if (url.endsWith('/exchange')) return Response.json({...grant(),access_token:'new-account-token'});
+    if (url.endsWith('/api/settings/monitor')) {
+      assert.equal(new Headers(settings.headers).get('X-Auth-Token'), 'new-account-token');
+      assert.equal(new Headers(settings.headers).get('X-Extension-Origin'), 'chrome-extension://'+'a'.repeat(32));
+      return Response.json({settings:{zip_mappings:{'11201':'Warehouse B',' 00501 ':'Warehouse A','11201 ':'duplicate','10001-1234':'Warehouse C','bad':'invalid'}}});
+    }
+    return Response.json({success:true});
+  }});
+  await fixture.scope.IEIDAuth.connect();
+  assert.equal((await fixture.handoff()).value, true);
+  assert.equal(fixture.local.zipFilters, '00501, 10001-1234, 11201', 'connection must persist normalized account ZIPs without a popup');
+  assert.equal(fixture.local.fetchTracking, false, 'ZIP import must preserve other settings');
+  assert.equal(fixture.local.zipFilterImportStatus.type, 'success');
+  fixture.local.zipFilters = '90210';
+  await fixture.scope.IEIDAuth.getToken();
+  assert.equal(fixture.local.zipFilters, '90210', 'ordinary token validation must preserve manual edits');
+  assert.equal(fixture.calls.filter(call=>call.url.endsWith('/api/settings/monitor')).length, 1);
+}
+
+async function emptyAccountMappingsClearPreviousFilters() {
+  const fixture = client({local:{zipFilters:'99999'},fetch:async url=>url.endsWith('/exchange')
+    ? Response.json(grant()) : Response.json({settings:{zip_mappings:{}}})});
+  await fixture.scope.IEIDAuth.connect();
+  assert.equal((await fixture.handoff()).value, true);
+  assert.equal(fixture.local.zipFilters, '', 'a new account with no mappings must not inherit the previous ZIP filter');
+  assert.equal(fixture.local.zipFilterImportStatus.type, 'success');
+}
+
+async function zipImportFailuresDoNotBreakAuthentication() {
+  for (const mode of ['unavailable','malformed','timeout']) {
+    const fixture = client({local:{zipFilters:'00501'},fetch:async url=>{
+      if (url.endsWith('/exchange')) return Response.json(grant());
+      if (url.endsWith('/api/settings/monitor')) {
+        if (mode === 'timeout') return new Promise(()=>{});
+        return mode === 'unavailable' ? Response.json({}, {status:503}) : Response.json({settings:{zip_mappings:[]}});
+      }
+      return Response.json({success:true});
+    }});
+    await fixture.scope.IEIDAuth.connect();
+    assert.equal((await fixture.handoff()).value, true, mode+' must not fail a completed connection');
+    assert.equal(fixture.local.zipFilters, '00501', mode+' must not erase saved filters');
+    assert.equal(fixture.local.zipFilterImportStatus.type, 'error');
+    assert.match(fixture.local.zipFilterImportStatus.message, /import.*ZIP|ZIP.*import/i);
+    assert.equal(await fixture.scope.IEIDAuth.getToken(), 'access-one', 'auth queue must still work');
+  }
+}
+
 async function boundedValidationReleasesQueue() {
   let stalled = true;
   const fixture = client({local:{accountGrant:grant()},session:{accountGrant:grant()},fetch:async url=>{
@@ -116,7 +165,7 @@ async function publicVersionBypassesAuthentication() {
 
 (async()=>{
   const failures = [];
-  for (const test of [durableGrant,reconnectRevokesPreviousGrant,boundedValidationReleasesQueue,refreshUncertaintyCannotReplay,publicVersionBypassesAuthentication]) {
+  for (const test of [durableGrant,reconnectRevokesPreviousGrant,connectionImportsAccountZipFiltersWithoutPopup,emptyAccountMappingsClearPreviousFilters,zipImportFailuresDoNotBreakAuthentication,boundedValidationReleasesQueue,refreshUncertaintyCannotReplay,publicVersionBypassesAuthentication]) {
     try {await test(); console.log(test.name+' passed');}
     catch (error) {console.error(test.name+': '+error.message); failures.push(error);}
   }

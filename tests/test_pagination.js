@@ -44,7 +44,7 @@ const loop = background.slice(background.indexOf('    while (filterIndex < histo
   background.indexOf('      if (!scrapeState.stopped && !scrapeState.extractionIncomplete)'));
 async function traverse(limit) {
   const visited = [];
-  const ctx = vm.createContext({
+  const ctx = vm.createContext({ ...require('./viewer_worker_fixture.cjs')(),
     page: 1, totalPages: 1, maxPages: limit, yearFilter: 'year-2026',
     historyPlan: { filters: ['year-2026'], cutoffDate: '' }, filterIndex: 0, pagesRead: 0,
     filterOrderHistory: require('../chrome_extension/order_history.js').filterOrderHistory,
