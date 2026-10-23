@@ -8,7 +8,7 @@ const uploads = [];
 let omitPrices = false;
 let detailOverride;
 const order = { orderId: '111-1111111-1111111', total: '$2399.94', shipments: [
-  { asin: 'B000000001', quantity: 3, shipmentId: 'shared', itemId: 'item', trackingNumber: 'TBA123456789012' },
+  { asin: 'B000000001', quantity: 3, shipmentId: 'shared', packageId: 'package-a', itemId: 'item', trackingNumber: 'TBA123456789012' },
   { asin: 'B000000002', quantity: 3, shipmentId: 'shared', itemId: 'item', trackingNumber: 'TBA123456789012' },
 ] };
 const ctx = vm.createContext({ ...require('./viewer_worker_fixture.cjs')(), ...core, URL, URLSearchParams, Map, Set,
@@ -31,6 +31,70 @@ vm.runInContext(source.slice(source.indexOf('function normalizeTrackingList('), 
 vm.runInContext(source.slice(source.indexOf('function mergeShipment('), source.indexOf('function dedupeOrderShipments(')), ctx);
 vm.runInContext(source.slice(source.indexOf('function buildOrderDetailUrl('), source.indexOf('function applyTrackingResult(')), ctx);
 vm.runInContext(source.slice(source.indexOf('function validateDetailedOrder('), source.indexOf('async function fetchTrackingForOrders(')), ctx);
+vm.runInContext(source.slice(source.indexOf('function applyTrackingResult('), source.indexOf('async function fetchTrackingBatch(')), ctx);
+
+// These rows have the same order/ASIN: the manifest must preserve the actual
+// quantities per package, including distinct items sharing one tracking number.
+const manifestRows = [
+  { order_id: 'manifest', asin: 'A', shipment_id: 's', line_item_id: 'l1', package_id: 'p1', quantity: '1', tracking_number: 'SHARED' },
+  { order_id: 'manifest', asin: 'A', shipment_id: 's', line_item_id: 'l2', package_id: 'p2', quantity: '2', tracking_number: 'SHARED' },
+];
+const manifest = JSON.parse(JSON.stringify(ctx.aggregateProductPayload(manifestRows)[0]));
+assert.deepStrictEqual(manifest.shipments, [
+  { shipment_id: 's', line_item_id: 'l1', package_id: 'p1', tracking_number: 'SHARED', quantity: 1 },
+  { shipment_id: 's', line_item_id: 'l2', package_id: 'p2', tracking_number: 'SHARED', quantity: 2 },
+]);
+assert.strictEqual(manifest.shipments_complete, true);
+assert.strictEqual(manifest.quantity, '3');
+assert.deepStrictEqual(JSON.parse(JSON.stringify(ctx.aggregateProductPayload(manifestRows)[0])), manifest,
+  'Repeat aggregation must not mutate source rows or inflate shipment quantities');
+for (const field of ['shipment_id', 'line_item_id', 'package_id']) {
+  const onlyId = { order_id: 'untracked', asin: 'A', quantity: '2', [field]: 'stable' };
+  const result = JSON.parse(JSON.stringify(ctx.aggregateProductPayload([onlyId])[0]));
+  assert.deepStrictEqual(result.shipments, [{ shipment_id: '', line_item_id: '', package_id: '',
+    [field]: 'stable', tracking_number: '', quantity: 2 }], 'Retain identified unshipped quantities');
+  assert.strictEqual(result.shipments_complete, true);
+}
+for (const invalid of [0, -1, 1.5, '2units', '1.5', '', null, undefined, true, Number.MAX_SAFE_INTEGER + 1]) {
+  const result = ctx.aggregateProductPayload([{ ...manifestRows[0], quantity: invalid }])[0];
+  assert.strictEqual(result.shipments?.length || 0, 0, `Do not invent a package quantity from ${String(invalid)}`);
+  assert.strictEqual(result.shipments_complete, false);
+}
+for (const tracking of [['FIRST', 'SECOND'], 'FIRST;SECOND', ['FIRST', 'FIRST'], ['FIRST;SECOND']]) {
+  const result = ctx.aggregateProductPayload([{ ...manifestRows[0], tracking_number: tracking }])[0];
+  assert.strictEqual(result.shipments?.length || 0, 0, 'An aggregate tracking list cannot assign quantities to individual packages');
+  assert.strictEqual(result.shipments_complete, false);
+}
+const unknown = ctx.aggregateProductPayload([{ order_id: 'unknown', asin: 'A', quantity: '2' }])[0];
+assert.strictEqual(unknown.shipments?.length || 0, 0, 'An untracked row without stable IDs cannot identify a saved shipment');
+assert.strictEqual(unknown.shipments_complete, false);
+const trackingOnly = JSON.parse(JSON.stringify(ctx.aggregateProductPayload([
+  { order_id: 'tracking-only', asin: 'A', quantity: '2', tracking_number: [' ONLY '] },
+])[0]));
+assert.deepStrictEqual(trackingOnly.shipments, [
+  { shipment_id: '', line_item_id: '', package_id: '', tracking_number: 'ONLY', quantity: 2 },
+]);
+assert.strictEqual(trackingOnly.shipments_complete, true);
+const ambiguous = ctx.aggregateProductPayload([manifestRows[0], { ...manifestRows[0], quantity: '2' }])[0];
+assert.strictEqual(ambiguous.shipments_complete, false, 'Conflicting repeated identities cannot prove complete package coverage');
+const conflictingTracking = JSON.parse(JSON.stringify(ctx.aggregateProductPayload([
+  manifestRows[0], { ...manifestRows[0], tracking_number: 'CONFLICT' }, manifestRows[1],
+])[0]));
+assert.strictEqual(conflictingTracking.shipments_complete, false, 'One stable package cannot claim two different tracking numbers in the same snapshot');
+assert.deepStrictEqual(conflictingTracking.shipments, [manifest.shipments[1]], 'Reject the conflicting package while retaining unambiguous entries');
+const conflictingShipment = JSON.parse(JSON.stringify(ctx.aggregateProductPayload([
+  { ...manifestRows[0], package_id: '' },
+  { ...manifestRows[0], package_id: '', tracking_number: 'CONFLICT' },
+  manifestRows[1],
+])[0]));
+assert.strictEqual(conflictingShipment.shipments_complete, false, 'Stable shipment and line IDs cannot claim conflicting tracking when no package ID is exposed');
+assert.deepStrictEqual(conflictingShipment.shipments, [manifest.shipments[1]], 'Reject the conflicting shipment while retaining unrelated package quantities');
+const partialManifest = JSON.parse(JSON.stringify(ctx.aggregateProductPayload([
+  manifestRows[0], { order_id: 'manifest', asin: 'A', quantity: '2' },
+])[0]));
+assert.deepStrictEqual(partialManifest.shipments, [manifest.shipments[0]], 'An ambiguous row must not discard known package quantities');
+assert.strictEqual(partialManifest.shipments_complete, false);
+
 (async () => {
   assert.throws(() => ctx.validateDetailedOrder({ orders: [{ ...order, shipments: [
     { asin: 'B000000001', quantity: 6 }, { asin: 'B000000002', quantity: 3 },
@@ -49,6 +113,16 @@ vm.runInContext(source.slice(source.indexOf('function validateDetailedOrder('), 
   assert.deepStrictEqual(uploads[0].map(row => [row.asin, row.quantity, row.unit_price, row.total_owed]), [
     ['B000000001', '3', '399.99', '1199.97'], ['B000000002', '3', '399.99', '1199.97'],
   ]);
+  assert.deepStrictEqual(uploads[0][0].shipments, [
+    { shipment_id: 'shared', line_item_id: 'item', package_id: 'package-a', tracking_number: 'TBA123456789012', quantity: 3 },
+  ]);
+  assert.strictEqual(uploads[0][0].shipments_complete, true);
+  ctx.applyTrackingResult(order, order.shipments[0], 0, { timedOut: true }, null);
+  await ctx.uploadOrdersToApi([order], 'test@example.test');
+  assert.deepStrictEqual(uploads[1][0].shipments, uploads[0][0].shipments, 'A failed refresh keeps the known package quantity and tracking');
+  assert.strictEqual(uploads[1][0].shipments_complete, false, 'Known old tracking is not evidence of a complete refresh');
+  ctx.applyTrackingResult(order, order.shipments[0], 0, { trackingId: 'TBA123456789012' }, null);
+  uploads.splice(1);
   await ctx.discoverMissingTracking([order]);
   await ctx.uploadOrdersToApi([order], 'test@example.test');
   assert.strictEqual(requests.length, 1, 'Complete details need no repeated lookup during the same scan');
@@ -93,5 +167,30 @@ vm.runInContext(source.slice(source.indexOf('function validateDetailedOrder('), 
   const beforeDisputedUpload = uploads.length;
   await ctx.uploadOrdersToApi([disputed], 'test@example.test');
   assert.strictEqual(uploads.length, beforeDisputedUpload, 'A disputed quantity must not upload fallback rows');
+  const failedDetail = { orderId: 'failed-detail', shipments: [
+    { asin: 'A', quantity: 2, shipmentId: 'stable', trackingNumber: 'KNOWN' },
+  ] };
+  detailOverride = { issue: 'Amazon verification required' };
+  await ctx.discoverMissingTracking([failedDetail]);
+  await ctx.uploadOrdersToApi([failedDetail], 'test@example.test');
+  assert.strictEqual(uploads.at(-1)[0].shipments_complete, false, 'Failed detail discovery cannot prove package coverage');
+  failedDetail.shipments[0].trackingLookupIncomplete = true;
+  detailOverride = { orders: [{ orderId: failedDetail.orderId, shipments: [
+    { asin: 'A', quantity: 2, shipmentId: 'stable', unitPrice: '$10.00' },
+  ] }] };
+  await ctx.discoverMissingTracking([failedDetail]);
+  await ctx.uploadOrdersToApi([failedDetail], 'test@example.test');
+  assert.strictEqual(uploads.at(-1)[0].shipments_complete, false, 'Recovering costs must preserve a prior tracking lookup failure');
+  assert.strictEqual(uploads.at(-1)[0].shipments[0].tracking_number, 'KNOWN');
+  ctx.applyTrackingResult(failedDetail, failedDetail.shipments[0], 0, { trackingId: 'KNOWN' }, null);
+  await ctx.uploadOrdersToApi([failedDetail], 'test@example.test');
+  assert.strictEqual(uploads.at(-1)[0].shipments_complete, true, 'Successful detail and tracking retries restore a complete manifest');
+  for (const invalid of [0, undefined]) {
+    await ctx.uploadOrdersToApi([{ orderId: 'invalid', shipments: [
+      { asin: 'A', shipmentId: 'stable', quantity: invalid, trackingNumber: 'KNOWN' },
+    ] }], 'test@example.test');
+    assert.deepStrictEqual(uploads.at(-1)[0].shipments, [], 'Upload defaults must not manufacture a known per-package quantity');
+    assert.strictEqual(uploads.at(-1)[0].shipments_complete, false);
+  }
   console.log('automatic product cost recovery and upload tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

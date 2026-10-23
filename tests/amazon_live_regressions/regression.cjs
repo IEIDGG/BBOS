@@ -111,9 +111,11 @@ await check('captured multi-product details retain quantities and pass validatio
 });
 await check('unshipped background result avoids unnecessary tab fallback', async () => {
  const code=fs.readFileSync(`${dir}/background.js`,'utf8');
- const start=code.indexOf('async function fetchTrackingBatch('),end=code.indexOf('\nfunction validateDetailedOrder',start);
- const ctx=vm.createContext({readAmazonPage:async (url,kind,accept)=>{const result={noTracking:'no tracking available yet'};assert.equal(accept(result),true);return result;},applyTrackingResult:(order,shipment,index,result,error)=>{assert.equal(error,null);return {timedOut:false};}});
- vm.runInContext(code.slice(start,end),ctx);await ctx.fetchTrackingBatch([{trackUrl:'test',targets:[{}]}]);
+ const start=code.indexOf('function applyTrackingResult('),end=code.indexOf('\nfunction validateDetailedOrder',start);
+ const ctx=vm.createContext({scrapeState:{},log:()=>{},readAmazonPage:async (url,kind,accept)=>{const result={noTracking:'no tracking available yet'};assert.equal(accept(result),true);return result;}});
+ const shipment={};
+ vm.runInContext(code.slice(start,end),ctx);await ctx.fetchTrackingBatch([{trackUrl:'test',targets:[{order:{orderId},shipment,shipmentIndex:0}]}]);
+ assert.equal(shipment.trackingLookupIncomplete,false);assert.equal(shipment.trackingNumber,undefined);assert.ok(!ctx.scrapeState.extractionIncomplete);
 });
 await check('mixed tracked and untracked splits update the aggregate status', async () => {
  const code=fs.readFileSync(`${dir}/background.js`,'utf8');
