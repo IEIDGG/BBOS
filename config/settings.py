@@ -15,11 +15,11 @@ universal_date = "2025/11/01"
 SEARCH_CRITERIA = {
     "confirmation": {
         "from": '(OR (FROM "BestBuyInfo@emailinfo.bestbuy.com") (FROM "BestBuyInfo"))',
-        "subject": 'SUBJECT "Thanks for your order"',
+        "subject": '(OR (SUBJECT "Thanks for your order") (SUBJECT "got your order"))',
         "date": f"after:{universal_date}",
     },
     "cancellation": {
-        "subject": '(OR (SUBJECT "Your Best Buy order has been canceled") (SUBJECT "An item has been cancelled from your order.") (SUBJECT "Your order has been cancelled.") (SUBJECT "We received your cancellation request.") (SUBJECT "Update your payment information."))',
+        "subject": '(OR (SUBJECT "Your Best Buy order has been canceled") (SUBJECT "Your order has been canceled.") (SUBJECT "An item has been cancelled from your order.") (SUBJECT "Your order has been cancelled.") (SUBJECT "We received your cancellation request.") (SUBJECT "Update your payment information."))',
         "date": f"after:{universal_date}",
     },
     "shipped": {
