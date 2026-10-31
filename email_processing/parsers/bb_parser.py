@@ -117,6 +117,49 @@ class OrderParser:
         return "fubo" in title or "Apple TV" in title or "Norton" in title
 
     @staticmethod
+    def _parse_compact_product_rows(soup) -> List[Dict[str, str]]:
+        """Parse the "We've got your order" layout (Oct 2026).
+
+        Each item is a single row: product image | title link | price + "Qty: N".
+        """
+        items = []
+        images = soup.find_all(
+            "img",
+            src=lambda s: s and "bbystatic.com/image2/BestBuy_US/images/products/" in s,
+        )
+        for img in images:
+            row = img.find_parent("tr")
+            if not row:
+                continue
+            title_tag = next(
+                (a for a in row.find_all("a") if len(a.get_text(strip=True)) >= 10),
+                None,
+            )
+            if not title_tag:
+                continue
+
+            price_span = row.find("span", string=lambda t: t and "$" in t)
+            qty_span = row.find(
+                "span", string=lambda t: t and t.strip().startswith("Qty:")
+            )
+            qty = (
+                qty_span.get_text(strip=True).split(":", 1)[1].strip()
+                if qty_span
+                else ""
+            )
+
+            items.append(
+                {
+                    "title": title_tag.get_text(strip=True),
+                    "quantity": qty or "1",
+                    "price": price_span.get_text(strip=True) if price_span else "",
+                    "model_number": "",
+                    "item_image": (img.get("src") or "").strip(),
+                }
+            )
+        return items
+
+    @staticmethod
     def parse_product_details(
         html_content: str,
     ) -> Tuple[List[Dict[str, str]], str, List[Dict[str, str]]]:
@@ -201,7 +244,29 @@ class OrderParser:
             if item_image:
                 logger.info("Scraped product image for: %s", title[:80])
 
+        if not product_sections:
+            for item in OrderParser._parse_compact_product_rows(soup):
+                title = item["title"]
+                if OrderParser._is_skipped_perk(title):
+                    logger.debug("Skipping perk item: %s", title[:80])
+                    continue
+                if OrderParser._is_xbox_item(title):
+                    xbox_items.append(item)
+                    logger.info("Scraped Xbox item from confirmation: %s", title[:80])
+                    continue
+                products.append(item)
+
         total_td = OrderParser._find_element(soup, product_config["total"])
+        if total_td and "$" not in total_td.text:
+            # The newer layout styles the "Total" label like the amount cell.
+            total_td = next(
+                (
+                    td
+                    for td in OrderParser._find_elements(soup, product_config["total"])
+                    if "$" in td.text
+                ),
+                total_td,
+            )
         total_price = total_td.text.strip() if total_td else "N/A"
 
         return products, total_price, xbox_items
@@ -213,7 +278,13 @@ class OrderParser:
 
         if email_type == "confirmation":
             order_span = OrderParser._find_element(soup, order_config["confirmation"])
-            return order_span.text.strip() if order_span else None
+            if order_span:
+                return order_span.text.strip()
+            # Newer confirmations render the order number as a link, not a span.
+            import re
+
+            match = re.search(r"BBY\d{2}-\d{9,15}", soup.get_text(" "))
+            return match.group(0) if match else None
 
         if email_type == "cancellation":
             cancelled_config = order_config["cancelled"]
