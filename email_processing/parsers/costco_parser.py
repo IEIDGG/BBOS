@@ -125,13 +125,8 @@ class CostcoParser:
     def _is_valid_costco_order_number(text: str) -> bool:
         if not text or not text.isdigit():
             return False
-        if len(text) != 10:
-            return False
-        if not text.startswith("12"):
-            return False
-        if text.startswith("1Z"):
-            return False
-        return True
+        # Order numbers are 10 digits; the prefix rolled from 12 to 13 in late 2026.
+        return re.fullmatch(r"1[2-9]\d{8}", text) is not None
 
     @staticmethod
     def extract_order_number_from_subject(
@@ -148,7 +143,10 @@ class CostcoParser:
                 r"order\s+(\d{10})\s+has\s+shipped",
             ]
         else:
-            patterns = [r"Order\s*Number\s*(\d{10})"]
+            patterns = [
+                r"Order\s*Number\s*(\d{10})",
+                r"order\s+(\d{10})\s+is\s+confirmed",
+            ]
 
         for pattern in patterns:
             match = re.search(pattern, subject, re.IGNORECASE)
@@ -280,6 +278,17 @@ class CostcoParser:
                 )
                 return date_part.group()
 
+        # New template: "Order Placed" heading followed by MM/DD/YYYY.
+        numeric_match = re.search(
+            r"Order Placed\s*(\d{1,2})/(\d{1,2})/(\d{4})",
+            CostcoParser._clean_text(page_text),
+        )
+        if numeric_match:
+            month, day, year = numeric_match.groups()
+            order_date = f"{year}-{int(month):02d}-{int(day):02d}"
+            logger.debug(f"Extracted numeric order date: {order_date}")
+            return order_date
+
         return None
 
     @staticmethod
@@ -391,7 +400,7 @@ class CostcoParser:
         if not text or len(text) < 10:
             return False
         text = text.upper().strip()
-        if len(text) == 10 and text.isdigit() and text.startswith("12"):
+        if CostcoParser._is_valid_costco_order_number(text):
             return False
         if CostcoParser._is_valid_membership_number(text):
             return False
@@ -595,6 +604,7 @@ class CostcoParser:
             return (
                 "costco-static.com" in src_l
                 or "bfasset.costco" in src_l
+                or "gdx-assets.costco.com" in src_l
                 or ("wcsstore" in src_l and "images" in src_l)
             )
 
@@ -687,9 +697,70 @@ class CostcoParser:
                 products.append(product)
                 logger.debug(f"Extracted product: {product}")
 
+        if not products:
+            products = CostcoParser._parse_new_template_products(soup)
+
         total_price = CostcoParser._extract_total_price(soup)
 
         return products, total_price
+
+    @staticmethod
+    def _parse_new_template_products(soup: BeautifulSoup) -> List[Dict[str, str]]:
+        # Late-2026 template: each item is a <td> of <p> rows with italic
+        # "Item" / "Price" / "Quantity" label spans; the title is the first link.
+        products = []
+        seen_sections = set()
+
+        for label in soup.find_all("span"):
+            if CostcoParser._clean_text(label.get_text()) != "Item":
+                continue
+            section = label.find_parent("td")
+            if section is None or id(section) in seen_sections:
+                continue
+            seen_sections.add(id(section))
+
+            product = {}
+            title_link = section.find("a")
+            if title_link:
+                product["title"] = CostcoParser._clean_text(title_link.get_text())
+
+            for row in section.find_all("p"):
+                spans = row.find_all("span")
+                if not spans:
+                    continue
+                row_label = CostcoParser._clean_text(spans[0].get_text())
+                row_value = CostcoParser._clean_text(
+                    row.get_text().replace(spans[0].get_text(), "", 1)
+                )
+                if row_label == "Item":
+                    item_num = re.search(r"\d+", row_value)
+                    if item_num:
+                        product["item_number"] = item_num.group()
+                elif row_label == "Price":
+                    price_match = re.search(r"\$\s*[\d,]+\.?\d*", row_value)
+                    if price_match:
+                        product["price"] = CostcoParser._normalize_price(
+                            price_match.group()
+                        )
+                elif row_label == "Quantity":
+                    qty_match = re.search(r"\d+", row_value)
+                    if qty_match:
+                        product["quantity"] = qty_match.group()
+
+            if not product.get("title"):
+                continue
+            product.setdefault("quantity", "1")
+            product.setdefault("price", "N/A")
+            item_image = CostcoParser._extract_product_image(section, product["title"])
+            if item_image:
+                product["item_image"] = item_image
+                logger.info(
+                    "Scraped Costco product image for: %s", product["title"][:80]
+                )
+            products.append(product)
+            logger.debug(f"Extracted product from new template: {product}")
+
+        return products
 
     @staticmethod
     def _extract_total_price(soup: BeautifulSoup) -> str:
@@ -747,6 +818,26 @@ class CostcoParser:
                         summary["tax"] = price
                     elif "Total" in text:
                         summary["total"] = price
+
+        if all(value == "N/A" for value in summary.values()):
+            # New template: label <p> in a left cell, amount in an align=right cell.
+            for price_td in soup.find_all("td", align="right"):
+                label_td = price_td.find_previous_sibling("td")
+                if not label_td:
+                    continue
+                text = CostcoParser._clean_text(label_td.get_text())
+                price_text = CostcoParser._clean_text(price_td.get_text())
+                if not re.fullmatch(r"-?\$[\d,]+\.\d{2}", price_text):
+                    continue
+                price = CostcoParser._normalize_price(price_text)
+                if text == "Subtotal":
+                    summary["subtotal"] = price
+                elif "Shipping" in text or "Handling" in text:
+                    summary["shipping"] = price
+                elif "Tax" in text:
+                    summary["tax"] = price
+                elif text.endswith("Total"):
+                    summary["total"] = price
 
         logger.debug(f"Extracted price summary: {summary}")
         return summary

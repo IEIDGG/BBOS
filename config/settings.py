@@ -95,8 +95,8 @@ WALMART_SEARCH_CRITERIA = {
 
 COSTCO_SEARCH_CRITERIA = {
     "confirmation": {
-        "from": 'FROM "orderstatus@costco.com"',
-        "subject": 'SUBJECT "Your Costco.com Order Number" SUBJECT "is Confirmed"',
+        "from": '(OR (FROM "orderstatus@costco.com") (FROM "Costco@orders.costco.com") (FROM "orders.costco.com"))',
+        "subject": '(OR (SUBJECT "Your Costco.com Order Number" SUBJECT "is Confirmed") (SUBJECT "is confirmed"))',
         "date": f"after:{universal_date}",
     },
     "cancellation": {
